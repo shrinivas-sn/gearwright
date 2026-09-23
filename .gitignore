@@ -12,8 +12,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# throwaway browser-check tooling + its reports (not part of the repo — see PROJECT_STATE.md)
-tmp-browser-check.mjs
 .tmp-*
 
 # editor / OS

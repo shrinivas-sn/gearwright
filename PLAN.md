@@ -156,7 +156,7 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 
 ### Phase 0 — Guardrails
 - [x] T0.1 Branch + baseline
-- [ ] T0.2 Commit the browser harness as tooling
+- [x] T0.2 Commit the browser harness as tooling
 - [ ] CHECKPOINT 0
 
 ### Phase 1 — P0: controls that work for a real person

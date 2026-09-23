@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:browser": "node scripts/browser-check.mjs"
   },
   "dependencies": {
     "three": "0.186.0"
