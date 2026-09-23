@@ -161,7 +161,7 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 
 ### Phase 1 — P0: controls that work for a real person
 - [x] T1.1 Fix the E key conflict, confirm key, rotation→preview, detach discoverability
-- [ ] T1.2 Pause overlay, click-to-resume, pointer-lock re-capture fix
+- [x] T1.2 Pause overlay, click-to-resume, pointer-lock re-capture fix
 - [ ] T1.3 Dropped parts fall (gravity settle)
 - [ ] T1.4 Save when the tab is hidden or closed
 - [ ] T1.5 Harness: `hold` scenario + pause checks

@@ -55,6 +55,7 @@ import { HintSystem, MAX_HINT_LEVEL, type HintEngagement } from './game-state/hi
 import { indexRequirements, scannerRevealFor, type ScannerReveal } from './game-state/scanner-reveal.ts';
 import { ScannerOverlay, type ScannerSpec, type ScannerState } from './presentation/scanner-overlay.ts';
 import { Hud, type HudSnapshot, type HudObjectiveView, type HudResourceView, type HudLogView, type HudHintView, type HudCaptureView, type HudScannerState, type HudSocketState } from './presentation/hud.ts';
+import { PauseOverlay, type PauseCause } from './presentation/pause-overlay.ts';
 import { HINT_LEVEL_DEFINITIONS, conceptualHintFor, reasonPlainText } from './data/hints.ts';
 import { MATERIAL_KINDS } from './game-state/inventory-system.ts';
 import { isCompatible } from './game-state/snap-rules.ts';
@@ -846,6 +847,13 @@ function boot(): void {
   // reports intents; the systems below own every decision those intents name.
   const hud = new Hud(hudRoot);
 
+  // PLAN T1.2: a paused game shows why it is paused and resumes on a click.
+  const pauseOverlay = new PauseOverlay(document.body);
+  /** Why the *next* pause happens (set just before requesting it); focus loss is read from the lifecycle reason. */
+  let pendingPauseCause: PauseCause = 'user';
+  /** When the last pause began (ms): an Esc arriving right after a capture-loss pause must not undo it. */
+  let lastPauseAt = Number.NEGATIVE_INFINITY;
+
   /**
    * Resolve one reveal id to world space. Only the composition can do this (§29.3's
    * "labels from data" + §12.2's "placement is not here"): a socket's pose is level data,
@@ -947,10 +955,8 @@ function boot(): void {
     // One-shot pointer/entry line (Bug 21): cleared on first capture, named on refusal.
     entryPointer: () => {
       if (lockState.captured) return null;
-      if (lockState.refused) {
-        return { pointerLocked: false, pointerLockUnavailable: true };
-      }
-      return { pointerLocked: false, pointerLockUnavailable: false };
+      // "Unavailable" wording only while the browser has never granted a capture.
+      return { pointerLocked: false, pointerLockUnavailable: lockState.lastError !== null && !lockState.everCaptured };
     }
   });
 
@@ -978,26 +984,40 @@ function boot(): void {
     renderPort.setLabWorld(worldMeshes());
   };
 
-  // Entry-pointer ownership (Bug 21): whether the mouse is captured or was refused
-  // is composition state — the HUD only renders the chosen line. Captured clears the
-  // guidance forever; a refusal names the fallback once and keeps it. Declared before
-  // the HUD read model so the snapshot closure and the input callbacks above read the
-  // same truth (the callbacks only ever mutate it at runtime).
-  const lockState = { captured: false, refused: false };
+  const appRef: { current: App | null } = { current: null };
+  const lockState = {
+    captured: false,
+    /** True once the browser granted a capture this session. */
+    everCaptured: false,
+    /** Last refusal reason, cleared by a later grant. */
+    lastError: null as string | null,
+    /** The refusal toast is shown once per session; requests continue on every click. */
+    refusalAnnounced: false
+  };
   const inputSource = new DomInputSource({
     keyTarget: window,
     mouseTarget: canvas,
     lockTarget: canvas,
-    // Pointer-lock loss pauses nothing by itself: the browser fires `pointerlockchange`
-    // for a *granted* capture that Esc released, but Esc as a platform key is what the
-    // composition already reads for pause — so the lock handler clears stick risk and
-    // otherwise stays out of the lifecycle (EC-BRN-06, no double pause, no dead state).
     onPointerLockChange: (locked) => {
-      if (!locked) inputSource.clearAll();
-      lockState.captured = locked;
+      if (locked) {
+        lockState.captured = true;
+        lockState.everCaptured = true;
+        lockState.lastError = null;
+        return;
+      }
+      lockState.captured = false;
+      inputSource.clearAll();
+      // Losing the capture mid-play (Esc, alt-tab) pauses, like every mouse-look game;
+      // the overlay's click then resumes *and* re-captures (a click is a user gesture).
+      if (appRef.current?.snapshot().lifecycle === 'running') {
+        pendingPauseCause = 'pointer';
+        appRef.current.requestPause('user');
+      }
     },
     onPointerLockError: (reason) => {
-      lockState.refused = true;
+      lockState.lastError = reason;
+      if (lockState.refusalAnnounced) return;
+      lockState.refusalAnnounced = true;
       hud.toast(`Mouse capture unavailable (${reason}) — look still works over the canvas.`, 'warn');
       console.info(`[input] pointer lock refused (${reason}) — raw mouse deltas only`);
     }
@@ -1184,12 +1204,23 @@ function boot(): void {
       },
       clearInput: () => inputSource.clearAll()
     },
-    onLifecycleTransition: debugFlagState.logLifecycle
-      ? (transition) => {
-          console.info(`[lifecycle] ${transition.from} -> ${transition.to} (${transition.reason})`);
+    onLifecycleTransition: (transition) => {
+      if (debugFlagState.logLifecycle) {
+        console.info(`[lifecycle] ${transition.from} -> ${transition.to} (${transition.reason})`);
+      }
+      if (transition.to === 'paused') {
+        lastPauseAt = performance.now();
+        // 'menu' pauses belong to the title screen (PLAN T6.2), which draws its own panel.
+        if (transition.reason !== 'menu') {
+          pauseOverlay.show(transition.reason === 'focus-loss' ? 'focus-loss' : pendingPauseCause);
         }
-      : undefined
+        pendingPauseCause = 'user';
+      } else if (transition.to === 'running') {
+        pauseOverlay.hide();
+      }
+    }
   });
+  appRef.current = app;
 
   if (!app.start()) {
     showFatalScreen(
@@ -1200,6 +1231,14 @@ function boot(): void {
     inputSource.dispose();
     return;
   }
+
+  pauseOverlay.onResume(() => {
+    if (app.snapshot().lifecycle !== 'paused') return;
+    inputSource.clearAll();
+    app.resume('user');
+    canvas.focus({ preventScroll: true });
+    void inputSource.requestPointerLock();
+  });
 
   // World data + first camera pose so frame one already looks correct.
   // Every machine's authored boxes are handed over too: M6 composed only the lab's
@@ -1254,7 +1293,14 @@ function boot(): void {
 
   const unbindEvents = bindBrowserEvents(window, canvas, {
     onResize: (width, height, pixelRatio) => app.resize({ width, height, pixelRatio }),
-    onVisibilityChange: (hidden) => app.handleVisibilityChange(hidden),
+    onVisibilityChange: (hidden) => {
+      app.handleVisibilityChange(hidden);
+      // Back from another tab with the capture gone: pause instead of running with a free cursor.
+      if (!hidden && lockState.everCaptured && !lockState.captured && app.snapshot().lifecycle === 'running') {
+        pendingPauseCause = 'pointer';
+        app.requestPause('user');
+      }
+    },
     onFocusChange: (focused) => app.handleFocusChange(focused),
     onContextLost: () => app.handleContextLost(),
     onContextRestored: () => app.handleContextRestored()
@@ -1288,15 +1334,12 @@ function boot(): void {
       inputSource.clearAll();
       app.requestPause('user');
     } else if (state === 'paused') {
+      if (performance.now() - lastPauseAt < 300) return; // the Esc that released the capture already paused — don't undo it
       // Clear on the way out too: the resume keypress must not leak into the first
       // stepped frame as a one-shot action.
       inputSource.clearAll();
       app.resume('user');
-      // The resume keypress *is* the gesture that recaptures the mouse: without this,
-      // Esc-resume would leave the player looking with a free cursor and no prompt
-      // (a refusal is reported through the toast path, never swallowed — and, like
-      // the canvas click, never asked for twice).
-      if (!lockState.refused) void inputSource.requestPointerLock();
+      // Esc is not a user activation (HTML spec), so the mouse is NOT re-captured here — the next click on the game view captures it.
     }
   };
   window.addEventListener('keydown', handlePauseKey);
@@ -1307,13 +1350,11 @@ function boot(): void {
   // look can never stick to a screen edge. The same gesture feeds the sim's
   // primary edge — a press is a press, never a stolen capture handshake.
   //
-  // One refusal ends the asking for the session: a browser that will not capture
-  // (sandboxed frame, headless driver) refuses every click, and a toast per click
-  // is spam, not information. The fallback line says what still works.
+  // A refusal is announced once; later clicks may still succeed (Chrome refuses re-capture for ~1 s after Esc).
   canvas.tabIndex = 0;
   const handleCanvasPointer = (event: PointerEvent): void => {
     canvas.focus({ preventScroll: true });
-    if (!inputSource.isPointerLocked && !lockState.refused && event.button === 0) {
+    if (!inputSource.isPointerLocked && event.button === 0) {
       void inputSource.requestPointerLock();
     }
   };
@@ -1353,6 +1394,7 @@ function boot(): void {
     unbindEvents();
     releaseAudioGesture();
     audio.dispose();
+    pauseOverlay.dispose();
     app.dispose();
   };
   window.addEventListener('pagehide', shutdown, { once: true });
