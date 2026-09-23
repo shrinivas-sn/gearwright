@@ -89,7 +89,8 @@ export const DEFAULT_BINDINGS: InputBindings = {
   rotateRight: 'KeyF',
   hint: 'KeyH',
   lookSensitivity: 300,
-  maxLookDeltaPerStep: 120
+  // Guards pointer-lock spike events only; real flicks reach ~600 px per step.
+  maxLookDeltaPerStep: 1000
 };
 
 export interface InputOptions {
