@@ -793,6 +793,18 @@ function boot(): void {
   // completion → reward grant → autosave. The step result's puzzle events are
   // consumed here, where the composition root can reach the save layer.
   const knownComponentIds = content.registry.all.map((instance) => instance.id);
+
+  /** PLAN T1.4: save on leaving (tab hidden / page closed). New Game sets the suppress flag. */
+  let suppressLeaveSave = false;
+  let lastLeaveSaveAt = Number.NEGATIVE_INFINITY;
+  const saveOnLeave = (why: string): void => {
+    if (suppressLeaveSave) return;
+    const now = performance.now();
+    if (now - lastLeaveSaveAt < 2000) return; // hide + pagehide fire together
+    lastLeaveSaveAt = now;
+    const write = save.save('autosave', Date.now(), saveWorldView, knownComponentIds);
+    if (!write.ok) console.warn(`[save] ${why} save failed:`, write.failure);
+  };
   const handlePuzzleEvents = (events: ReadonlyArray<PuzzleEvent>): void => {
     for (const outcome of rewards.consumePuzzleEvents(events)) {
       if (!outcome.applied) continue;
@@ -1294,6 +1306,7 @@ function boot(): void {
   const unbindEvents = bindBrowserEvents(window, canvas, {
     onResize: (width, height, pixelRatio) => app.resize({ width, height, pixelRatio }),
     onVisibilityChange: (hidden) => {
+      if (hidden) saveOnLeave('tab-hidden');
       app.handleVisibilityChange(hidden);
       // Back from another tab with the capture gone: pause instead of running with a free cursor.
       if (!hidden && lockState.everCaptured && !lockState.captured && app.snapshot().lifecycle === 'running') {
@@ -1387,6 +1400,7 @@ function boot(): void {
   rafId = window.requestAnimationFrame(tick);
 
   const shutdown = (): void => {
+    saveOnLeave('page-hide');
     window.clearTimeout(watchdogId);
     window.cancelAnimationFrame(rafId);
     window.removeEventListener('keydown', handlePauseKey);
