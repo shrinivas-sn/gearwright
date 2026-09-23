@@ -1528,6 +1528,13 @@ valves A/B/C); `data/machines.ts` (`P2_RIGHT_TURN_MACHINE`, `P3_THREE_VALVES_MAC
   validator, the machine graph, the puzzle SM.
 
 ## Next Exact Action
+**0. (23/09/2026, supersedes the list below while it is open) Execute `PLAN.md`** — the
+playability / feel / visuals / deployment overhaul written from a full code review (8 phases,
+T0.1 → T7.9, branch `overhaul`). Start at the last Progress Log entry's `Next:` line in
+`PLAN.md`. Its Phase 1 fixes P0 defects found in that review: E bound to both grab and
+rotate-right, remove/drop keys never shown, invisible pause, pointer-lock re-request from an
+Esc keypress, released parts floating mid-air.
+
 1. Get the M6 browser check reported (the list in "Human Check Needed"), then mark
    M6 COMPLETE in this file. (M4's list still stands where it overlaps; P2/P3 and the
    hub are now part of that walkthrough's neighbourhood. CHK-12.9 has since measured the
