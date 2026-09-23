@@ -64,7 +64,7 @@ export interface InputBindings {
   readonly secondary: string;
   readonly cancel: string;
   readonly pause: string;
-  /** Rotate the held object (Manipulation context; ARCH §15 documents Q/E). */
+  /** Rotate the held object (Manipulation context): Q left, F right — E is grab/confirm. */
   readonly rotateLeft: string;
   readonly rotateRight: string;
   /** Request a hint for the puzzle the player is standing in (M10; §29.2). */
@@ -86,7 +86,7 @@ export const DEFAULT_BINDINGS: InputBindings = {
   cancel: 'Escape',
   pause: 'Escape',
   rotateLeft: 'KeyQ',
-  rotateRight: 'KeyE',
+  rotateRight: 'KeyF',
   hint: 'KeyH',
   lookSensitivity: 300,
   maxLookDeltaPerStep: 120
@@ -147,9 +147,9 @@ export class InputSystem {
 
     if (this.context === 'Manipulation') {
       // M3 routing (ARCH §15): movement continues as a slow strafe, look stays
-      // live, and the action set changes meaning — `Q`/`E` rotate the held object
+      // live, and the action set changes meaning — `Q`/`F` rotate the held object
       // (grab is an Exploration action, so those keys are free here), drop is the
-      // secondary key, and grab/attach confirm is the mouse button. Pause is not
+      // secondary key, and confirm is `E` or the mouse button. Pause is not
       // routed: `Esc` is handled at the platform edge so it never leaks as cancel.
       const held = raw.held;
       const moveX = clampAxis((held.has(this.bindings.right) ? 1 : 0) - (held.has(this.bindings.left) ? 1 : 0));
@@ -161,7 +161,10 @@ export class InputSystem {
         run: false,
         lookDeltaX: look.x,
         lookDeltaY: look.y,
-        primary: raw.primaryPressed,
+        // E or the mouse confirms while carrying (dock / confirm rotation), so the HUD's
+        // "[E] confirm" is true. The grab press itself was consumed as an edge in the
+        // Exploration step, so a held E can never confirm by accident.
+        primary: raw.primaryPressed || raw.pressed.has(this.bindings.primary),
         secondary: raw.pressed.has(this.bindings.secondary),
         cancel: raw.pressed.has(this.bindings.cancel),
         pause: false,

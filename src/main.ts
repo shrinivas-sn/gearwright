@@ -428,13 +428,21 @@ function buildHudRenderer(deps: {
         targetName: focus === null
           ? null
           : nameOfComponent(focus.id) ?? (focus.kind === 'socket' ? 'Socket' : focus.id),
-        verb: focus === null ? null : focus.verb,
+        // The remove prompt is a real state (§19 DetachPrompt): say what the next press does.
+        verb:
+          focus === null
+            ? null
+            : manipulation.state === 'DetachPrompt' && manipulation.focusedId === focus.id
+              ? 'Press again to remove'
+              : focus.verb,
         keyLabel: focus === null ? null : keyLabel(bindings.primary),
         valid: focusValid
       },
       manipulation: {
         heldName,
         rotateKey: keyLabel(bindings.rotateLeft),
+        rotateRightKey: keyLabel(bindings.rotateRight),
+        dropKey: keyLabel(bindings.secondary),
         confirmKey: keyLabel(bindings.primary),
         cancelKey: keyLabel(bindings.cancel),
         socketState
@@ -1363,6 +1371,7 @@ function boot(): void {
       player,
       camera,
       interaction,
+      manipulation,
       progression,
       // The audio port reports its own state and last cue, so a browser check can tell
       // "silent because no context" from "silent because the unlock never happened".

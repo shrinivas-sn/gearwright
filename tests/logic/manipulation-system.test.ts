@@ -953,3 +953,29 @@ describe('Manipulation helpers', () => {
     expect(half.y).toBe(0.2);
   });
 });
+
+describe('ManipulationSystem — overhaul T1.1', () => {
+  it('enters SnapPreview straight from Rotation, confirming the rotation', () => {
+    const snap = new FakeSnap();
+    const { sm } = build({}, snap);
+    grab(sm);
+    step(sm, { actions: { rotate: 1 } });
+    expect(sm.state).toBe('Rotation');
+    snap.candidate = candidateFor();
+    const result = step(sm);
+    expect(result.state).toBe('SnapPreview');
+    expect(eventTypes(result)).toContain('RotationConfirmed');
+    expect(eventTypes(result)).toContain('SnapCandidateChanged');
+  });
+
+  it('detaches with the primary key too (E again confirms the remove prompt)', () => {
+    const snap = new FakeSnap();
+    const { sm } = build({}, snap);
+    step(sm, { focus: focusOn(CRATE.instanceId, 'attached') });
+    step(sm, { focus: focusOn(CRATE.instanceId, 'attached'), actions: { primary: true } });
+    expect(sm.state).toBe('DetachPrompt');
+    const detached = step(sm, { focus: focusOn(CRATE.instanceId, 'attached'), actions: { primary: true } });
+    expect(snap.detaches).toEqual([CRATE.instanceId]);
+    expect(detached.state).toBe('Exploration');
+  });
+});

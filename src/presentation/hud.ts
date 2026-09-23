@@ -28,7 +28,7 @@
  *   │                          │   target · VERB · [key] · ✓ compatible
  *   │                          │
  *   │                          │   held name · socket ▣ occupied (while carrying)
- *   │                          │   [Q] rotate   [E] confirm   [Esc] cancel
+ *   │                          │   [Q][F] rotate   [E] confirm   [R] drop   [Esc] cancel
  *   │                          │
  *   │ log ─────────────────────┤              save note
  *   │ FIELD LOG — 1 entry      │
@@ -77,6 +77,10 @@ export interface HudFocusView {
 export interface HudManipulationView {
   readonly heldName: string | null;
   readonly rotateKey: string;
+  /** Second rotate key (the other direction). Absent hides its chip. */
+  readonly rotateRightKey?: string | undefined;
+  /** Drop key. Absent hides the drop chip. */
+  readonly dropKey?: string | undefined;
   readonly confirmKey: string;
   readonly cancelKey: string;
   readonly socketState: HudSocketState;
@@ -282,8 +286,9 @@ const HUD_MARKUP = `
     <span class="gw-hud-socket-text"></span>
   </span>
   <span class="gw-hud-bindings">
-    <span class="gw-hud-binding"><kbd class="gw-hud-key gw-hud-rotate-key"></kbd> rotate</span>
+    <span class="gw-hud-binding"><kbd class="gw-hud-key gw-hud-rotate-key"></kbd><kbd class="gw-hud-key gw-hud-rotate-right-key"></kbd> rotate</span>
     <span class="gw-hud-binding"><kbd class="gw-hud-key gw-hud-confirm-key"></kbd> confirm</span>
+    <span class="gw-hud-binding gw-hud-drop-binding"><kbd class="gw-hud-key gw-hud-drop-key"></kbd> drop</span>
     <span class="gw-hud-binding"><kbd class="gw-hud-key gw-hud-cancel-key"></kbd> cancel</span>
   </span>
 </div>
@@ -407,6 +412,9 @@ export class Hud {
   private readonly socketIcon: HTMLElement;
   private readonly socketText: HTMLElement;
   private readonly rotateKey: HTMLElement;
+  private readonly rotateRightKey: HTMLElement;
+  private readonly dropBinding: HTMLElement;
+  private readonly dropKey: HTMLElement;
   private readonly confirmKey: HTMLElement;
   private readonly cancelKey: HTMLElement;
 
@@ -461,6 +469,9 @@ export class Hud {
     this.socketIcon = requireChild(this.host, '.gw-hud-socket-icon');
     this.socketText = requireChild(this.host, '.gw-hud-socket-text');
     this.rotateKey = requireChild(this.host, '.gw-hud-rotate-key');
+    this.rotateRightKey = requireChild(this.host, '.gw-hud-rotate-right-key');
+    this.dropBinding = requireChild(this.host, '.gw-hud-drop-binding');
+    this.dropKey = requireChild(this.host, '.gw-hud-drop-key');
     this.confirmKey = requireChild(this.host, '.gw-hud-confirm-key');
     this.cancelKey = requireChild(this.host, '.gw-hud-cancel-key');
 
@@ -550,6 +561,10 @@ export class Hud {
     setText(this.rotateKey, view.rotateKey);
     setText(this.confirmKey, view.confirmKey);
     setText(this.cancelKey, view.cancelKey);
+    setText(this.rotateRightKey, view.rotateRightKey ?? '');
+    setHidden(this.rotateRightKey, view.rotateRightKey === undefined);
+    setText(this.dropKey, view.dropKey ?? '');
+    setHidden(this.dropBinding, view.dropKey === undefined);
 
     // Icon + text + colour: any one of the five states reads without colour (§33.2 rule 4).
     setText(this.socketIcon, SOCKET_STATE_ICON[view.socketState]);

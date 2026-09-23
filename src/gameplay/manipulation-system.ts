@@ -521,7 +521,8 @@ export class ManipulationSystem {
         this.focusId = null;
         this.transition('Exploration');
         this.emit('DetachCancelled', id);
-      } else if (input.actions.secondary) {
+      } else if (input.actions.secondary || input.actions.primary) {
+        // The same key that opened the prompt confirms it (E), and the drop key still works (R).
         this.tryDetach();
       }
     } else if (this.isHolding) {
@@ -647,8 +648,11 @@ export class ManipulationSystem {
   private syncSnapPreview(record: CarryableRecord): void {
     const candidate = this.detachGrace > 0 ? null : this.snap?.candidate ?? null;
 
-    if (this.stateValue === 'Manipulation') {
+    if (this.stateValue === 'Manipulation' || this.stateValue === 'Rotation') {
       if (candidate === null || candidate.componentId !== record.binding.instanceId) return;
+      // A candidate while rotating confirms the rotation: the socket pose is canonical
+      // anyway (§21.3), so making the player click "confirm rotation" first was a trap.
+      if (this.stateValue === 'Rotation') this.emit('RotationConfirmed', record.binding.instanceId);
       this.snapCandidate = candidate;
       this.transition('SnapPreview');
       this.emit('SnapCandidateChanged', record.binding.instanceId);

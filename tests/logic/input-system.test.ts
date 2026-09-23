@@ -146,7 +146,7 @@ describe('InputSystem — context routing', () => {
     const input = new InputSystem({ context: 'Manipulation' });
     const actions = input.sample(
       neutralSample({
-        held: new Set(['KeyW', 'KeyE', 'ShiftLeft']),
+        held: new Set(['KeyW', 'KeyF', 'ShiftLeft']),
         pressed: new Set(['Escape', 'KeyR']),
         lookDeltaY: 4,
         primaryPressed: true
@@ -157,7 +157,7 @@ describe('InputSystem — context routing', () => {
     expect(actions.moveZ).toBe(1);
     expect(actions.run).toBe(false);
     expect(actions.lookDeltaY).toBe(4);
-    // Q/E rotate the held object here: `E` is the grab key only in Exploration.
+    // Q/F rotate the held object here: `E` is the grab key only in Exploration.
     expect(actions.rotate).toBe(1);
     expect(actions.primary).toBe(true); // mouse: rotation/attach confirm
     expect(actions.secondary).toBe(true); // drop
@@ -218,5 +218,19 @@ describe('InputSystem — neutralSample helper', () => {
     expect(sample.held.has('KeyW')).toBe(true);
     expect(sample.lookDeltaX).toBe(7);
     expect(sample.pressed.size).toBe(0);
+  });
+});
+
+describe('InputSystem — overhaul T1.1 key map', () => {
+  it('rotates right on F, never on E, while carrying', () => {
+    const input = new InputSystem({ context: 'Manipulation' });
+    expect(input.sample(neutralSample({ held: new Set(['KeyF']) })).rotate).toBe(1);
+    expect(input.sample(neutralSample({ held: new Set(['KeyE']) })).rotate).toBe(0);
+  });
+
+  it('confirms with a fresh E press while carrying, but not with a held E', () => {
+    const input = new InputSystem({ context: 'Manipulation' });
+    expect(input.sample(neutralSample({ pressed: new Set(['KeyE']), held: new Set(['KeyE']) })).primary).toBe(true);
+    expect(input.sample(neutralSample({ held: new Set(['KeyE']) })).primary).toBe(false);
   });
 });

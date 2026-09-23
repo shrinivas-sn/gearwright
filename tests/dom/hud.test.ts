@@ -546,3 +546,16 @@ describe('Hud — no injected markup (§33.2)', () => {
     root.remove();
   });
 });
+
+describe('Hud — overhaul T1.1 bindings', () => {
+  it('shows the second rotate key and the drop key when provided, hides them when absent', () => {
+    const root = document.createElement('div');
+    const hud = new Hud(root);
+    hud.render(makeSnapshot({ manipulation: { heldName: 'Gear', rotateKey: 'Q', rotateRightKey: 'F', dropKey: 'R', confirmKey: 'E', cancelKey: 'Esc', socketState: 'none' } }));
+    expect(root.querySelector('.gw-hud-rotate-right-key')?.textContent).toBe('F');
+    expect(root.querySelector('.gw-hud-drop-key')?.textContent).toBe('R');
+    expect(root.querySelector('.gw-hud-drop-binding')?.classList.contains('gw-hud-hidden')).toBe(false);
+    hud.render(makeSnapshot({ manipulation: { heldName: 'Gear', rotateKey: 'Q', confirmKey: 'E', cancelKey: 'Esc', socketState: 'none' } }));
+    expect(root.querySelector('.gw-hud-drop-binding')?.classList.contains('gw-hud-hidden')).toBe(true);
+  });
+});
