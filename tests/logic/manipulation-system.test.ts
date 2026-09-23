@@ -356,7 +356,9 @@ describe('ManipulationSystem — transition table (ARCH §19 enumeration)', () =
     expect(detached.state).toBe('Exploration');
     expect(sm.isHolding).toBe(false);
     expect(eventTypes(detached)).toEqual(['SoftDetached']);
-    expect(detached.pose).toEqual({ center: CRATE.spawn.center, yaw: CRATE.spawn.yaw });
+    // PLAN T2.5: dropped where it was, not teleported back to the spawn.
+    expect(detached.pose).toEqual(sm.canonicalLastValidPose);
+    expect(detached.pose).not.toEqual({ center: CRATE.spawn.center, yaw: CRATE.spawn.yaw });
   });
 
   it('a blur / visibility loss releases the hold (EC-BRN-05 via suspend())', () => {
@@ -979,3 +981,14 @@ describe('ManipulationSystem — overhaul T1.1', () => {
     expect(detached.state).toBe('Exploration');
   });
 });
+
+describe('ManipulationSystem — overhaul T2.5', () => {
+  it('does not publish the held part as a player collider', () => {
+    const { sm, physics } = build();
+    grab(sm);
+    step(sm);
+    const last = physics.carryablePushes[physics.carryablePushes.length - 1]!;
+    expect(last.length).toBe(0);
+  });
+});
+

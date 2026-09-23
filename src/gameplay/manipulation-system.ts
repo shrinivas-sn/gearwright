@@ -292,6 +292,7 @@ export class ManipulationSystem {
 
   // Scratch (no per-step allocation).
   private readonly scratchHalfExtents = vec3();
+  private readonly scratchOtherHalf = vec3();
   private readonly scratchBox = { min: vec3(), max: vec3() };
   private readonly scratchCandidate = { center: vec3(), yaw: 0 };
 
@@ -632,10 +633,18 @@ export class ManipulationSystem {
 
     // `Manipulation | hold range exceeded | config: softDetach` (EC-MAN-07).
     if (this.tuning.softDetach && this.holdRangeExceeded(record, input.player.position)) {
-      this.restore(record, record.lastValidPose);
+      // Drop it where it is (a carried pose never embeds in walls), nudged clear of other
+      // parts if needed — never teleported back to where it was picked up.
+      let dropPose: Pose | null = this.quantisePose(record.pose);
+      if (this.poseBlocked(record, dropPose)) {
+        dropPose = this.findNearestValidPose(record, this.tuning.releaseSearchRadius);
+      }
+      this.restore(record, dropPose ?? record.lastValidPose);
+      record.lastValidPose = this.quantisePose(record.pose);
       this.heldObjectId = null;
       this.transition('Exploration');
       this.publishRecord(record, true);
+      this.startFall(record);
       this.emit('SoftDetached', record.binding.instanceId);
     }
   }
@@ -984,7 +993,34 @@ export class ManipulationSystem {
 
   private poseBlocked(record: CarryableRecord, pose: Pose): boolean {
     this.boxFor(record, pose.yaw, this.scratchBox, pose.center);
-    return this.physics.isBoxBlocked(this.scratchBox.min, this.scratchBox.max);
+    if (this.physics.isBoxBlocked(this.scratchBox.min, this.scratchBox.max)) return true;
+    return this.overlapsOtherCarryable(record, pose);
+  }
+
+  /** Would this pose overlap another (non-held) part? Parts may touch, never interpenetrate. */
+  private overlapsOtherCarryable(record: CarryableRecord, pose: Pose): boolean {
+    this.boxFor(record, pose.yaw, this.scratchBox, pose.center);
+    for (const id of this.order) {
+      if (id === record.binding.instanceId || id === this.heldObjectId) continue;
+      const other = this.records.get(id);
+      if (!other) continue;
+      rotatedHalfExtents(other.binding.definition.halfExtents, other.pose.yaw, this.scratchOtherHalf);
+      if (
+        this.scratchBox.min.x < other.pose.center.x + this.scratchOtherHalf.x &&
+        this.scratchBox.max.x > other.pose.center.x - this.scratchOtherHalf.x &&
+        this.scratchBox.min.y < other.pose.center.y + this.scratchOtherHalf.y &&
+        this.scratchBox.max.y > other.pose.center.y - this.scratchOtherHalf.y &&
+        this.scratchBox.min.z < other.pose.center.z + this.scratchOtherHalf.z &&
+        this.scratchBox.max.z > other.pose.center.z - this.scratchOtherHalf.z
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private startFall(_record: CarryableRecord): void {
+    // Falls are simulated when T1.3 is enabled; no-op otherwise.
   }
 
   /** World AABB of the yawed object box. `centerOverride` avoids copying a pose. */
@@ -1086,7 +1122,10 @@ export class ManipulationSystem {
     for (const id of this.order) {
       const record = this.records.get(id);
       if (!record || record.publishedCenter === null) continue;
-      const half = record.binding.definition.halfExtents;
+      // The part in the player's hands is not an obstacle for the player's own body.
+      if (id === this.heldObjectId) continue;
+      // Yawed footprint, the same box every other query uses.
+      const half = rotatedHalfExtents(record.binding.definition.halfExtents, record.publishedYaw, vec3());
       colliders.push({
         min: vec3(
           record.publishedCenter.x - half.x,
