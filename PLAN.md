@@ -157,7 +157,7 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 ### Phase 0 — Guardrails
 - [x] T0.1 Branch + baseline
 - [x] T0.2 Commit the browser harness as tooling
-- [ ] CHECKPOINT 0
+- [x] CHECKPOINT 0
 
 ### Phase 1 — P0: controls that work for a real person
 - [ ] T1.1 Fix the E key conflict, confirm key, rotation→preview, detach discoverability
@@ -2716,6 +2716,16 @@ Surprises:  The harness's "second click" docking (CHK-12.5) is likely the E-rota
             not timing — synthetic key taps never hold E long enough to trigger it.
 Next:       T0.1 — `git checkout overhaul`, record baseline.
 Commit:     committed on branch `overhaul` by the planning session's save-check (see `git log`)
+
+### Phase 0 — 23/09/2026
+Done:       T0.1 (branch + baseline), T0.2 (commit browser harness as scripts/browser-check.mjs), CHECKPOINT 0
+Verified:   `npm run typecheck` → clean (exit 0);
+            `npx vitest run` → Test Files 44 passed (44), Tests 564 passed (564);
+            `npm run build` → dist/assets/index-CHGu19p0.js 706.01 kB │ gzip: 184.62 kB, built in 2.09s;
+            `npm run check:browser -- boot` → problems: [], bootStatus: true, pausedState: "paused", resumedState: "running"
+Surprises:  none
+Next:       T1.1 — edit src/gameplay/input-system.ts DEFAULT_BINDINGS (rotateRight: 'KeyF')
+Commit:     overhaul(CP0): checkpoint — phase 0 complete
 
 <!-- Entry template (copy for each session):
 ### <Phase/Task> — <DD/MM/YYYY>
