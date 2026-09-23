@@ -169,13 +169,13 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 - [x] CHECKPOINT 1
 
 ### Phase 2 — Feel: smooth camera and physical parts
-- [ ] T2.1 Interpolation helpers (`core/interp.ts`)
-- [ ] T2.2 Render interpolation (player, carryables) + render-time look preview
-- [ ] T2.3 Raise the mouse flick cap
-- [ ] T2.4 Recentre only while moving + shoulder camera
-- [ ] T2.5 Held part not solid to the player; parts don't overlap each other; soft-detach drops in place
-- [ ] Fix-up
-- [ ] CHECKPOINT 2
+- [x] T2.1 Interpolation helpers (`core/interp.ts`)
+- [x] T2.2 Render interpolation (player, carryables) + render-time look preview
+- [x] T2.3 Raise the mouse flick cap
+- [x] T2.4 Recentre only while moving + shoulder camera
+- [x] T2.5 Held part not solid to the player; parts don't overlap each other; soft-detach drops in place
+- [x] Fix-up
+- [x] CHECKPOINT 2
 
 ### Phase 3 — World clean-up and render efficiency
 - [ ] T3.1 Remove the Phase-1 placeholder scene (keep the lights)
@@ -2738,6 +2738,18 @@ Verified:   `npm run typecheck` → clean (exit 0);
 Surprises:  T1.3 marked [!]: T1.3 implementation (gravity fall on release) caused tests/logic/phase-world.test.ts:269 to fail ("grabs, holds and drops the crate, flipping input and interaction contexts": expected 1.036385636032345 to be close to 0.4). phase-world.test.ts asserts that dropped object's pose immediately matches canonicalLastValidPose after 1 step, which was authored assuming objects stay at release height. Since phase-world.test.ts is not in T1.3 "May update" and rule 4 forbids modifying unlisted tests, per fallback rules T1.3 was stashed (stash@{0}) and marked [!]; retried at Fix-up 1 and still red, remaining stashed.
 Next:       T2.1 — create src/core/interp.ts
 Commit:     overhaul(CP1): checkpoint — phase 1 complete
+
+### Phase 2 — 23/09/2026
+Done:       T2.1 (interpolation helpers core/interp.ts), T2.2 (render interpolation + render-time look preview), T2.3 (raise mouse flick cap to 1000), T2.4 (recentre only while moving + over-the-shoulder camera), T2.5 (held part not solid to player, carryables don't overlap, soft-detach drops in place), Fix-up 2, CHECKPOINT 2
+Verified:   `npm run typecheck` → clean (exit 0);
+            `npx vitest run` → Test Files 46 passed (46), Tests 579 passed (579);
+            `npm run build` → dist/assets/index-CTakDw_n.js 713.85 kB │ gzip: 186.84 kB, built in 3.73s;
+            `npm run check:browser -- boot` → ok: true, problems: [], bootStatus: true, pausedState: "paused", overlayShown: true, resumedByClick: "running", resumedState: "running";
+            `npm run check:browser -- hold` → ok: true, problems: [], hold.focused: true, hold.after.state: "Manipulation", hold.after.held: "gear-a", hold.after.yaw: 0;
+            `npm run check:browser -- branch` → exit 0, ok: true, problems: [], branchBurst.bm1Reward: true, branchBurst.autosave: true, branchReload: loaded: true, stagedRestored: true, finalState.loop.frames: 83.
+Surprises:  none in Phase 2 tasks. T1.3 remains stashed [!].
+Next:       T3.1 — edit src/app.ts (anchor: `// Phase-1 placeholder scene: spinning cube`) and remove placeholder cube, wireframe and axes while keeping lights
+Commit:     overhaul(CP2): checkpoint — phase 2 complete
 
 <!-- Entry template (copy for each session):
 ### <Phase/Task> — <DD/MM/YYYY>
