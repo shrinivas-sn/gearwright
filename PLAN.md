@@ -162,11 +162,11 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 ### Phase 1 — P0: controls that work for a real person
 - [x] T1.1 Fix the E key conflict, confirm key, rotation→preview, detach discoverability
 - [x] T1.2 Pause overlay, click-to-resume, pointer-lock re-capture fix
-- [ ] T1.3 Dropped parts fall (gravity settle)
-- [ ] T1.4 Save when the tab is hidden or closed
-- [ ] T1.5 Harness: `hold` scenario + pause checks
-- [ ] Fix-up: retry any `[!]` task once
-- [ ] CHECKPOINT 1
+- [!] T1.3 Dropped parts fall (gravity settle)
+- [x] T1.4 Save when the tab is hidden or closed
+- [x] T1.5 Harness: `hold` scenario + pause checks
+- [x] Fix-up: retry any `[!]` task once
+- [x] CHECKPOINT 1
 
 ### Phase 2 — Feel: smooth camera and physical parts
 - [ ] T2.1 Interpolation helpers (`core/interp.ts`)
@@ -2727,6 +2727,18 @@ Surprises:  none
 Next:       T1.1 — edit src/gameplay/input-system.ts DEFAULT_BINDINGS (rotateRight: 'KeyF')
 Commit:     overhaul(CP0): checkpoint — phase 0 complete
 
+### Phase 1 — 23/09/2026
+Done:       T1.1 (E key conflict / confirm key / rotation preview / detach), T1.2 (pause overlay / click-to-resume / pointer lock re-capture), T1.4 (save on tab hidden / closed), T1.5 (harness hold scenario + pause overlay assertions), Fix-up 1, CHECKPOINT 1
+Verified:   `npm run typecheck` → clean (exit 0);
+            `npx vitest run` → Test Files 45 passed (45), Tests 571 passed (571);
+            `npm run build` → dist/assets/index-C60vZ1pf.js 709.27 kB │ gzip: 185.55 kB, built in 2.48s;
+            `npm run check:browser -- boot` → problems: [], bootStatus: true, pausedState: "paused", overlayShown: true, resumedByClick: "running", resumedState: "running";
+            `npm run check:browser -- hold` → problems: [], hold.focused: true, hold.after.state: "Manipulation", hold.after.held: "gear-a", hold.after.yaw: 0;
+            `npm run check:browser -- branch` → problems: [], branchBurst: all true, branchReload: loaded: true, cluesRestored: true, stagedRestored: true, hubStage: true, finalState.loop.frames: 83 (> 60).
+Surprises:  T1.3 marked [!]: T1.3 implementation (gravity fall on release) caused tests/logic/phase-world.test.ts:269 to fail ("grabs, holds and drops the crate, flipping input and interaction contexts": expected 1.036385636032345 to be close to 0.4). phase-world.test.ts asserts that dropped object's pose immediately matches canonicalLastValidPose after 1 step, which was authored assuming objects stay at release height. Since phase-world.test.ts is not in T1.3 "May update" and rule 4 forbids modifying unlisted tests, per fallback rules T1.3 was stashed (stash@{0}) and marked [!]; retried at Fix-up 1 and still red, remaining stashed.
+Next:       T2.1 — create src/core/interp.ts
+Commit:     overhaul(CP1): checkpoint — phase 1 complete
+
 <!-- Entry template (copy for each session):
 ### <Phase/Task> — <DD/MM/YYYY>
 Done:       <tasks finished, ids>
@@ -2735,3 +2747,4 @@ Surprises:  <anything unexpected, [!] tasks with their failure output>
 Next:       <exact next task id + first action>
 Commit:     <hash + message>
 -->
+
