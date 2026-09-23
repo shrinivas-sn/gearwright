@@ -155,7 +155,7 @@ in the Progress Log `Surprises:` field, and keep going.
 Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]` done with a logged caveat.
 
 ### Phase 0 — Guardrails
-- [ ] T0.1 Branch + baseline
+- [x] T0.1 Branch + baseline
 - [ ] T0.2 Commit the browser harness as tooling
 - [ ] CHECKPOINT 0
 
