@@ -594,16 +594,23 @@ async function scenarioBoot(cdp) {
   report.data.soak = { after, overlay };
   drainConsole(cdp);
 
-  // Pause / resume lifecycle (Escape with an empty hand pauses).
+  // Pause / resume lifecycle (Escape with an empty hand pauses) + the PLAN T1.2 overlay.
   await tapKey(cdp, 'Escape');
   await sleep(600);
   const paused = await evaluate(cdp, 'window.__probe.state()');
+  const overlayShown = await evaluate(cdp, "(() => { const el = document.querySelector('.gw-pause'); return el !== null && !el.classList.contains('gw-pause--hidden'); })()");
+  await clickAt(cdp, 800, 450);
+  await sleep(800);
+  const resumedByClick = await evaluate(cdp, 'window.__probe.state()');
+  await tapKey(cdp, 'Escape');
+  await sleep(600);
   await tapKey(cdp, 'Escape');
   await sleep(800);
   const resumed = await evaluate(cdp, 'window.__probe.state()');
   report.data.lifecycle = {
     pausedState: paused.lifecycle,
-    pausedFrames: paused.loop?.frames,
+    overlayShown,
+    resumedByClick: resumedByClick.lifecycle,
     resumedState: resumed.lifecycle,
     resumedFrames: resumed.loop?.frames
   };
@@ -958,6 +965,25 @@ async function main() {
     drainConsole(cdp);
   }
   if (SCENARIO === 'focus') await scenarioFocus(cdp);
+  if (SCENARIO === 'hold') {
+    // PLAN T1.1 regression: a human-length E press (~160 ms ≈ 5 fixed steps) must grab
+    // without rotating the part.
+    const level = await evaluate(cdp, 'window.__probe.level()');
+    const gear = level.p1Parts.find((entry) => entry.id === 'gear-a');
+    const found = await focusTarget(cdp, 'gear-a', boxOf(gear));
+    report.data.hold = { focused: found !== null };
+    if (found !== null) {
+      await keyDown(cdp, 'KeyE');
+      await sleep(160);
+      await keyUp(cdp, 'KeyE');
+      await sleep(400);
+      report.data.hold.after = await evaluate(
+        cdp,
+        '({ state: window.__gearwrightDev.manipulation.state, held: window.__gearwrightDev.manipulation.heldId, yaw: window.__gearwrightDev.manipulation.currentPose.yaw })'
+      );
+    }
+    drainConsole(cdp);
+  }
   if (SCENARIO === 'bm1') await scenarioBm1(cdp);
   if (SCENARIO === 'branch') await scenarioBranch(cdp);
   if (SCENARIO === 'press') {
