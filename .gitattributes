@@ -1,0 +1,2 @@
+# Normalize line endings to LF in the repo; working copies use the platform default.
+* text=auto

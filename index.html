@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GEARWRIGHT</title>
+    <!-- Inline icon: the page shell used to request /favicon.ico and 404 on every boot
+         (a permanent console error in every browser check). A data URI means no request. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231b1d20'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%23e8b23a' stroke-width='3'/%3E%3C/svg%3E"
+    />
+    <meta name="description" content="A third-person mechanical puzzle game. Explore, assemble, and reactivate dormant machines." />
+  </head>
+  <body>
+    <!-- WebGL surface (L4) -->
+    <canvas id="game-canvas" aria-label="Game viewport"></canvas>
+
+    <!-- DOM HUD overlay root (L4, ADR-010) — populated from Phase 11 onward -->
+    <div id="hud-root" aria-live="polite"></div>
+
+    <!-- Debug overlay root (dev-only, ARCH §37) -->
+    <div id="debug-root"></div>
+
+    <!-- Boot status: removed after the first rendered frame. A cold dev-server
+         transform of three.js can take seconds on first load — this turns that
+         wait into visible feedback instead of a mysterious blank screen. -->
+    <div id="boot-status" role="status">loading gearwright…</div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

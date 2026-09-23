@@ -1,0 +1,596 @@
+/* GEARWRIGHT — base presentation reset (L4).
+   Restrained industrial palette; no framework (ADR-010). */
+
+:root {
+  /* Neutral environment (ARCH §33.2 / visual direction) */
+  --gw-graphite: #1b1d20;
+  --gw-steel: #2a2e33;
+  --gw-concrete: #3a3f45;
+  /* All HUD text tokens are audited against the HUD panel's worst-case backdrop by
+     tests/boundary/hud-contrast.test.ts (WCAG AA at their 10–13px sizes). */
+  --gw-muted: #8b939c; /* passes AA on every audited backdrop (see the boundary suite) */
+
+  /* Functional colours — always paired with shape/icon/text, never colour alone */
+  --gw-interactive: #d8dee6;
+  --gw-powered: #e8b23a;
+  --gw-unpowered: #8f979f; /* was #6b7178: failed AA at its 12px sizes (audited) */
+  --gw-compatible: #58c08a;
+  --gw-invalid: #e28073;   /* was #d2604f: 4.13–4.45:1 — failed AA at 12px (audited) */
+  --gw-hazardous: #e07b2f;
+  --gw-complete: #6ba8e8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--gw-graphite);
+  color: var(--gw-interactive);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+#game-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  touch-action: none;
+}
+
+/* HUD overlay: never intercepts pointer events by default (each element opts in) */
+#hud-root,
+#debug-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+#debug-root {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#boot-status {
+  position: fixed;
+  inset: auto 0 22px 0;
+  text-align: center;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  color: var(--gw-muted);
+  pointer-events: none;
+}
+
+.gw-debug-panel {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  min-width: 210px;
+  padding: 8px 10px;
+  background: rgb(12 14 16 / 82%);
+  border: 1px solid var(--gw-concrete);
+  border-radius: 4px;
+  color: var(--gw-muted);
+  white-space: pre;
+}
+
+.gw-debug-panel strong {
+  color: var(--gw-interactive);
+}
+
+.gw-debug-ok {
+  color: var(--gw-compatible);
+}
+
+.gw-debug-warn {
+  color: var(--gw-hazardous);
+}
+
+.gw-debug-bad {
+  color: var(--gw-invalid);
+}
+
+/* ---------------------------------------------------------------------------
+   HUD (ARCH §33.1 surfaces, M10). Appended block only — no rule above is
+   touched. #hud-root is `pointer-events: none` overall so the overlay never
+   blocks the sim; individual controls opt back in explicitly.
+   Every state below pairs colour with an icon or a written label (§33.2 rule 4).
+   ------------------------------------------------------------------------- */
+
+.gw-hud {
+  position: absolute;
+  inset: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--gw-interactive);
+  pointer-events: none;
+}
+
+.gw-hud-surface {
+  position: absolute;
+  padding: 6px 10px;
+  /* 0.86, not the previous 0.72: over bright geometry (the lab step #8b939c, a teal
+     carryable, a green feedback pulse) the lighter panel left muted/invalid/unpowered
+     below the WCAG AA floor at their 10–12px sizes. Audited by
+     tests/boundary/hud-contrast.test.ts. */
+  background: rgb(12 14 16 / 86%);
+  border: 1px solid var(--gw-concrete);
+  border-radius: 4px;
+}
+
+.gw-hud-key {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  padding: 0 4px;
+  border: 1px solid var(--gw-muted);
+  border-radius: 3px;
+  background: rgb(58 63 69 / 55%);
+  color: var(--gw-interactive);
+}
+
+/* No binding → no chip: an empty <kbd> must not read as a real key. */
+.gw-hud-key:empty {
+  display: none;
+}
+
+/* --- reticle + focus line (§33.1 row 1) ---------------------------------- */
+
+.gw-hud-reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border: 1px solid rgb(216 222 230 / 55%);
+  border-radius: 50%;
+}
+
+.gw-hud-reticle::before,
+.gw-hud-reticle::after {
+  content: '';
+  position: absolute;
+  background: rgb(216 222 230 / 55%);
+}
+
+.gw-hud-reticle::before {
+  left: 50%;
+  top: -4px;
+  width: 1px;
+  height: 22px;
+}
+
+.gw-hud-reticle::after {
+  left: -4px;
+  top: 50%;
+  width: 22px;
+  height: 1px;
+}
+
+.gw-hud-focus {
+  left: 50%;
+  top: 68px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.gw-hud-focus-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.gw-hud-focus-name {
+  font-weight: 600;
+}
+
+.gw-hud-focus-verb {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gw-muted);
+}
+
+.gw-hud-focus-validity {
+  font-size: 12px;
+  color: var(--gw-muted);
+}
+
+.gw-hud-focus-validity--valid {
+  color: var(--gw-compatible);
+}
+
+.gw-hud-focus-validity--invalid {
+  color: var(--gw-invalid);
+}
+
+/* --- left column: objective line + field log (§33.1 row 3, §12.2 log entries) --- */
+
+/* One absolute anchor for the whole left column, so the surfaces inside it stack
+   without either one measuring the other: the objective line's height depends on how
+   much the requirement text wraps, and the log only exists once something is found. */
+.gw-hud-left {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(42ch, 32vw);
+}
+
+/* Inside the column the surfaces flow: `position: static` overrides the shared
+   `.gw-hud-surface` anchoring (two-class specificity, so it wins). */
+.gw-hud-left > .gw-hud-surface {
+  position: static;
+  max-width: none;
+}
+
+.gw-hud-objective {
+  display: flex;
+  flex-direction: column;
+}
+
+.gw-hud-objective-title {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.gw-hud-objective-title--none {
+  font-weight: 400;
+  color: var(--gw-muted);
+}
+
+.gw-hud-objective-state {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--gw-muted);
+}
+
+/* The outstanding requirement: a bar (shape) plus a warning glyph plus text. */
+.gw-hud-objective-failure {
+  display: flex;
+  gap: 6px;
+  margin-top: 3px;
+  padding-left: 6px;
+  border-left: 2px solid var(--gw-hazardous);
+  font-size: 12px;
+  color: var(--gw-hazardous);
+}
+
+/* --- field log (§12.2: discovered clues, consumer "Story UI, HUD") ---------- */
+
+.gw-hud-log-heading {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--gw-muted);
+}
+
+.gw-hud-log-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A discovered entry is marked by a bar (shape) plus its title/text, never colour
+   alone (§33.2 rule 4). */
+.gw-hud-log-entry {
+  padding-left: 8px;
+  border-left: 2px solid var(--gw-complete);
+}
+
+.gw-hud-log-title {
+  display: block;
+  font-weight: 600;
+}
+
+.gw-hud-log-text {
+  display: block;
+  font-size: 12px;
+  color: var(--gw-muted);
+}
+
+/* --- manipulation strip (§33.1 row 2) ------------------------------------ */
+
+.gw-hud-manipulation {
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.gw-hud-held {
+  font-weight: 600;
+}
+
+.gw-hud-held--empty {
+  font-weight: 400;
+  color: var(--gw-muted);
+}
+
+.gw-hud-socket {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.gw-hud-socket--none {
+  color: var(--gw-unpowered);
+}
+
+.gw-hud-socket--preview {
+  color: var(--gw-compatible);
+}
+
+.gw-hud-socket--occupied {
+  color: var(--gw-unpowered);
+}
+
+.gw-hud-socket--invalid {
+  color: var(--gw-invalid);
+}
+
+.gw-hud-socket--blocked {
+  color: var(--gw-hazardous);
+}
+
+.gw-hud-bindings {
+  display: inline-flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--gw-muted);
+}
+
+.gw-hud-binding {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+/* --- resource panel (§33.1 row 4, §27.3 compact form) -------------------- */
+
+.gw-hud-resources {
+  left: 16px;
+  bottom: 16px;
+  min-width: 190px;
+}
+
+.gw-hud-parts {
+  display: block;
+  font-weight: 600;
+}
+
+.gw-hud-resources-label {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--gw-muted);
+}
+
+.gw-hud-materials,
+.gw-hud-blueprints {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+
+/* --- hint + scanner affordances (§33.1 row 5, §29) ----------------------- */
+
+.gw-hud-hint {
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: min(38ch, 30vw);
+  text-align: right;
+}
+
+.gw-hud-hint-level {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--gw-muted);
+}
+
+/* The HUD's only two pointer targets: opt back in explicitly (#hud-root is none). */
+.gw-hud-hint-button,
+.gw-hud-scanner-button {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  color: var(--gw-interactive);
+  background: rgb(42 46 51 / 92%);
+  border: 1px solid var(--gw-concrete);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.gw-hud-hint-button:hover,
+.gw-hud-scanner-button:hover:not(:disabled) {
+  border-color: var(--gw-interactive);
+}
+
+.gw-hud-hint-button:focus-visible,
+.gw-hud-scanner-button:focus-visible {
+  outline: 2px solid var(--gw-interactive);
+  outline-offset: 1px;
+}
+
+.gw-hud-hint-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gw-interactive);
+}
+
+/* Locked scanner (§27.3): dashed border + written reason, never colour alone. */
+.gw-hud-scanner--locked,
+.gw-hud-scanner-button:disabled {
+  border-style: dashed;
+  color: var(--gw-unpowered);
+  cursor: not-allowed;
+}
+
+/* Reveal states (§29.3): the button *says* which one it is, and the border style differs
+   per state as well, so the running one never reads by colour alone (§33.2 rule 4). */
+.gw-hud-scanner--scanning {
+  border-color: var(--gw-interactive);
+  color: var(--gw-interactive);
+}
+
+.gw-hud-scanner--cooling {
+  border-style: dotted;
+  color: var(--gw-unpowered);
+}
+
+.gw-hud-scanner-text {
+  margin: 0;
+  max-width: min(38ch, 30vw);
+  font-size: 12px;
+  text-align: right;
+  color: var(--gw-unpowered);
+}
+
+/* --- toasts (§33.1 row 6) ------------------------------------------------ */
+
+.gw-hud-toasts {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  width: min(36ch, 30vw);
+}
+
+.gw-hud-toast-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gw-hud-toast {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 9px;
+  background: rgb(12 14 16 / 86%);
+  border: 1px solid var(--gw-concrete);
+  border-left-width: 3px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.gw-hud-toast-icon {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+.gw-hud-toast-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.gw-hud-toast-text {
+  color: var(--gw-interactive);
+}
+
+.gw-hud-toast--info {
+  border-left-color: var(--gw-interactive);
+  color: var(--gw-interactive);
+}
+
+.gw-hud-toast--warn {
+  border-left-color: var(--gw-hazardous);
+  color: var(--gw-hazardous);
+}
+
+.gw-hud-toast--error {
+  border-left-color: var(--gw-invalid);
+  color: var(--gw-invalid);
+}
+
+/* --- save / recovery note (§31.6) --------------------------------------- */
+
+.gw-hud-save-note {
+  position: absolute;
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 4px 10px;
+  /* Not a bare .gw-hud-surface (the HUD test asserts surfaces by class): the pill
+     backing exists because --gw-complete over the lab step or the red test block
+     measured ≈1.2–1.5:1 — unreadable — when this text floated with no panel. */
+  background: rgb(12 14 16 / 86%);
+  border: 1px solid var(--gw-concrete);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--gw-complete);
+}
+
+/* --- entry pointer guidance (Bug 21) ------------------------------------- */
+
+.gw-hud-entry {
+  position: absolute;
+  left: 50%;
+  bottom: 78px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 4px 10px;
+  max-width: min(70ch, 84vw);
+  text-align: center;
+  /* Pill-backed like the save note: this line is the first thing a new player reads,
+     and --gw-interactive floating over the lab step measured below AA unbacked. */
+  background: rgb(12 14 16 / 86%);
+  border: 1px solid var(--gw-concrete);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--gw-interactive);
+}
+
+/* LAST in this block on purpose: two-class specificity, so hiding always wins
+   over any `display` declared by the surface rules above (or added later). */
+.gw-hud .gw-hud-hidden {
+  display: none;
+}
+
+.gw-hud-material {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.gw-hud-material-count {
+  color: var(--gw-muted);
+}
+
+.gw-hud-blueprint {
+  color: var(--gw-complete);
+}
