@@ -328,3 +328,27 @@ describe('CameraRig — previewPose (PLAN T2.2)', () => {
     expect(rig.currentYaw).toBe(yawBefore);
   });
 });
+
+describe('CameraRig — PLAN T2.4', () => {
+  it('does not recentre while the player stands still', () => {
+    const rig = new CameraRig(new FakePhysics());
+    step(rig, { lookDeltaX: 20 });
+    const before = rig.currentYaw;
+    rig.step(DT, {
+      lookDeltaX: 0,
+      lookDeltaY: 0,
+      player: { position: vec3(0, 0, 0), facingYaw: 0 },
+      mode: 'follow',
+      idleTime: DEFAULT_CAMERA_TUNING.recenterDelay + 0.5,
+      playerMoving: false
+    });
+    expect(rig.currentYaw).toBeCloseTo(before, 9);
+  });
+
+  it("offsets the look target to the camera's right", () => {
+    const rig = new CameraRig(new FakePhysics(), { shoulderOffset: 0.45 });
+    const pose = step(rig);
+    expect(pose.target.x).toBeCloseTo(0.45, 6);
+    expect(pose.target.z).toBeCloseTo(0, 6);
+  });
+});

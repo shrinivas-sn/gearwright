@@ -163,7 +163,8 @@ export class PhaseWorld {
       player: { position: player.position, facingYaw: player.facingYaw },
       // Manipulation framing (ARCH §17): eased by the rig, never snapped.
       mode: holding ? 'manipulation' : 'follow',
-      idleTime: this.lookIdleTime
+      idleTime: this.lookIdleTime,
+      playerMoving: Math.hypot(player.velocity.x, player.velocity.z) > 0.4
     });
 
     // Interaction runs next: it consumes the solved camera pose (ARCH §14 order).

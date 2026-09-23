@@ -518,7 +518,10 @@ function boot(): void {
   physics.setStaticColliders([...LAB_WORLD.colliders, ...BRANCH_A_WORLD.colliders]);
 
   const player = new PlayerController(physics, { ...LAB_WORLD.spawn });
-  const camera = new CameraRig(physics);
+  // PLAN T2.4: over-the-shoulder by default; `?shoulder=0` centres it (the browser harness
+  // aims through the player and uses this).
+  const SHOULDER_OFFSET = new URLSearchParams(window.location.search).get('shoulder') === '0' ? 0 : 0.45;
+  const camera = new CameraRig(physics, { shoulderOffset: SHOULDER_OFFSET });
   const input = new InputSystem();
   const interaction = new InteractionSystem(physics, [...LAB_INTERACTABLES, ...BRANCH_A_INTERACTABLES]);
 

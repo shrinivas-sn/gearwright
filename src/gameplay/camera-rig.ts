@@ -55,6 +55,8 @@ export interface CameraTuning {
    */
   readonly modeBlendRate: number;
   readonly fov: number;
+  /** Metres the look target sits to the camera's right (over-the-shoulder). 0 = centred. */
+  readonly shoulderOffset?: number | undefined;
 }
 
 export const DEFAULT_CAMERA_TUNING: CameraTuning = {
@@ -85,6 +87,8 @@ export interface CameraStepInput {
   readonly mode: CameraMode;
   /** Seconds since look input was last non-zero (drives auto-recentre). */
   readonly idleTime: number;
+  /** False while the player stands still: the auto-recentre never fights a player at a machine. Absent = legacy (recentre by idle time only). */
+  readonly playerMoving?: boolean | undefined;
 }
 
 const FULL_CIRCLE = Math.PI * 2;
@@ -105,6 +109,7 @@ export class CameraRig {
   private readonly direction: Vec3;
   private readonly right: Vec3;
   private readonly up: Vec3;
+  private readonly scratchRight: Vec3;
 
   private yaw = 0;
   private pitch = -0.32;
@@ -127,6 +132,7 @@ export class CameraRig {
     this.direction = vec3();
     this.right = vec3();
     this.up = vec3(0, 1, 0);
+    this.scratchRight = vec3();
   }
 
   /**
@@ -144,6 +150,7 @@ export class CameraRig {
     this.desiredTarget.y =
       input.player.position.y + this.tuning.targetHeight + this.tuning.manipulationLift * this.modeBlend;
     this.desiredTarget.z = input.player.position.z;
+    this.applyShoulderOffset();
     this.placeAndCollide();
 
     if (!this.initialised) {
@@ -218,6 +225,7 @@ export class CameraRig {
   }
 
   private recentreBehindPlayer(input: CameraStepInput, dt: number): void {
+    if (input.playerMoving === false) return;
     if (input.idleTime < this.tuning.recenterDelay) return;
     // Camera yaw aligns with the player's facing so the eye sits behind them
     // (yaw 0 = looking toward -Z, three.js convention).
@@ -225,6 +233,25 @@ export class CameraRig {
     const diff = wrapAngle(targetYaw - this.yaw);
     const maxStep = this.tuning.recenterSpeed * dt;
     this.yaw = wrapAngle(this.yaw + Math.min(Math.max(diff, -maxStep), maxStep));
+  }
+
+  /** Over-the-shoulder framing, pulled in if a wall sits on the camera's right. */
+  private applyShoulderOffset(): void {
+    const shoulder = this.tuning.shoulderOffset ?? 0;
+    if (!(shoulder > 0)) return;
+    // Camera-right on the ground plane: yaw 0 looks toward -Z, so right is +X.
+    this.scratchRight.x = Math.cos(this.yaw);
+    this.scratchRight.y = 0;
+    this.scratchRight.z = -Math.sin(this.yaw);
+    const hit = this.physics.castSphere(
+      this.desiredTarget,
+      this.tuning.collisionRadius * 0.5,
+      this.scratchRight,
+      shoulder + this.tuning.skin
+    );
+    const offset = hit ? Math.max(0, hit.distance - this.tuning.skin) : shoulder;
+    this.desiredTarget.x += this.scratchRight.x * offset;
+    this.desiredTarget.z += this.scratchRight.z * offset;
   }
 
   private advanceModeBlend(input: CameraStepInput, dt: number): void {
