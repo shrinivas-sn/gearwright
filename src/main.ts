@@ -7,6 +7,8 @@
 import './style.css';
 
 import { createApp, type App } from './app.ts';
+import { clamp01, lerp, lerpAngle } from './core/interp.ts';
+import { DEFAULT_LOOP_CONFIG } from './core/loop.ts';
 import { ThreeRenderer } from './adapters/three-renderer.ts';
 import { KinematicPhysics } from './adapters/kinematic-physics.ts';
 import { DomInputSource } from './adapters/dom-input-source.ts';
@@ -1050,6 +1052,18 @@ function boot(): void {
     stagedVersion: () => actions.version
   });
 
+  /**
+   * PLAN T2.2 render interpolation memory (presentation only): the player pose and the
+   * camera anchor as they were *before* the most recent fixed step.
+   */
+  const interp = {
+    primed: false,
+    player: { x: 0, y: 0, z: 0 },
+    facingYaw: 0,
+    anchor: { x: 0, y: 0, z: 0 }
+  };
+  const lerpVec = (a: Vec3, b: Vec3, t: number): Vec3 => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) });
+
   const app: App = createApp({
     canvas,
     renderPort,
@@ -1062,6 +1076,16 @@ function boot(): void {
     world: {
       sample: () => inputSource.sample(),
       step: (dt, raw) => {
+        const playerBefore = player.snapshot();
+        const cameraBefore = camera.snapshot();
+        interp.player.x = playerBefore.position.x;
+        interp.player.y = playerBefore.position.y;
+        interp.player.z = playerBefore.position.z;
+        interp.facingYaw = playerBefore.facingYaw;
+        interp.anchor.x = cameraBefore.target.x;
+        interp.anchor.y = cameraBefore.target.y;
+        interp.anchor.z = cameraBefore.target.z;
+        interp.primed = true;
         const result = world.step(dt, raw);
         save.addPlaytime(dt);
         // §29.2 hint ladder (M10): one fixed step of the anti-annoyance rules, fed
@@ -1143,7 +1167,7 @@ function boot(): void {
         // M10: the HUD's render call sits in `present` (below); the *reasons* it
         // shows come from this step's evaluation, read back through the SMs.
       },
-      present: () => {
+      present: (alpha) => {
         // A stage advance re-renders the hub (§26). Cheap and edge-triggered: the
         // comparison is free and `setLabWorld` is documented idempotent.
         refreshHubVisuals();
@@ -1152,15 +1176,32 @@ function boot(): void {
         // §33.2 rule 5) plus the toast clock.
         hudRendered.render();
         const playerState = player.snapshot();
-        const cameraPose = camera.snapshot();
+        const cameraNow = camera.snapshot();
+        // PLAN T2.2: blend between the last two fixed steps, unless the player teleported.
+        const teleported =
+          Math.hypot(
+            playerState.position.x - interp.player.x,
+            playerState.position.y - interp.player.y,
+            playerState.position.z - interp.player.z
+          ) > 2;
+        const blend = interp.primed && !teleported ? clamp01(alpha) : 1;
+        const lookCap = input.bindingSnapshot.maxLookDeltaPerStep;
+        const pendingX = Math.min(Math.max(inputSource.pendingLookX, -lookCap), lookCap);
+        const pendingY = Math.min(Math.max(inputSource.pendingLookY, -lookCap), lookCap);
+        const cameraPose = camera.previewPose({
+          anchor: lerpVec(interp.anchor, cameraNow.target, blend),
+          pendingLookX: pendingX,
+          pendingLookY: pendingY,
+          dt: DEFAULT_LOOP_CONFIG.fixedDt
+        });
         renderPort.setView(cameraPose);
         // §32.2's positional emitters need a listener, and the camera is it — handed over
         // in the shape `setView` already takes, so the adapter derives the facing vector
         // and the composition computes nothing audio-specific.
         audio.setListener(cameraPose);
         renderPort.syncPlayerMarker({
-          position: playerState.position,
-          facingYaw: playerState.facingYaw,
+          position: lerpVec(interp.player, playerState.position, blend),
+          facingYaw: lerpAngle(interp.facingYaw, playerState.facingYaw, blend),
           grounded: playerState.grounded,
           speed: playerState.speed,
           walkSpeed: DEFAULT_PLAYER_TUNING.walkSpeed,
@@ -1170,7 +1211,7 @@ function boot(): void {
         // Carryables and pulses (M6): the composer owns both — poses come from the
         // SM, the canonical socket pose wins once attached (ARCH §12.2), and the
         // visual spin only advances while the machine actually propagates.
-        composer.present();
+        composer.present(blend);
 
         // The §29.3 reveal (M10): the presenter hands over the fading overlay, or clears
         // it once — the renderer never decides when a scan ends.

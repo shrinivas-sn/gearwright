@@ -343,3 +343,24 @@ describe('FeedbackComposer — §32.3 cues on the §32.2 buses', () => {
     for (const request of audio.requests) expect(request.emitter).toBeNull();
   });
 });
+
+describe('FeedbackComposer — interpolation (PLAN T2.2)', () => {
+  it('blends between the last two steps and never smears a jump', () => {
+    const render = new RecordingRenderPort();
+    const composer = new FeedbackComposer(render);
+    const world = makeWorld({ attached: false });
+    const view = viewOf(world);
+    const start = world.snapshots[0]!;
+    composer.update(DT, [], view);
+    world.snapshots[0] = { ...start, center: { x: start.center.x + 0.2, y: start.center.y, z: start.center.z } };
+    composer.update(DT, [], view);
+    composer.present(0.5);
+    expect(stateOf(render, 'gear-a').center.x).toBeCloseTo(start.center.x + 0.1, 9);
+    composer.present(1);
+    expect(stateOf(render, 'gear-a').center.x).toBe(start.center.x + 0.2);
+    world.snapshots[0] = { ...start, center: { x: start.center.x + 5, y: start.center.y, z: start.center.z } };
+    composer.update(DT, [], view);
+    composer.present(0.5);
+    expect(stateOf(render, 'gear-a').center.x).toBe(start.center.x + 5);
+  });
+});

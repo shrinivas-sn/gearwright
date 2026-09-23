@@ -130,6 +130,15 @@ export class DomInputSource {
     return this.pointerLocked;
   }
 
+  /** Look deltas received since the last `sample()` — read-only, for render-time preview. */
+  get pendingLookX(): number {
+    return this.lookDeltaX;
+  }
+
+  get pendingLookY(): number {
+    return this.lookDeltaY;
+  }
+
   /**
    * Ask the browser to capture the pointer (must run inside a user gesture —
    * the composition calls this from click/keydown handlers). Resolves when the

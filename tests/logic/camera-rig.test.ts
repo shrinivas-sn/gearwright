@@ -314,3 +314,17 @@ describe('CameraRig — determinism', () => {
     expect(firstPoses).toEqual(secondPoses);
   });
 });
+
+describe('CameraRig — previewPose (PLAN T2.2)', () => {
+  it('is pure and answers pending look at once', () => {
+    const rig = new CameraRig(new FakePhysics());
+    const base = step(rig);
+    const yawBefore = rig.currentYaw;
+    const still = rig.previewPose({ anchor: base.target, pendingLookX: 0, pendingLookY: 0, dt: DT });
+    expect(still.target).toEqual(base.target);
+    expect(eyeDistance(still)).toBeCloseTo(DEFAULT_CAMERA_TUNING.distance, 6);
+    const turned = rig.previewPose({ anchor: base.target, pendingLookX: 60, pendingLookY: 0, dt: DT });
+    expect(Math.abs(turned.eye.x - still.eye.x)).toBeGreaterThan(0.1);
+    expect(rig.currentYaw).toBe(yawBefore);
+  });
+});

@@ -109,6 +109,7 @@ export class CameraRig {
   private yaw = 0;
   private pitch = -0.32;
   private distance: number;
+  private armLength: number;
   private occludedDistance: number | null = null;
   /** 0 = follow framing, 1 = fully in manipulation framing (eased, never snapped). */
   private modeBlend = 0;
@@ -118,6 +119,7 @@ export class CameraRig {
     this.physics = physics;
     this.tuning = { ...DEFAULT_CAMERA_TUNING, ...tuning };
     this.distance = this.tuning.distance;
+    this.armLength = this.tuning.distance;
     this.eye = vec3();
     this.desired = vec3();
     this.target = vec3();
@@ -171,6 +173,42 @@ export class CameraRig {
   /** Current yaw — consumed by `PlayerController` for camera-relative motion. */
   get currentYaw(): number {
     return this.yaw;
+  }
+
+  /**
+   * Render-time pose (presentation only, never fed back into the sim): the rig's current
+   * yaw/pitch plus look deltas the next fixed step has not consumed yet, orbiting the given
+   * (interpolated) anchor at the current arm length. It mutates nothing, so the simulation
+   * stays deterministic — but the view answers the mouse every rendered frame.
+   */
+  previewPose(input: {
+    readonly anchor: Vec3;
+    readonly pendingLookX: number;
+    readonly pendingLookY: number;
+    readonly dt: number;
+  }): CameraPoseState {
+    const dt = Number.isFinite(input.dt) && input.dt > 0 ? input.dt : 1 / 30;
+    const lookX = Number.isFinite(input.pendingLookX) ? input.pendingLookX : 0;
+    const lookY = Number.isFinite(input.pendingLookY) ? input.pendingLookY : 0;
+    const yaw = wrapAngle(this.yaw - lookX * this.tuning.yawSpeed * dt);
+    const pitch = Math.min(
+      this.tuning.maxPitch,
+      Math.max(this.tuning.minPitch, this.pitch - lookY * this.tuning.pitchSpeed * dt)
+    );
+    const cosPitch = Math.cos(pitch);
+    const direction = { x: Math.sin(yaw) * cosPitch, y: Math.sin(pitch), z: Math.cos(yaw) * cosPitch };
+    let arm = this.armLength;
+    const hit = this.physics.castSphere(input.anchor, this.tuning.collisionRadius, direction, arm + this.tuning.skin);
+    if (hit) arm = Math.min(arm, Math.max(this.tuning.minDistance, hit.distance - this.tuning.skin));
+    return {
+      eye: {
+        x: input.anchor.x + direction.x * arm,
+        y: input.anchor.y + direction.y * arm,
+        z: input.anchor.z + direction.z * arm
+      },
+      target: { x: input.anchor.x, y: input.anchor.y, z: input.anchor.z },
+      fov: this.tuning.fov
+    };
   }
 
   private integrateLook(input: CameraStepInput, dt: number): void {
@@ -236,6 +274,7 @@ export class CameraRig {
 
     const effective = this.occludedDistance ?? this.distance;
     const clamped = Math.min(Math.max(effective, this.tuning.minDistance), this.tuning.maxDistance);
+    this.armLength = clamped;
 
     this.desired.x = anchor.x + this.direction.x * clamped;
     this.desired.y = anchor.y + this.direction.y * clamped;

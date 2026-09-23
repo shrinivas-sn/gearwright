@@ -39,6 +39,7 @@ import type { MachineDerivedState } from '../game-state/machine-graph.ts';
 import type { FeedbackIntent } from '../gameplay/feedback-model.ts';
 import type { CarryableSnapshot } from '../gameplay/manipulation-system.ts';
 import type { Vec3 } from '../core/vec3.ts';
+import { clamp01, lerp, lerpAngle } from '../core/interp.ts';
 import type {
   CarryableRenderState,
   FeedbackPulseKind,
@@ -98,6 +99,13 @@ interface MutableCarryableState {
   held: boolean;
   blocked: boolean;
   attached: boolean;
+  prevX: number;
+  prevY: number;
+  prevZ: number;
+  prevYaw: number;
+  prevSpin: number;
+  /** False until the first step wrote this state (then prev = current). */
+  initialised: boolean;
 }
 
 /** Rotation sense of a machine's first output, as a sign (0 = unknown → no motion). */
@@ -128,6 +136,8 @@ export class FeedbackComposer {
   } | null = null;
   private readonly states: MutableCarryableState[] = [];
   private readonly stateById = new Map<string, MutableCarryableState>();
+  private readonly presented: MutableCarryableState[] = [];
+  private readonly presentedById = new Map<string, MutableCarryableState>();
   private readonly scratchPulse: { point: Vec3; kind: FeedbackPulseKind; strength: number } = {
     point: { x: 0, y: 0, z: 0 },
     kind: 'attach',
@@ -163,8 +173,30 @@ export class FeedbackComposer {
   }
 
   /** Hand the current presentation to the renderer (called from the frame hook). */
-  present(): void {
-    this.render.setCarryables(this.states as ReadonlyArray<CarryableRenderState>);
+  present(alpha = 1): void {
+    const t = clamp01(alpha);
+    this.presented.length = 0;
+    for (const state of this.states) {
+      const out = this.presentedFor(state.id);
+      // A jump of more than a metre in one step is a relocation (attach, detach search),
+      // never motion: draw it where it is instead of smearing it across the room.
+      const jump =
+        Math.hypot(state.center.x - state.prevX, state.center.y - state.prevY, state.center.z - state.prevZ) > 1;
+      const k = jump ? 1 : t;
+      out.center.x = lerp(state.prevX, state.center.x, k);
+      out.center.y = lerp(state.prevY, state.center.y, k);
+      out.center.z = lerp(state.prevZ, state.center.z, k);
+      out.halfExtents.x = state.halfExtents.x;
+      out.halfExtents.y = state.halfExtents.y;
+      out.halfExtents.z = state.halfExtents.z;
+      out.yaw = lerpAngle(state.prevYaw, state.yaw, k);
+      out.spinAngle = lerp(state.prevSpin, state.spinAngle, k);
+      out.held = state.held;
+      out.blocked = state.blocked;
+      out.attached = state.attached;
+      this.presented.push(out);
+    }
+    this.render.setCarryables(this.presented as ReadonlyArray<CarryableRenderState>);
     if (this.pulse === null) {
       this.render.setFeedbackPulse(null);
       return;
@@ -276,16 +308,26 @@ export class FeedbackComposer {
 
       const state = this.stateFor(snapshot.id);
       const center = attachedPose?.center ?? snapshot.center;
+      const yaw = (attachedPose ?? snapshot).yaw;
+      // A stopped machine *holds* its phase instead of rewinding: the motion stopping
+      // is the read, and a visible snap back would be a lie about what the machine did.
+      const spin = machineId === null ? 0 : this.spinAngles.get(machineId) ?? 0;
+      // Interpolation memory (PLAN T2.2): the previous step's values, or the new ones on
+      // the first step so nothing slides in from the origin.
+      state.prevX = state.initialised ? state.center.x : center.x;
+      state.prevY = state.initialised ? state.center.y : center.y;
+      state.prevZ = state.initialised ? state.center.z : center.z;
+      state.prevYaw = state.initialised ? state.yaw : yaw;
+      state.prevSpin = state.initialised ? state.spinAngle : spin;
+      state.initialised = true;
       state.center.x = center.x;
       state.center.y = center.y;
       state.center.z = center.z;
       state.halfExtents.x = snapshot.halfExtents.x;
       state.halfExtents.y = snapshot.halfExtents.y;
       state.halfExtents.z = snapshot.halfExtents.z;
-      state.yaw = (attachedPose ?? snapshot).yaw;
-      // A stopped machine *holds* its phase instead of rewinding: the motion stopping
-      // is the read, and a visible snap back would be a lie about what the machine did.
-      state.spinAngle = machineId === null ? 0 : this.spinAngles.get(machineId) ?? 0;
+      state.yaw = yaw;
+      state.spinAngle = spin;
       state.held = snapshot.held;
       state.blocked = snapshot.blocked;
       state.attached = attachedPose !== null;
@@ -305,9 +347,39 @@ export class FeedbackComposer {
       spinAngle: 0,
       held: false,
       blocked: false,
-      attached: false
+      attached: false,
+      prevX: 0,
+      prevY: 0,
+      prevZ: 0,
+      prevYaw: 0,
+      prevSpin: 0,
+      initialised: false
     };
     this.stateById.set(componentId, created);
+    return created;
+  }
+
+  /** Reuse-or-create the presented (interpolated) mirror for a component id. */
+  private presentedFor(componentId: string): MutableCarryableState {
+    const existing = this.presentedById.get(componentId);
+    if (existing) return existing;
+    const created: MutableCarryableState = {
+      id: componentId,
+      center: { x: 0, y: 0, z: 0 },
+      halfExtents: { x: 0, y: 0, z: 0 },
+      yaw: 0,
+      spinAngle: 0,
+      held: false,
+      blocked: false,
+      attached: false,
+      prevX: 0,
+      prevY: 0,
+      prevZ: 0,
+      prevYaw: 0,
+      prevSpin: 0,
+      initialised: true
+    };
+    this.presentedById.set(componentId, created);
     return created;
   }
 

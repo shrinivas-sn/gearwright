@@ -50,7 +50,7 @@ export interface AppDeps {
 export interface WorldHooks {
   readonly sample: (() => RawInputSample) | undefined;
   readonly step: (dt: number, raw: RawInputSample) => void;
-  readonly present: () => void;
+  readonly present: (alpha: number) => void;
   readonly clearInput: () => void;
 }
 
@@ -98,7 +98,7 @@ export function createApp(deps: AppDeps): App {
         deps.world?.step(dt, deps.world.sample?.() ?? EMPTY_RAW_SAMPLE);
       },
       render: (alpha) => {
-        deps.world?.present();
+        deps.world?.present(alpha);
         deps.renderPort.render(alpha);
       }
     },
