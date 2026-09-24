@@ -64,23 +64,15 @@ import { isCompatible } from './game-state/snap-rules.ts';
 import type { ValidationReason } from './game-state/validator.ts';
 import type { SocketDefinition } from './game-state/component-model.ts';
 import type { Vec3 } from './core/vec3.ts';
+import { bm1PropInteractables, bm1PropMeshes } from './levels/branch-a.ts';
 import {
-  BRANCH_A_CARRYABLES,
-  BRANCH_A_COMPONENTS,
-  BRANCH_A_INITIAL_ATTACHMENTS,
-  BRANCH_A_INTERACTABLES,
-  BRANCH_A_SOCKETS,
-  BRANCH_A_WORLD,
-  bm1PropInteractables,
-  bm1PropMeshes
-} from './levels/branch-a.ts';
-import {
-  LAB_CARRYABLE,
-  LAB_COMPONENTS,
-  LAB_INTERACTABLES,
-  LAB_SOCKETS,
-  LAB_WORLD
-} from './levels/lab-world.ts';
+  SHIPPED_CARRYABLES,
+  SHIPPED_COMPONENTS,
+  SHIPPED_INITIAL_ATTACHMENTS,
+  SHIPPED_INTERACTABLES,
+  SHIPPED_SOCKETS,
+  SHIPPED_WORLD
+} from './levels/shipped-content.ts';
 import type { SocketInstance } from './game-state/component-model.ts';
 
 /** Pair each placed socket with its definition (data + level placement). */
@@ -106,8 +98,8 @@ const CHECKPOINT_DEFINITIONS: ReadonlyArray<CheckpointDefinition> = [
 /** Assemble the shipped level's L1 content: definitions from `data/`, placement from `levels/`. */
 function buildMachineContent(): MachineContent {
   return {
-    registry: new ComponentRegistry(COMPONENT_DEFINITIONS, [...LAB_COMPONENTS, ...BRANCH_A_COMPONENTS]),
-    sockets: [...LAB_SOCKETS, ...BRANCH_A_SOCKETS],
+    registry: new ComponentRegistry(COMPONENT_DEFINITIONS, [...SHIPPED_COMPONENTS]),
+    sockets: [...SHIPPED_SOCKETS],
     socketDefinitions: SOCKET_DEFINITIONS,
     machines: MACHINE_DEFINITIONS
   };
@@ -515,15 +507,15 @@ function boot(): void {
 
   // --- Level composition (ARCH §40: this file is a composition root) ---
   const physics = new KinematicPhysics();
-  physics.setStaticColliders([...LAB_WORLD.colliders, ...BRANCH_A_WORLD.colliders]);
+  physics.setStaticColliders([...SHIPPED_WORLD.colliders]);
 
-  const player = new PlayerController(physics, { ...LAB_WORLD.spawn });
+  const player = new PlayerController(physics, { ...SHIPPED_WORLD.spawn });
   // PLAN T2.4: over-the-shoulder by default; `?shoulder=0` centres it (the browser harness
   // aims through the player and uses this).
   const SHOULDER_OFFSET = new URLSearchParams(window.location.search).get('shoulder') === '0' ? 0 : 0.45;
   const camera = new CameraRig(physics, { shoulderOffset: SHOULDER_OFFSET });
   const input = new InputSystem();
-  const interaction = new InteractionSystem(physics, [...LAB_INTERACTABLES, ...BRANCH_A_INTERACTABLES]);
+  const interaction = new InteractionSystem(physics, [...SHIPPED_INTERACTABLES]);
 
   // L1 truth (M4/M5): the level's components, sockets and machines, plus the puzzle
   // that reads them (§25). The graph starts at the level's canonical edge list, so
@@ -531,7 +523,7 @@ function boot(): void {
   const content = buildMachineContent();
   const graph = new MachineGraph();
   graph.configure(content);
-  graph.reset([...BRANCH_A_INITIAL_ATTACHMENTS]);
+  graph.reset([...SHIPPED_INITIAL_ATTACHMENTS]);
   graph.recomputeIfDirty();
 
   const integrityErrors = content.registry.checkIntegrity(
@@ -546,8 +538,8 @@ function boot(): void {
 
   // The level's carryables drive both layers: the SM owns their poses, the snap
   // layer owns their candidates (M6 generalised both to the authored set).
-  const carryables = [LAB_CARRYABLE, ...BRANCH_A_CARRYABLES];
-  const resolvedSockets = resolveSockets([...LAB_SOCKETS, ...BRANCH_A_SOCKETS]);
+  const carryables = [...SHIPPED_CARRYABLES];
+  const resolvedSockets = resolveSockets([...SHIPPED_SOCKETS]);
   const snap = new SnapSystem(
     physics,
     graph,
@@ -709,8 +701,7 @@ function boot(): void {
   // a restored save decides the hub's state, not the other way round.
   const branchStateOf = (branchId: string): BranchState => progression.branchState(branchId);
   physics.setStaticColliders([
-    ...LAB_WORLD.colliders,
-    ...BRANCH_A_WORLD.colliders,
+    ...SHIPPED_WORLD.colliders,
     ...hubColliders(branchStateOf)
   ]);
 
@@ -733,8 +724,7 @@ function boot(): void {
     }
   };
   interaction.setInteractables([
-    ...LAB_INTERACTABLES,
-    ...BRANCH_A_INTERACTABLES,
+    ...SHIPPED_INTERACTABLES,
     ...hubInteractables(branchStateOf)
   ]);
   // --- ADR-018: the staged props (BM-1's priming lines + engage lever) ------------
@@ -761,8 +751,7 @@ function boot(): void {
     if (on && !bm1PropsOn) {
       bm1PropsOn = true;
       interaction.setInteractables([
-        ...LAB_INTERACTABLES,
-        ...BRANCH_A_INTERACTABLES,
+        ...SHIPPED_INTERACTABLES,
         ...hubInteractables(branchStateOf),
         ...bm1PropInteractables(true)
       ]);
@@ -983,8 +972,7 @@ function boot(): void {
   // a prop whose action is logged is drawn lit, so the render cannot disagree with
   // validation (both read the same log).
   const worldMeshes = (): ReadonlyArray<LabWorldMesh> => [
-    ...LAB_WORLD.meshes,
-    ...BRANCH_A_WORLD.meshes,
+    ...SHIPPED_WORLD.meshes,
     ...hubMeshes(branchStateOf, progression.hubStageIndex, (clueId) => progression.hasClue(clueId)),
     ...bm1PropMeshes((actionId) => actions.has(actionId))
   ];
