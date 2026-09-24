@@ -206,9 +206,9 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 - [x] T6.2 Title screen (Start/Continue, New Game, Controls)
 - [x] T6.3 Pause overlay: controls + New Game
 - [x] T6.4 Settings (sensitivity, invert Y, volume)
-- [ ] T6.5 Touch-only device notice
-- [ ] Fix-up
-- [ ] CHECKPOINT 6
+- [x] T6.5 Touch-only device notice
+- [x] Fix-up
+- [x] CHECKPOINT 6
 
 ### Phase 7 — Production + deployment
 - [ ] T7.1 Production-quiet game log
@@ -2784,6 +2784,19 @@ Verified:   `npm run typecheck` → clean (exit 0);
 Surprises:  none.
 Next:       T6.1 — create src/presentation/controls-table.ts
 Commit:     overhaul(CP5): checkpoint — phase 5 complete
+
+### Phase 6 — 24/09/2026
+Done:       T6.1 (controls table helper), T6.2 (boot title screen with continue/new game/controls), T6.3 (pause overlay with controls and new game), T6.4 (settings store & panel for sensitivity/invert Y/volume), T6.5 (touch-only fallback notice), Fix-up 6, CHECKPOINT 6
+Verified:   `npm run typecheck` → clean (exit 0);
+            `npx vitest run` → Test Files 49 passed (49), Tests 595 passed (595);
+            `npm run build` → dist/assets/index-fxGRkecE.js 765.52 kB │ gzip: 202.55 kB, built in 2.83s;
+            `npm run check:browser -- boot` → ok: true, problems: [], bootStatus: true, draws: 32, tris: 3.7k, pausedState: "paused", resumedState: "running";
+            `npm run check:browser -- title` → ok: true, problems: [], visibleAtBoot: true, buttonText: "Continue", hiddenAfterStart: true, lifecycle: "running";
+            `npm run check:browser -- hold` → ok: true, problems: [], hold.focused: true, hold.after.state: "Manipulation", hold.after.held: "gear-a";
+            `npm run check:browser -- branch` → exit 0, ok: true, problems: [], branchBurst: all true (bm1Reward, branchComplete, hubStage, plateAwake, autosave), branchClue: focused, discovered: true, branchReload: loaded: true, cluesRestored: true, stagedRestored: true, hubStage: true.
+Surprises:  none in Phase 6. T1.3 remains stashed [!].
+Next:       T7.1 — production-quiet game log (src/debug/log.ts)
+Commit:     overhaul(CP6): checkpoint — phase 6 complete
 
 <!-- Entry template (copy for each session):
 ### <Phase/Task> — <DD/MM/YYYY>
