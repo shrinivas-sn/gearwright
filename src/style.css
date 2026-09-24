@@ -664,3 +664,20 @@ body {
   margin-top: 12px;
   text-align: left;
 }
+
+.gw-controls {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.gw-controls td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--gw-steel);
+}
+
+.gw-controls-keys {
+  text-align: right;
+  color: var(--gw-powered);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}

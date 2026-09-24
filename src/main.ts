@@ -58,6 +58,7 @@ import { indexRequirements, scannerRevealFor, type ScannerReveal } from './game-
 import { ScannerOverlay, type ScannerSpec, type ScannerState } from './presentation/scanner-overlay.ts';
 import { Hud, type HudSnapshot, type HudObjectiveView, type HudResourceView, type HudLogView, type HudHintView, type HudCaptureView, type HudScannerState, type HudSocketState } from './presentation/hud.ts';
 import { PauseOverlay, type PauseCause } from './presentation/pause-overlay.ts';
+import { buildControlsTable, type ControlRow } from './presentation/controls-table.ts';
 import { HINT_LEVEL_DEFINITIONS, conceptualHintFor, reasonPlainText } from './data/hints.ts';
 import { MATERIAL_KINDS } from './game-state/inventory-system.ts';
 import { isCompatible } from './game-state/snap-rules.ts';
@@ -522,6 +523,24 @@ function boot(): void {
   const SHOULDER_OFFSET = new URLSearchParams(window.location.search).get('shoulder') === '0' ? 0 : 0.45;
   const camera = new CameraRig(physics, { shoulderOffset: SHOULDER_OFFSET });
   const input = new InputSystem();
+  /** PLAN T6.1: the controls, spelled from the live binding map (never hard-coded keys). */
+  const controlRows = (): ReadonlyArray<ControlRow> => {
+    const b = input.bindingSnapshot;
+    const k = (code: string): string => (code.startsWith('Key') ? code.slice(3) : code === 'ShiftLeft' ? 'Shift' : code);
+    return [
+      ['Move', `${k(b.forward)} ${k(b.left)} ${k(b.back)} ${k(b.right)}`],
+      ['Run', k(b.run)],
+      ['Look', 'Mouse'],
+      ['Grab · use · confirm', `${k(b.primary)} / Left click`],
+      ['Rotate held part', `${k(b.rotateLeft)} / ${k(b.rotateRight)}`],
+      ['Drop held part', k(b.secondary)],
+      ['Remove a mounted part', `${k(b.primary)}, then ${k(b.primary)} again`],
+      ['Hint', k(b.hint)],
+      ['Pause · release mouse', 'Esc']
+    ];
+  };
+  void controlRows;
+  void buildControlsTable;
   const interaction = new InteractionSystem(physics, [...SHIPPED_INTERACTABLES]);
 
   // L1 truth (M4/M5): the level's components, sockets and machines, plus the puzzle
