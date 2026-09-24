@@ -11,6 +11,7 @@
  */
 
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   EMPTY_RENDER_STATS,
@@ -83,6 +84,7 @@ export class ThreeRenderer implements RenderPort {
   private renderer: THREE.WebGLRenderer | null = null;
   private scene: THREE.Scene | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
+  private environment: THREE.Texture | null = null;
   private lights: THREE.Light[] = [];
   private disposables: Array<{ dispose(): void }> = [];
   private worldDisposables: Array<{ dispose(): void }> = [];
@@ -136,6 +138,7 @@ export class ThreeRenderer implements RenderPort {
     this.markerMaterial = markerMaterial;
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 1.06, 4, 12), markerMaterial);
     body.position.y = 1.06;
+    body.castShadow = true;
     const dot = new THREE.Mesh(
       new THREE.SphereGeometry(0.09, 12, 8),
       new THREE.MeshBasicMaterial({ color: 0xe8b23a })
@@ -239,6 +242,10 @@ export class ThreeRenderer implements RenderPort {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
+    // PLAN T5.1: one shadow map. PCFSoftShadowMap was removed in r186 (it warns and falls back),
+    // so PCFShadowMap is the correct soft-ish filter here.
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.setClearColor(0x1b1d20, 1);
     this.renderer = renderer;
 
@@ -299,13 +306,19 @@ export class ThreeRenderer implements RenderPort {
         // Merge refused (never expected for boxes): fall back to one mesh per box.
         for (const geometry of geometries) {
           this.worldDisposables.push(geometry);
-          this.labGroup.add(new THREE.Mesh(geometry, material));
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          this.labGroup.add(mesh);
         }
         continue;
       }
       if (geometries.length > 1) for (const geometry of geometries) geometry.dispose();
       this.worldDisposables.push(merged);
-      this.labGroup.add(new THREE.Mesh(merged, material));
+      const mesh = new THREE.Mesh(merged, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.labGroup.add(mesh);
     }
     this.labGroup.visible = this.labGroup.children.length > 0;
   }
@@ -479,6 +492,8 @@ export class ThreeRenderer implements RenderPort {
       emissiveIntensity: 0.3
     });
     const mesh = new THREE.Mesh(this.carryableGeometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     mesh.visible = false;
     this.scene?.add(mesh);
     this.disposables.push(material);
@@ -602,6 +617,8 @@ export class ThreeRenderer implements RenderPort {
     this.markerVisuals.clear();
     this.scannerVisuals.clear();
     this.scannerRoute.visible = false;
+    this.environment?.dispose();
+    this.environment = null;
     this.scene?.clear();
     this.scene = null;
     this.camera = null;
@@ -615,15 +632,39 @@ export class ThreeRenderer implements RenderPort {
   }
 
   private buildLights(): void {
-    if (!this.scene) return;
-    const hemisphere = new THREE.HemisphereLight(0xbfc6cf, 0x2a2e33, 1.1);
-    this.scene.add(hemisphere);
+    if (!this.scene || !this.renderer) return;
+    const scene = this.scene;
+    const hemisphere = new THREE.HemisphereLight(0xbfc6cf, 0x2a2e33, 0.7);
+    scene.add(hemisphere);
     this.lights.push(hemisphere);
 
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
-    key.position.set(8, 12, 6);
-    this.scene.add(key);
+    const key = new THREE.DirectionalLight(0xfff4e6, 2.0);
+    key.position.set(10, 18, 8);
+    key.target.position.set(0, 0, 0);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    const shadowCamera = key.shadow.camera;
+    shadowCamera.left = -24;
+    shadowCamera.right = 24;
+    shadowCamera.top = 24;
+    shadowCamera.bottom = -24;
+    shadowCamera.near = 1;
+    shadowCamera.far = 70;
+    shadowCamera.updateProjectionMatrix();
+    key.shadow.bias = -0.0005;
+    key.shadow.normalBias = 0.02;
+    scene.add(key);
+    scene.add(key.target);
     this.lights.push(key);
+
+    // Soft studio reflections so metal reads as metal (no texture download).
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const room = new RoomEnvironment();
+    this.environment = pmrem.fromScene(room, 0.04).texture;
+    scene.environment = this.environment;
+    scene.environmentIntensity = 0.35;
+    room.dispose();
+    pmrem.dispose();
   }
 
   /**
