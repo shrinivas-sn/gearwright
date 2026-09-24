@@ -2,8 +2,9 @@
  * LEVEL — Crucible Hall, the hub (ARCH §6, §40 `levels/`).
  *
  * The hub is where progression becomes *visible*: the Great Regulator (inactive and
- * only partially revealed in the MVP) sits at the centre, and three branch doors line
- * the north wall — Branch A playable, Branch B and C sealed visuals.
+ * only partially revealed in the MVP) sits at the centre, and Branch A's door
+ * opens from the hall into the Pressure Gallery through the partition wall; B and C are sealed
+ * on the north wall — Branch A playable, Branch B and C sealed visuals.
  *
  * Two rules shape this file:
  *
@@ -33,20 +34,22 @@ export interface HubDoor {
   readonly title: string;
   /** Centre X of the doorway; the doorway spans ±1 m either side. */
   readonly x: number;
+  /** Z of the door frame's south face. */
+  readonly z: number;
 }
+
+/** Sealed doors B/C stand just in front of the north wall (z = 20). */
+const DOOR_Z = 19.3;
 
 /**
  * The three branch doors (§6). Branch A's opens; B and C are the sealed visuals.
  * Adding a branch is one entry here plus its content — the gate needs no change.
  */
 export const HUB_DOORS: ReadonlyArray<HubDoor> = [
-  { id: 'door/branch-a', branchId: 'branch-a', title: 'Pressure Gallery', x: -6 },
-  { id: 'door/branch-b', branchId: 'branch-b', title: 'Branch B', x: 0 },
-  { id: 'door/branch-c', branchId: 'branch-c', title: 'Branch C', x: 6 }
+  { id: 'door/branch-a', branchId: 'branch-a', title: 'Pressure Gallery', x: -6, z: 8.0 },
+  { id: 'door/branch-b', branchId: 'branch-b', title: 'Branch B', x: 0, z: DOOR_Z },
+  { id: 'door/branch-c', branchId: 'branch-c', title: 'Branch C', x: 6, z: DOOR_Z }
 ];
-
-/** The three branch doors stand just in front of the north wall (z = 20). */
-const DOOR_Z = 19.3;
 const DOOR_HALF_WIDTH = 1.0;
 const DOOR_POST_WIDTH = 0.2;
 const DOOR_HEIGHT = 3.2;
@@ -154,21 +157,21 @@ function boxCollider(box: Box): StaticCollider {
 /** A door's posts and its (conditional) slab, as boxes. */
 function doorBoxes(door: HubDoor, enterable: boolean): Box[] {
   const left: Box = {
-    min: [door.x - DOOR_HALF_WIDTH - DOOR_POST_WIDTH, 0, DOOR_Z],
-    max: [door.x - DOOR_HALF_WIDTH, DOOR_HEIGHT, DOOR_Z + 0.5],
+    min: [door.x - DOOR_HALF_WIDTH - DOOR_POST_WIDTH, 0, door.z],
+    max: [door.x - DOOR_HALF_WIDTH, DOOR_HEIGHT, door.z + 0.5],
     color: enterable ? HUB_OPEN : HUB_STONE
   };
   const right: Box = {
-    min: [door.x + DOOR_HALF_WIDTH, 0, DOOR_Z],
-    max: [door.x + DOOR_HALF_WIDTH + DOOR_POST_WIDTH, DOOR_HEIGHT, DOOR_Z + 0.5],
+    min: [door.x + DOOR_HALF_WIDTH, 0, door.z],
+    max: [door.x + DOOR_HALF_WIDTH + DOOR_POST_WIDTH, DOOR_HEIGHT, door.z + 0.5],
     color: enterable ? HUB_OPEN : HUB_STONE
   };
   const boxes = [left, right];
   // The slab exists only while the branch is not enterable: §6's "sealed, visual".
   if (!enterable) {
     boxes.push({
-      min: [door.x - DOOR_HALF_WIDTH, 0, DOOR_Z + 0.15],
-      max: [door.x + DOOR_HALF_WIDTH, DOOR_HEIGHT, DOOR_Z + 0.35],
+      min: [door.x - DOOR_HALF_WIDTH, 0, door.z + 0.15],
+      max: [door.x + DOOR_HALF_WIDTH, DOOR_HEIGHT, door.z + 0.35],
       color: HUB_SEALED
     });
   }
@@ -234,10 +237,13 @@ export function hubMeshes(
   for (const door of HUB_DOORS) {
     meshes.push(...doorBoxes(door, branchState(door.branchId) !== 'Locked').map(boxMesh));
     // The trunk line from this door to the regulator lights when the branch completes.
+    // A door south of the Regulator (Branch A, in the partition) runs its trunk north past the
+    // plinth to the bus; a north-wall door runs south to the bus, as before.
+    const southOfRegulator = door.z < 14;
     meshes.push(
       boxMesh({
-        min: [door.x - 0.15, 2.6, 17],
-        max: [door.x + 0.15, 2.9, DOOR_Z],
+        min: [door.x - 0.15, 2.6, southOfRegulator ? door.z + 0.5 : 17],
+        max: [door.x + 0.15, 2.9, southOfRegulator ? 16.7 : door.z],
         color: branchState(door.branchId) === 'Complete' ? HUB_TRUNK_ON : HUB_TRUNK_OFF
       })
     );

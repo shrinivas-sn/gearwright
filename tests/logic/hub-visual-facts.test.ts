@@ -87,7 +87,7 @@ function trunk(meshes: ReadonlyArray<LabWorldMesh>, doorX: number): LabWorldMesh
       mesh.min.y === 2.6 &&
       mesh.max.y === 2.9 &&
       Math.abs((mesh.min.x + mesh.max.x) / 2 - doorX) < 1e-9 &&
-      mesh.min.z >= 17
+      mesh.min.z >= 8
   );
 }
 
