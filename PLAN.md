@@ -202,10 +202,10 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 - [x] CHECKPOINT 5 (+ owner visual sign-off checklist)
 
 ### Phase 6 — UX shell
-- [ ] T6.1 Controls table helper
-- [ ] T6.2 Title screen (Start/Continue, New Game, Controls)
-- [ ] T6.3 Pause overlay: controls + New Game
-- [ ] T6.4 Settings (sensitivity, invert Y, volume)
+- [x] T6.1 Controls table helper
+- [x] T6.2 Title screen (Start/Continue, New Game, Controls)
+- [x] T6.3 Pause overlay: controls + New Game
+- [x] T6.4 Settings (sensitivity, invert Y, volume)
 - [ ] T6.5 Touch-only device notice
 - [ ] Fix-up
 - [ ] CHECKPOINT 6
