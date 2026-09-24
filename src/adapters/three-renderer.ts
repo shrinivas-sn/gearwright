@@ -139,6 +139,10 @@ export class ThreeRenderer implements RenderPort {
   private width = 1;
   private height = 1;
   private pixelRatio = 1;
+  private frameEmaMs = 16.7;
+  private lastRenderAt = 0;
+  private renderedFrames = 0;
+  private degraded = false;
   private readonly marker: THREE.Group;
   private readonly markerDot: THREE.Mesh;
   private readonly markerMaterial: THREE.MeshStandardMaterial;
@@ -625,7 +629,7 @@ export class ThreeRenderer implements RenderPort {
   resize(width: number, height: number, pixelRatio: number): void {
     this.width = Math.max(1, Math.floor(width));
     this.height = Math.max(1, Math.floor(height));
-    this.pixelRatio = Math.min(Math.max(0.5, pixelRatio), this.options.maxPixelRatio);
+    this.pixelRatio = this.degraded ? 1 : Math.min(Math.max(0.5, pixelRatio), this.options.maxPixelRatio);
 
     if (this.camera) {
       this.camera.aspect = this.width / this.height;
@@ -639,6 +643,30 @@ export class ThreeRenderer implements RenderPort {
     const scene = this.scene;
     const camera = this.camera;
     if (!renderer || !scene || !camera) return;
+
+    // PLAN T5.4: if frames stay slow (EMA > 24 ms after 3 s of play), drop to pixel ratio 1 and
+    // a 1024 shadow map once. Presentation only; never touches the simulation.
+    const now = performance.now();
+    if (this.lastRenderAt > 0) {
+      const frameMs = now - this.lastRenderAt;
+      if (frameMs < 250) this.frameEmaMs = this.frameEmaMs * 0.95 + frameMs * 0.05;
+    }
+    this.lastRenderAt = now;
+    this.renderedFrames += 1;
+    if (!this.degraded && this.renderedFrames > 180 && this.frameEmaMs > 24) {
+      this.degraded = true;
+      this.pixelRatio = 1;
+      this.applyViewport();
+      for (const light of this.lights) {
+        if (light instanceof THREE.DirectionalLight && light.castShadow) {
+          light.shadow.mapSize.set(1024, 1024);
+          light.shadow.map?.dispose();
+          light.shadow.map = null;
+        }
+      }
+      console.info(`[render] sustained ${this.frameEmaMs.toFixed(1)} ms frames — pixel ratio 1, shadow map 1024`);
+    }
+
     // Interpolation is visual-only (ADR-003): pose application never feeds back
     // into simulation state.
     const pose = this.view;
