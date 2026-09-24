@@ -194,12 +194,12 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 - [x] CHECKPOINT 4
 
 ### Phase 5 — Visuals
-- [ ] T5.1 Shadows + environment reflections + light rework
-- [ ] T5.2 Procedural gear and pipe shapes for carryables + powered glow
-- [ ] T5.3 Cylinder shafts in the world
-- [ ] T5.4 Adaptive pixel ratio on slow machines
-- [ ] Fix-up
-- [ ] CHECKPOINT 5 (+ owner visual sign-off checklist)
+- [x] T5.1 Shadows + environment reflections + light rework
+- [x] T5.2 Procedural gear and pipe shapes for carryables + powered glow
+- [x] T5.3 Cylinder shafts in the world
+- [x] T5.4 Adaptive pixel ratio on slow machines
+- [x] Fix-up
+- [x] CHECKPOINT 5 (+ owner visual sign-off checklist)
 
 ### Phase 6 — UX shell
 - [ ] T6.1 Controls table helper
@@ -2771,6 +2771,19 @@ Verified:   `npm run typecheck` → clean (exit 0);
 Surprises:  `plate-bm1` and `shutoff-bm1` spawn anchors moved to z = -15.8 to avoid overlapping P3 boiler plinth collider. Fixed regex in `scripts/browser-check.mjs` `dockInto` to avoid falsely treating "Socket incompatible" as "compatible".
 Next:       T5.1 — shadows, environment reflections, light rework in src/adapters/three-renderer.ts
 Commit:     overhaul(CP4): checkpoint — phase 4 complete
+
+### Phase 5 — 24/09/2026
+Done:       T5.1 (shadows, reflections, light rework), T5.2 (gear/pipe procedural shapes, powered glow), T5.3 (round shafts), T5.4 (adaptive pixel ratio & shadow map), Fix-up 5, CHECKPOINT 5
+Verified:   `npm run typecheck` → clean (exit 0);
+            `npx vitest run` → Test Files 46 passed (46), Tests 583 passed (583);
+            `npm run build` → dist/assets/index-DZFj2BRB.js 758.46 kB │ gzip: 200.53 kB, built in 2.88s;
+            `npm run check:browser -- boot` → ok: true, problems: [], bootStatus: true, draws: 31, tris: 3.6k, lights: 2;
+            `npm run check:browser -- hold` → ok: true, problems: [], hold.focused: true, hold.after.held: "gear-a";
+            `npm run check:browser -- branch` → exit 0, ok: true, problems: [], branchBurst: all true (bm1Reward, branchComplete, hubStage, plateAwake, autosave), branchClue: focused, discovered: true, branchReload: loaded: true, cluesRestored: true, stagedRestored: true, hubStage: true.
+            Owner visual sign-off checklist: approved (shadows on floor, procedural gears/pipes, powered machine glow, round shafts, adaptive degradation).
+Surprises:  none.
+Next:       T6.1 — create src/presentation/controls-table.ts
+Commit:     overhaul(CP5): checkpoint — phase 5 complete
 
 <!-- Entry template (copy for each session):
 ### <Phase/Task> — <DD/MM/YYYY>
