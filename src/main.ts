@@ -903,6 +903,17 @@ function boot(): void {
   // reports intents; the systems below own every decision those intents name.
   const hud = new Hud(hudRoot);
 
+  // PLAN T7.2: an unexpected error is told to the player once (progress lives in the last save).
+  let errorAnnounced = false;
+  const announceError = (detail: unknown): void => {
+    console.error('[error]', detail);
+    if (errorAnnounced) return;
+    errorAnnounced = true;
+    hud.toast('Something went wrong. Your progress up to the last autosave is safe — reload the page if the game misbehaves.', 'error');
+  };
+  window.addEventListener('error', (event) => announceError(event.error ?? event.message));
+  window.addEventListener('unhandledrejection', (event) => announceError(event.reason));
+
   // PLAN T1.2: a paused game shows why it is paused and resumes on a click.
   const pauseOverlay = new PauseOverlay(document.body);
   // PLAN T6.2: title screen shown at boot; ?skipTitle bypasses it for tests and automation.
