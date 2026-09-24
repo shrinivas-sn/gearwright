@@ -178,11 +178,11 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 - [x] CHECKPOINT 2
 
 ### Phase 3 — World clean-up and render efficiency
-- [ ] T3.1 Remove the Phase-1 placeholder scene (keep the lights)
-- [ ] T3.2 Fix the world-mesh GPU leak + merge world meshes by colour
-- [ ] T3.3 Per-frame allocation trims + power preference
-- [ ] Fix-up
-- [ ] CHECKPOINT 3
+- [x] T3.1 Remove the Phase-1 placeholder scene (keep the lights)
+- [x] T3.2 Fix the world-mesh GPU leak + merge world meshes by colour
+- [x] T3.3 Per-frame allocation trims + power preference
+- [x] Fix-up
+- [x] CHECKPOINT 3
 
 ### Phase 4 — A real level: hub + Pressure Gallery
 - [ ] T4.1 `levels/game-room.ts` (floor, outer walls, partition wall, spawn)
@@ -2748,8 +2748,19 @@ Verified:   `npm run typecheck` → clean (exit 0);
             `npm run check:browser -- hold` → ok: true, problems: [], hold.focused: true, hold.after.state: "Manipulation", hold.after.held: "gear-a", hold.after.yaw: 0;
             `npm run check:browser -- branch` → exit 0, ok: true, problems: [], branchBurst.bm1Reward: true, branchBurst.autosave: true, branchReload: loaded: true, stagedRestored: true, finalState.loop.frames: 83.
 Surprises:  none in Phase 2 tasks. T1.3 remains stashed [!].
-Next:       T3.1 — edit src/app.ts (anchor: `// Phase-1 placeholder scene: spinning cube`) and remove placeholder cube, wireframe and axes while keeping lights
+Next:       T3.1 — edit src/adapters/three-renderer.ts and remove placeholder scene while keeping lights
 Commit:     overhaul(CP2): checkpoint — phase 2 complete
+
+### Phase 3 — 24/09/2026
+Done:       T3.1 (stop shipping placeholder scene, keep lights), T3.2 (free world meshes on rebuild + merge by colour), T3.3 (per-frame allocation trims, default GPU power preference), Fix-up 3, CHECKPOINT 3
+Verified:   `npm run typecheck` → clean (exit 0);
+            `npx vitest run` → Test Files 46 passed (46), Tests 579 passed (579);
+            `npm run build` → dist/assets/index-BQhvY0sO.js 718.16 kB │ gzip: 187.95 kB, built in 3.33s;
+            `npm run check:browser -- boot` → ok: true, problems: [], bootStatus: true, draws: 24, tris: 732, lights: 2 (down from baseline draws: 40, tris: 408);
+            `npm run check:browser -- branch` → exit 0, ok: true, problems: [], branchBurst.bm1Reward: true, branchBurst.autosave: true, branchReload: loaded: true, stagedRestored: true, finalState.loop.frames: 92.
+Surprises:  none in Phase 3 tasks. T1.3 remains stashed [!].
+Next:       T4.1 — create src/levels/game-room.ts
+Commit:     overhaul(CP3): checkpoint — phase 3 complete
 
 <!-- Entry template (copy for each session):
 ### <Phase/Task> — <DD/MM/YYYY>
