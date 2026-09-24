@@ -11,6 +11,7 @@
  */
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   EMPTY_RENDER_STATS,
   type CameraPose,
@@ -84,6 +85,7 @@ export class ThreeRenderer implements RenderPort {
   private camera: THREE.PerspectiveCamera | null = null;
   private lights: THREE.Light[] = [];
   private disposables: Array<{ dispose(): void }> = [];
+  private worldDisposables: Array<{ dispose(): void }> = [];
   private readonly options: Required<RendererOptions>;
   private width = 1;
   private height = 1;
@@ -268,28 +270,41 @@ export class ThreeRenderer implements RenderPort {
     this.view = pose;
   }
 
+  /** Rebuilds the static world: frees the previous build, then one merged mesh per colour. */
   setLabWorld(meshes: ReadonlyArray<LabWorldMesh>): void {
-    // Idempotent: rebuilding the lab group is cheap and rare (world load only).
+    // Free the previous build first: this runs on every hub stage and staged press.
+    for (const item of this.worldDisposables) item.dispose();
+    this.worldDisposables = [];
     this.labGroup.clear();
+
+    // One merged mesh per colour: same look, a fraction of the draw calls.
+    const byColor = new Map<number, THREE.BufferGeometry[]>();
     for (const mesh of meshes) {
       if (mesh.kind !== 'box') continue;
       const sizeX = Math.max(0.001, mesh.max.x - mesh.min.x);
       const sizeY = Math.max(0.001, mesh.max.y - mesh.min.y);
       const sizeZ = Math.max(0.001, mesh.max.z - mesh.min.z);
       const geometry = new THREE.BoxGeometry(sizeX, sizeY, sizeZ);
-      const material = new THREE.MeshStandardMaterial({
-        color: mesh.color,
-        roughness: 0.85,
-        metalness: 0.15
-      });
-      const box = new THREE.Mesh(geometry, material);
-      box.position.set(
-        mesh.min.x + sizeX / 2,
-        mesh.min.y + sizeY / 2,
-        mesh.min.z + sizeZ / 2
-      );
-      this.disposables.push(geometry, material);
-      this.labGroup.add(box);
+      geometry.translate(mesh.min.x + sizeX / 2, mesh.min.y + sizeY / 2, mesh.min.z + sizeZ / 2);
+      const list = byColor.get(mesh.color) ?? [];
+      list.push(geometry);
+      byColor.set(mesh.color, list);
+    }
+    for (const [color, geometries] of byColor) {
+      const material = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.15 });
+      this.worldDisposables.push(material);
+      const merged = geometries.length === 1 ? geometries[0] ?? null : mergeGeometries(geometries, false);
+      if (merged === null) {
+        // Merge refused (never expected for boxes): fall back to one mesh per box.
+        for (const geometry of geometries) {
+          this.worldDisposables.push(geometry);
+          this.labGroup.add(new THREE.Mesh(geometry, material));
+        }
+        continue;
+      }
+      if (geometries.length > 1) for (const geometry of geometries) geometry.dispose();
+      this.worldDisposables.push(merged);
+      this.labGroup.add(new THREE.Mesh(merged, material));
     }
     this.labGroup.visible = this.labGroup.children.length > 0;
   }
@@ -575,6 +590,8 @@ export class ThreeRenderer implements RenderPort {
   }
 
   dispose(): void {
+    for (const item of this.worldDisposables) item.dispose();
+    this.worldDisposables = [];
     for (const item of this.disposables) item.dispose();
     this.disposables = [];
     this.lights = [];
