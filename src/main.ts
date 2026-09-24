@@ -21,6 +21,7 @@ import {
 import { WebAudioBus } from './adapters/web-audio-bus.ts';
 import { PerfOverlay } from './debug/overlay.ts';
 import { debugFlagState, isDevBuild } from './debug/flags.ts';
+import { gameLog } from './debug/log.ts';
 import { InputSystem } from './gameplay/input-system.ts';
 import { DEFAULT_PLAYER_TUNING, PlayerController } from './gameplay/player-controller.ts';
 import { CameraRig } from './gameplay/camera-rig.ts';
@@ -68,7 +69,20 @@ import { isCompatible } from './game-state/snap-rules.ts';
 import type { ValidationReason } from './game-state/validator.ts';
 import type { SocketDefinition } from './game-state/component-model.ts';
 import type { Vec3 } from './core/vec3.ts';
-import { bm1PropInteractables, bm1PropMeshes } from './levels/branch-a.ts';
+import {
+  P1_INTERACTABLES,
+  P1_CARRYABLES,
+  P1_SOCKETS,
+  P2_CARRYABLES,
+  P2_SOCKETS,
+  P3_CARRYABLES,
+  P3_SOCKETS,
+  BM1_CARRYABLES,
+  BM1_SOCKETS,
+  BM1_PROPS,
+  bm1PropInteractables,
+  bm1PropMeshes
+} from './levels/branch-a.ts';
 import {
   SHIPPED_CARRYABLES,
   SHIPPED_COMPONENTS,
@@ -679,7 +693,7 @@ function boot(): void {
         else skipped += 1;
       }
       if (placed > 0 || skipped > 0) {
-        console.info(
+        gameLog(
           `[save] placed ${placed} part pose(s)` +
             (skipped > 0 ? `; ${skipped} in the inventory or not a carryable` : '')
         );
@@ -714,12 +728,12 @@ function boot(): void {
   // refused save simply leaves a fresh game running (EC-SAVE-05).
   const loaded = save.load();
   if (loaded.ok) {
-    console.info(`[save] loaded ${loaded.slot} (${loaded.notes.length} repair note(s))`);
-    for (const note of loaded.notes) console.info(`[save] ${note.code}: ${note.detail}`);
+    gameLog(`[save] loaded ${loaded.slot} (${loaded.notes.length} repair note(s))`);
+    for (const note of loaded.notes) gameLog(`[save] ${note.code}: ${note.detail}`);
     // The restored puzzle states are the authority again (§12.2).
     syncProgression();
   } else {
-    console.info(`[save] starting fresh (${loaded.reason}: ${loaded.detail})`);
+    gameLog(`[save] starting fresh (${loaded.reason}: ${loaded.detail})`);
   }
 
   // --- Hub (ARCH §6, §26) -------------------------------------------------------
@@ -747,7 +761,7 @@ function boot(): void {
       // Remembered on the boot pass too, so a restored save does not re-announce a
       // plate it already woke — the `[clue]` boot line reports what is already known.
       announcedPlates.add(clue.id);
-      if (announce) console.info(`[clue] plate awake: ${clue.id} — ${clue.title} (inspect the Great Regulator)`);
+      if (announce) gameLog(`[clue] plate awake: ${clue.id} — ${clue.title} (inspect the Great Regulator)`);
     }
   };
   interaction.setInteractables([
@@ -782,7 +796,7 @@ function boot(): void {
         ...hubInteractables(branchStateOf),
         ...bm1PropInteractables(true)
       ]);
-      console.info('[staged] BM-1 structure complete — priming lines are live');
+      gameLog('[staged] BM-1 structure complete — priming lines are live');
     }
   };
   syncBm1Props();
@@ -802,10 +816,10 @@ function boot(): void {
       const priming = machine.primingActions ?? [];
       if (priming.length === 0 || !priming.includes(action)) continue;
       const done = priming.filter((entry) => actions.has(entry));
-      console.info(`[staged] ${action} recorded — ${machine.id} priming ${done.length}/${priming.length}`);
+      gameLog(`[staged] ${action} recorded — ${machine.id} priming ${done.length}/${priming.length}`);
       if (done.length === priming.length && !reportedStagedWake.has(machine.id)) {
         reportedStagedWake.add(machine.id);
-        console.info(`[staged] ${machine.id} primed — engage to activate`);
+        gameLog(`[staged] ${machine.id} primed — engage to activate`);
       }
     }
   };
@@ -830,14 +844,14 @@ function boot(): void {
     for (const outcome of rewards.consumePuzzleEvents(events)) {
       if (!outcome.applied) continue;
       // R-9 is reported, never silent; blueprint unlocks (§27.3) ride the grant.
-      console.info(
+      gameLog(
         `[reward] ${outcome.grantId} applied` +
           (outcome.blueprints.length > 0 ? ` (blueprints: ${outcome.blueprints.join(', ')})` : '') +
           (outcome.skipped.length > 0 ? ` skipped: ${outcome.skipped.join(', ')}` : '')
       );
       const write = save.save('autosave', Date.now(), saveWorldView, knownComponentIds);
       if (!write.ok) console.warn('[save] autosave failed:', write.failure);
-      else console.info('[save] autosave written (puzzle-completed trigger)');
+      else gameLog('[save] autosave written (puzzle-completed trigger)');
     }
     // Completion is the only thing that moves branch/hub state, so progression is
     // re-derived here — where the §26 flow says the event is consumed — and nowhere
@@ -846,11 +860,11 @@ function boot(): void {
     syncProgression();
     const after = progression.hubStage;
     if (after.id !== before) {
-      console.info(`[progression] hub stage -> ${after.id} (${after.title})`);
+      gameLog(`[progression] hub stage -> ${after.id} (${after.title})`);
     }
     for (const branch of BRANCH_DEFINITIONS) {
       const state = progression.branchState(branch.id);
-      if (state === 'Complete') console.info(`[progression] branch ${branch.id} complete (${branch.title})`);
+      if (state === 'Complete') gameLog(`[progression] branch ${branch.id} complete (${branch.title})`);
     }
     // A branch completion can *wake* a clue plate (§6 beat 5) with no level edit: the
     // plate's enabled state is the same derived branch state the door reads.
@@ -865,7 +879,7 @@ function boot(): void {
   // the composer is handed the port instead of reaching for audio itself (§32.4 rule 1).
   const audio = new WebAudioBus();
   if (audio.init()) {
-    console.info(`[audio] ready (${audio.state}); waiting for a gesture (EC-BRN-08)`);
+    gameLog(`[audio] ready (${audio.state}); waiting for a gesture (EC-BRN-08)`);
   } else {
     console.warn('[audio] unavailable in this browser — running silent (EC-BRN-08)');
   }
@@ -982,7 +996,7 @@ function boot(): void {
     }
     // Reported like every other capability use (the HUD line carries the words, so this
     // is the log of *what* was revealed rather than a second copy of the label).
-    console.info(
+    gameLog(
       `[scanner] ${reveal.requirementId}: ${reveal.targets.length} target(s)` +
         (reveal.route.length > 1 ? `, route ${reveal.route.join(' -> ')}` : '')
     );
@@ -1071,7 +1085,7 @@ function boot(): void {
       if (lockState.refusalAnnounced) return;
       lockState.refusalAnnounced = true;
       hud.toast(`Mouse capture unavailable (${reason}) — look still works over the canvas.`, 'warn');
-      console.info(`[input] pointer lock refused (${reason}) — raw mouse deltas only`);
+      gameLog(`[input] pointer lock refused (${reason}) — raw mouse deltas only`);
     }
   });
   inputSource.clearAll(); // Construction-time callbacks may have primed an edge.
@@ -1192,8 +1206,8 @@ function boot(): void {
         if (focused !== null) {
           const clue = clueDefinitionOf(focused.id);
           if (clue !== null && cluePlateActive(branchStateOf, clue.id) && progression.discoverClue(clue.id)) {
-            console.info(`[clue] discovered ${clue.id} — ${clue.title}`);
-            console.info(`[clue] ${clue.text}`);
+            gameLog(`[clue] discovered ${clue.id} — ${clue.title}`);
+            gameLog(`[clue] ${clue.text}`);
             // §33.1's event-stream toast: the log surface appearing is a quiet change, so
             // the discovery is announced too. The toast names it; the log carries the words.
             hud.toast(`Clue recorded: ${clue.title}`, 'info');
@@ -1208,7 +1222,7 @@ function boot(): void {
         // step (like the pulse clock), so the same input script reveals for the same time.
         scanner.step(dt);
         if (debugFlagState.logFeedback) {
-          for (const intent of result.feedback ?? []) console.info('[feedback]', intent);
+          for (const intent of result.feedback ?? []) gameLog('[feedback]', intent);
         }
         // M10: the HUD's render call sits in `present` (below); the *reasons* it
         // shows come from this step's evaluation, read back through the SMs.
@@ -1301,7 +1315,7 @@ function boot(): void {
     },
     onLifecycleTransition: (transition) => {
       if (debugFlagState.logLifecycle) {
-        console.info(`[lifecycle] ${transition.from} -> ${transition.to} (${transition.reason})`);
+        gameLog(`[lifecycle] ${transition.from} -> ${transition.to} (${transition.reason})`);
       }
       if (transition.to === 'paused') {
         lastPauseAt = performance.now();
@@ -1387,14 +1401,14 @@ function boot(): void {
 
   // M7 checkpoint logging (§31.5): persistence state is reported at boot, never
   // assumed silent — storage availability and the canonical checkpoint anchor.
-  console.info(
+  gameLog(
     `[save] storage ${save.storageAvailable ? 'available' : 'unavailable'}; ` +
       `checkpoint ${checkpoint.currentId} @ ${checkpoint.snapshot.anchorId}`
   );
 
   // M9: the hub's read-out. Branch state and the stage are derived, so logging them is
   // the only way to see them at a glance — and the doors are the AccessGate in action.
-  console.info(
+  gameLog(
     `[hub] stage ${progression.hubStageIndex} (${progression.hubStage.title}); ` +
       HUB_DOORS.map(
         (door) =>
@@ -1403,24 +1417,24 @@ function boot(): void {
   );
   // A restored save's plate is already awake: report it without re-announcing the edge.
   syncCluePlates(false);
-  console.info(
+  gameLog(
     `[clue] ${progression.discoveredClueIds.length}/${CLUE_DEFINITIONS.length} clue(s) discovered` +
       (progression.discoveredClueIds.length > 0 ? `: ${progression.discoveredClueIds.join(', ')}` : '')
   );
   // ADR-018: the staged log is canonical, so a restored save reports what it holds —
   // priming progress included — and a fresh game reports an empty log, not silence.
   if (actions.size > 0) {
-    console.info(`[staged] ${actions.size} staged action(s) restored: ${actions.actions.join(', ')}`);
+    gameLog(`[staged] ${actions.size} staged action(s) restored: ${actions.actions.join(', ')}`);
   } else {
-    console.info('[staged] log empty — no staged progress');
+    gameLog('[staged] log empty — no staged progress');
   }
 
   // M10: the HUD is up, and a restored ladder reports what the file held (§29.2:
   // HintState is canonical — "restored independently of puzzle state").
-  console.info(`[hud] online (${hudRoot.childElementCount} surface group(s))`);
+  gameLog(`[hud] online (${hudRoot.childElementCount} surface group(s))`);
   const restoredHintRows = hints.snapshot().filter((row) => row.level > 0 || row.requests > 0);
   if (restoredHintRows.length > 0) {
-    console.info(
+    gameLog(
       `[hint] ladder restored: ${restoredHintRows.map((row) => `${row.puzzleId}=L${row.level}`).join(', ')}`
     );
   }
@@ -1454,7 +1468,7 @@ function boot(): void {
     if (!audio.unlock()) return false;
     // The state is read back rather than asserted: a resume settles on the engine's own
     // schedule, so the log reports what the bus actually says at this instant.
-    console.info(`[audio] unlock requested on first gesture (${audio.state})`);
+    gameLog(`[audio] unlock requested on first gesture (${audio.state})`);
     return true;
   });
 
@@ -1546,16 +1560,18 @@ function boot(): void {
   };
   window.addEventListener('pagehide', shutdown, { once: true });
 
-  if (isDevBuild) {
-    // Manual inspection hook for the debug overlay / console (dev builds only).
+  const devEnabled =
+    isDevBuild || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('log'));
+  if (devEnabled) {
+    // Manual inspection hook for the debug overlay / console (dev builds or with ?log=1).
     (window as unknown as { __gearwright?: App }).__gearwright = app;
     // Dev-only inspection socket (ARCH §37: debug tooling is additive and all-off in
-    // production). The headless suites can prove every system, but they cannot prove
+    // production without ?log=1). The headless suites can prove every system, but they cannot prove
     // the *composition* — which is exactly what the browser checks are for. This
     // exposes handles the harness can read (player pose, camera yaw, the focus target,
     // progression's derived state) and one action the tests already use, `teleport`,
     // so a walkthrough can be driven to a specific vantage instead of guessed at.
-    // Nothing here changes ownership or a contract: production builds expose nothing.
+    // Nothing here changes ownership or a contract: production builds expose nothing without ?log=1.
     (window as unknown as { __gearwrightDev?: unknown }).__gearwrightDev = {
       player,
       camera,
@@ -1564,7 +1580,22 @@ function boot(): void {
       progression,
       // The audio port reports its own state and last cue, so a browser check can tell
       // "silent because no context" from "silent because the unlock never happened".
-      audio
+      audio,
+      level: {
+        branch: {
+          P1_INTERACTABLES,
+          P1_CARRYABLES,
+          P1_SOCKETS,
+          P2_CARRYABLES,
+          P2_SOCKETS,
+          P3_CARRYABLES,
+          P3_SOCKETS,
+          BM1_CARRYABLES,
+          BM1_SOCKETS,
+          BM1_PROPS
+        },
+        hubInteractables
+      }
     };
   }
 }

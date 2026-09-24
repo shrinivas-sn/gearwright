@@ -416,8 +416,20 @@ window.__probe = {
     };
   },
   level: async () => {
-    const branch = await import('/src/levels/branch-a.ts');
-    const hub = await import('/src/levels/hub.ts');
+    let branch = window.__gearwrightDev?.level?.branch;
+    let hubInteractables = window.__gearwrightDev?.level?.hubInteractables;
+    let hubTargets = null;
+    if (branch && hubInteractables) {
+      hubTargets = hubInteractables(() => 'Complete').map((i) => ({ id: i.id, min: i.min, max: i.max }));
+    } else {
+      try {
+        const branchMod = await import('/src/levels/branch-a.ts');
+        const hubMod = await import('/src/levels/hub.ts');
+        branch = branchMod;
+        hubTargets = hubMod.hubInteractables(() => 'Complete').map((i) => ({ id: i.id, min: i.min, max: i.max }));
+      } catch {}
+    }
+    if (!branch) return null;
     const parts = (list) => list.map((c) => ({ id: c.instanceId, center: c.spawn.center, half: c.definition.halfExtents }));
     const sockets = (list) => list.map((s) => ({ id: s.id, center: s.pose.center, half: s.halfExtents }));
     return {
@@ -431,9 +443,7 @@ window.__probe = {
       bm1Parts: parts(branch.BM1_CARRYABLES),
       bm1Sockets: sockets(branch.BM1_SOCKETS),
       bm1Props: branch.BM1_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })),
-      // Every hub target as if the branch were complete, so the clue plate's real touch
-      // box (and its enable rule) can be aimed at like any other target.
-      hubTargets: hub.hubInteractables(() => 'Complete').map((i) => ({ id: i.id, min: i.min, max: i.max }))
+      hubTargets
     };
   }
 };
@@ -450,13 +460,17 @@ async function boot(cdp) {
   let up = false;
   while (Date.now() < deadline && !up) {
     try {
-      up = await evaluate(cdp, `(async () => { await import('/src/levels/branch-a.ts'); return true; })()`);
+      up = await evaluate(cdp, `(async () => {
+        if (document.querySelector('canvas[data-booted="true"]')) return true;
+        ${PRODUCTION ? '' : "try { await import('/src/levels/branch-a.ts'); return true; } catch { return false; }"}
+        return false;
+      })()`);
     } catch {
       up = false;
     }
     if (!up) await sleep(300);
   }
-  if (!up) throw new Error('page never served modules');
+  if (!up) throw new Error('page never booted');
   await evaluate(cdp, PROBE_SOURCE);
 
   const readyDeadline = Date.now() + 45000;
