@@ -185,13 +185,13 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 - [x] CHECKPOINT 3
 
 ### Phase 4 — A real level: hub + Pressure Gallery
-- [ ] T4.1 `levels/game-room.ts` (floor, outer walls, partition wall, spawn)
-- [ ] T4.2 Move Branch A's door into the partition wall
-- [ ] T4.3 `levels/shipped-content.ts` + remove the lab from `main.ts`
-- [ ] T4.4 Content-integrity tests (reachability, no embedded targets)
-- [ ] T4.5 Harness update for the new level
-- [ ] Fix-up
-- [ ] CHECKPOINT 4
+- [x] T4.1 `levels/game-room.ts` (floor, outer walls, partition wall, spawn)
+- [x] T4.2 Move Branch A's door into the partition wall
+- [x] T4.3 `levels/shipped-content.ts` + remove the lab from `main.ts`
+- [x] T4.4 Content-integrity tests (reachability, no embedded targets)
+- [x] T4.5 Harness update for the new level
+- [x] Fix-up
+- [x] CHECKPOINT 4
 
 ### Phase 5 — Visuals
 - [ ] T5.1 Shadows + environment reflections + light rework
@@ -2759,8 +2759,18 @@ Verified:   `npm run typecheck` → clean (exit 0);
             `npm run check:browser -- boot` → ok: true, problems: [], bootStatus: true, draws: 24, tris: 732, lights: 2 (down from baseline draws: 40, tris: 408);
             `npm run check:browser -- branch` → exit 0, ok: true, problems: [], branchBurst.bm1Reward: true, branchBurst.autosave: true, branchReload: loaded: true, stagedRestored: true, finalState.loop.frames: 92.
 Surprises:  none in Phase 3 tasks. T1.3 remains stashed [!].
-Next:       T4.1 — create src/levels/game-room.ts
-Commit:     overhaul(CP3): checkpoint — phase 3 complete
+### Phase 4 — 24/09/2026
+Done:       T4.1 (shipped room shell with hub/gallery partition), T4.2 (Branch A door opens into the gallery), T4.3 (shipped content aggregate, purged lab), T4.4 (content-integrity tests for spawn/doorway/embedded targets), T4.5 (harness follows shipped level), Fix-up 4, CHECKPOINT 4
+Verified:   `npm run typecheck` → clean (exit 0);
+            `npx vitest run` → Test Files 46 passed (46), Tests 582 passed (582);
+            `npm run build` → dist/assets/index-DYLSyTST.js 717.23 kB │ gzip: 187.74 kB, built in 2.76s;
+            `npm run check:browser -- boot` → ok: true, problems: [], bootStatus: true, draws: 9, tris: 540, lights: 2, pausedState: "paused", resumedState: "running";
+            `npm run check:browser -- hold` → ok: true, problems: [], hold.focused: true, hold.after.held: "gear-a";
+            `npm run check:browser -- focus` → ok: true, problems: [], all shipped parts focus cleanly from valid positions;
+            `npm run check:browser -- branch` → exit 0, ok: true, problems: [], branchBurst: all true (bm1Reward, branchComplete, hubStage, plateAwake, autosave), branchClue: focused, discovered: true, branchReload: loaded: true, cluesRestored: true, stagedRestored: true, hubStage: true.
+Surprises:  `plate-bm1` and `shutoff-bm1` spawn anchors moved to z = -15.8 to avoid overlapping P3 boiler plinth collider. Fixed regex in `scripts/browser-check.mjs` `dockInto` to avoid falsely treating "Socket incompatible" as "compatible".
+Next:       T5.1 — shadows, environment reflections, light rework in src/adapters/three-renderer.ts
+Commit:     overhaul(CP4): checkpoint — phase 4 complete
 
 <!-- Entry template (copy for each session):
 ### <Phase/Task> — <DD/MM/YYYY>
