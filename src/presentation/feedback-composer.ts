@@ -68,6 +68,8 @@ export interface FeedbackView {
   readonly puzzleAnchorOf: (puzzleId: string) => Vec3 | null;
   /** Where a machine stands — its cue's emitter (§32.2 positional machinery). */
   readonly machineAnchorOf: (machineId: string) => Vec3 | null;
+  /** Visual shape per component (PLAN T5.2); absent = every part is a box. */
+  readonly visualOf?: ((componentId: string) => 'box' | 'gear' | 'pipe') | undefined;
 }
 
 export interface FeedbackTuning {
@@ -99,6 +101,8 @@ interface MutableCarryableState {
   held: boolean;
   blocked: boolean;
   attached: boolean;
+  visual: 'box' | 'gear' | 'pipe';
+  powered: boolean;
   prevX: number;
   prevY: number;
   prevZ: number;
@@ -194,6 +198,8 @@ export class FeedbackComposer {
       out.held = state.held;
       out.blocked = state.blocked;
       out.attached = state.attached;
+      out.visual = state.visual;
+      out.powered = state.powered;
       this.presented.push(out);
     }
     this.render.setCarryables(this.presented as ReadonlyArray<CarryableRenderState>);
@@ -331,6 +337,8 @@ export class FeedbackComposer {
       state.held = snapshot.held;
       state.blocked = snapshot.blocked;
       state.attached = attachedPose !== null;
+      state.visual = view.visualOf?.(snapshot.id) ?? 'box';
+      state.powered = machine !== null && machine.state === 'running';
       this.states.push(state);
     }
   }
@@ -348,6 +356,8 @@ export class FeedbackComposer {
       held: false,
       blocked: false,
       attached: false,
+      visual: 'box',
+      powered: false,
       prevX: 0,
       prevY: 0,
       prevZ: 0,
@@ -372,6 +382,8 @@ export class FeedbackComposer {
       held: false,
       blocked: false,
       attached: false,
+      visual: 'box',
+      powered: false,
       prevX: 0,
       prevY: 0,
       prevZ: 0,

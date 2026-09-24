@@ -92,6 +92,10 @@ export interface CarryableRenderState {
   readonly blocked: boolean;
   /** Docked in a socket (M4): the socket pose is canonical for it now. */
   readonly attached: boolean;
+  /** Visual shape (PLAN T5.2). Absent = box. */
+  readonly visual?: 'box' | 'gear' | 'pipe' | undefined;
+  /** Part of a machine that is running right now (glow). Absent = false. */
+  readonly powered?: boolean | undefined;
 }
 
 /**

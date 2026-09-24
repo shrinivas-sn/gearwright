@@ -50,9 +50,56 @@ const SCANNER_COLORS: Record<'named' | 'candidate', number> = {
 /** Flow-path capacity: a machine's chain is a handful of nodes, never a crowd. */
 const SCANNER_ROUTE_CAPACITY = 64;
 
+/** Unit gear (fits a 1×1×1 box, centred, axis = Y) — scaled per part like the box. */
+function buildGearGeometry(teeth: number): THREE.BufferGeometry {
+  const outer = 0.5;
+  const root = 0.4;
+  const shape = new THREE.Shape();
+  const step = (Math.PI * 2) / teeth;
+  for (let i = 0; i < teeth; i += 1) {
+    const a0 = i * step;
+    const points: ReadonlyArray<readonly [number, number]> = [
+      [root, a0],
+      [outer, a0 + step * 0.25],
+      [outer, a0 + step * 0.5],
+      [root, a0 + step * 0.75]
+    ];
+    for (const [radius, angle] of points) {
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      if (i === 0 && radius === root && angle === a0) shape.moveTo(x, y);
+      else shape.lineTo(x, y);
+    }
+  }
+  shape.closePath();
+  const hole = new THREE.Path();
+  hole.absarc(0, 0, 0.12, 0, Math.PI * 2, true);
+  shape.holes.push(hole);
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: 1, bevelEnabled: false, curveSegments: 12 });
+  geometry.rotateX(-Math.PI / 2); // extrusion (+Z) becomes +Y
+  geometry.translate(0, -0.5, 0); // centre the thickness
+  return geometry;
+}
+
+/** Unit pipe segment with flanges (fits a 1×1×1 box, axis = X). */
+function buildPipeGeometry(): THREE.BufferGeometry {
+  const body = new THREE.CylinderGeometry(0.42, 0.42, 1, 20);
+  body.rotateZ(Math.PI / 2);
+  const flangeA = new THREE.CylinderGeometry(0.5, 0.5, 0.12, 20);
+  flangeA.rotateZ(Math.PI / 2);
+  flangeA.translate(-0.44, 0, 0);
+  const flangeB = flangeA.clone();
+  flangeB.translate(0.88, 0, 0);
+  const merged = mergeGeometries([body, flangeA, flangeB], false);
+  body.dispose();
+  flangeA.dispose();
+  flangeB.dispose();
+  return merged ?? new THREE.BoxGeometry(1, 1, 1);
+}
+
 /** One pooled carryable visual: the mesh plus its own material (per-object tint). */
 interface CarryableVisual {
-  readonly mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+  readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
   readonly material: THREE.MeshStandardMaterial;
 }
 
@@ -104,6 +151,8 @@ export class ThreeRenderer implements RenderPort {
    * keep the draw cost flat as content grows.
    */
   private readonly carryableGeometry: THREE.BoxGeometry;
+  private readonly gearGeometry: THREE.BufferGeometry;
+  private readonly pipeGeometry: THREE.BufferGeometry;
   private readonly carryableVisuals = new Map<string, CarryableVisual>();
   private readonly markerGeometry: THREE.BoxGeometry;
   private readonly markerVisuals = new Map<string, MarkerVisual>();
@@ -170,6 +219,8 @@ export class ThreeRenderer implements RenderPort {
     // per-id meshes and materials are created lazily in `setCarryables` /
     // `setSnapMarkers`, because the level decides how many exist.
     this.carryableGeometry = new THREE.BoxGeometry(1, 1, 1);
+    this.gearGeometry = buildGearGeometry(12);
+    this.pipeGeometry = buildPipeGeometry();
     this.markerGeometry = new THREE.BoxGeometry(1, 1, 1);
 
     // Feedback pulse (M6): one short, localised burst, drawn only while the L4
@@ -212,6 +263,8 @@ export class ThreeRenderer implements RenderPort {
       rayGeometry,
       this.debugRay.material as THREE.Material,
       this.carryableGeometry,
+      this.gearGeometry,
+      this.pipeGeometry,
       this.markerGeometry,
       this.pulseMesh.geometry,
       this.pulseMaterial,
@@ -352,6 +405,9 @@ export class ThreeRenderer implements RenderPort {
       const { center, halfExtents } = state;
       seen.add(state.id);
       const visual = this.carryableVisual(state.id);
+      const geometry =
+        state.visual === 'gear' ? this.gearGeometry : state.visual === 'pipe' ? this.pipeGeometry : this.carryableGeometry;
+      if (visual.mesh.geometry !== geometry) visual.mesh.geometry = geometry;
       visual.mesh.position.set(center.x, center.y, center.z);
       visual.mesh.scale.set(
         Math.max(0.001, halfExtents.x * 2),
@@ -373,8 +429,9 @@ export class ThreeRenderer implements RenderPort {
             ? 0x6be86b
             : 0x5fb8a6;
       visual.material.color.setHex(color);
-      visual.material.emissive.setHex(state.held ? 0x6b4d12 : state.attached ? 0x1c4a1c : 0x1f3f39);
-      visual.material.emissiveIntensity = state.held ? 0.85 : 0.3;
+      const powered = state.powered === true && state.attached;
+      visual.material.emissive.setHex(state.held ? 0x6b4d12 : powered ? 0x2f7a2f : state.attached ? 0x1c4a1c : 0x1f3f39);
+      visual.material.emissiveIntensity = state.held ? 0.85 : powered ? 0.9 : 0.3;
       visual.mesh.visible = true;
     }
     // A component that left the level's set is hidden, not destroyed: the pool is
@@ -486,12 +543,12 @@ export class ThreeRenderer implements RenderPort {
     if (existing) return existing;
     const material = new THREE.MeshStandardMaterial({
       color: 0x5fb8a6,
-      roughness: 0.6,
-      metalness: 0.2,
+      roughness: 0.4,
+      metalness: 0.55,
       emissive: 0x1f3f39,
       emissiveIntensity: 0.3
     });
-    const mesh = new THREE.Mesh(this.carryableGeometry, material);
+    const mesh = new THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>(this.carryableGeometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.visible = false;

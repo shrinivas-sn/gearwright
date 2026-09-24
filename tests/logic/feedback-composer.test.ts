@@ -364,3 +364,19 @@ describe('FeedbackComposer — interpolation (PLAN T2.2)', () => {
     expect(stateOf(render, 'gear-a').center.x).toBe(start.center.x + 5);
   });
 });
+
+describe('FeedbackComposer — visual shapes (PLAN T5.2)', () => {
+  it('reports the shape from the view, box by default', () => {
+    const world = makeWorld();
+    const render = new RecordingRenderPort();
+    const composer = new FeedbackComposer(render);
+    composer.update(DT, [], { ...viewOf(world), visualOf: () => 'gear' });
+    composer.present();
+    expect(stateOf(render, 'gear-a').visual).toBe('gear');
+    const plainRender = new RecordingRenderPort();
+    const plain = new FeedbackComposer(plainRender);
+    plain.update(DT, [], viewOf(world));
+    plain.present();
+    expect(stateOf(plainRender, 'gear-a').visual).toBe('box');
+  });
+});

@@ -194,7 +194,14 @@ function buildFeedbackView(
       if (!activation || activation.kind !== 'machineRunning') return null;
       return machineAnchorOf(activation.machineId);
     },
-    machineAnchorOf
+    machineAnchorOf,
+    // PLAN T5.2: the part's shape comes from its capability tags (data), never from its id.
+    visualOf: (componentId) => {
+      const tags = content.registry.definitionFor(componentId)?.tags ?? [];
+      if (tags.includes('gear')) return 'gear';
+      if (tags.includes('valve') || tags.includes('pipe')) return 'pipe';
+      return 'box';
+    }
   };
 }
 
