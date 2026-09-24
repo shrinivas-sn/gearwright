@@ -1569,4 +1569,38 @@ function boot(): void {
   }
 }
 
-boot();
+/** PLAN T6.5: keyboard + mouse game — say so on touch-only devices instead of booting a dead game. */
+function touchOnly(win: Window): boolean {
+  try {
+    return win.matchMedia('(pointer: coarse)').matches && !win.matchMedia('(any-pointer: fine)').matches;
+  } catch {
+    return false;
+  }
+}
+
+if (touchOnly(window) && !new URLSearchParams(window.location.search).has('forceDesktop')) {
+  const notice = document.createElement('div');
+  notice.className = 'gw-title';
+  const panel = document.createElement('div');
+  panel.className = 'gw-title-panel';
+  const heading = document.createElement('h1');
+  heading.className = 'gw-title-name';
+  heading.textContent = 'GEARWRIGHT';
+  const text = document.createElement('p');
+  text.className = 'gw-title-tagline';
+  text.textContent = 'This game needs a keyboard and mouse. Open it on a desktop or laptop.';
+  const tryAnyway = document.createElement('button');
+  tryAnyway.type = 'button';
+  tryAnyway.className = 'gw-pause-resume';
+  tryAnyway.textContent = 'Try anyway';
+  tryAnyway.addEventListener('click', () => {
+    notice.remove();
+    boot();
+  });
+  panel.append(heading, text, tryAnyway);
+  notice.append(panel);
+  document.body.append(notice);
+  document.getElementById('boot-status')?.remove();
+} else {
+  boot();
+}
