@@ -60,6 +60,8 @@ import { Hud, type HudSnapshot, type HudObjectiveView, type HudResourceView, typ
 import { PauseOverlay, type PauseCause } from './presentation/pause-overlay.ts';
 import { TitleScreen } from './presentation/title-screen.ts';
 import { buildControlsTable, type ControlRow } from './presentation/controls-table.ts';
+import { buildSettingsPanel } from './presentation/settings-panel.ts';
+import { loadSettings, saveSettings } from './adapters/settings-store.ts';
 import { HINT_LEVEL_DEFINITIONS, conceptualHintFor, reasonPlainText } from './data/hints.ts';
 import { MATERIAL_KINDS } from './game-state/inventory-system.ts';
 import { isCompatible } from './game-state/snap-rules.ts';
@@ -867,6 +869,15 @@ function boot(): void {
   } else {
     console.warn('[audio] unavailable in this browser — running silent (EC-BRN-08)');
   }
+
+  // PLAN T6.4: settings persisted in localStorage, applied to input and audio
+  let settings = loadSettings();
+  const applySettings = (): void => {
+    input.setLookScale(settings.sensitivity, settings.invertY);
+    audio.setBusVolume('master', settings.volume);
+  };
+  applySettings();
+
   const composer = new FeedbackComposer(renderPort, {}, audio);
   const feedbackView = buildFeedbackView(manipulation, snap, graph, content);
   // §29.3's reveal timing (duration + cooldown) is presentation, so it lives in an L4
@@ -1221,8 +1232,8 @@ function boot(): void {
           ) > 2;
         const blend = interp.primed && !teleported ? clamp01(alpha) : 1;
         const lookCap = input.bindingSnapshot.maxLookDeltaPerStep;
-        const pendingX = Math.min(Math.max(inputSource.pendingLookX, -lookCap), lookCap);
-        const pendingY = Math.min(Math.max(inputSource.pendingLookY, -lookCap), lookCap);
+        const pendingX = Math.min(Math.max(inputSource.pendingLookX * input.lookScale.x, -lookCap), lookCap);
+        const pendingY = Math.min(Math.max(inputSource.pendingLookY * input.lookScale.y, -lookCap), lookCap);
         const cameraPose = camera.previewPose({
           anchor: lerpVec(interp.anchor, cameraNow.target, blend),
           pendingLookX: pendingX,
@@ -1358,6 +1369,13 @@ function boot(): void {
     startNewGame();
   });
   pauseExtras.append(pauseNewGame);
+  pauseExtras.prepend(
+    buildSettingsPanel(document, settings, (next) => {
+      settings = next;
+      applySettings();
+      saveSettings(settings);
+    })
+  );
   pauseOverlay.mountExtra(pauseExtras);
 
   // World data + first camera pose so frame one already looks correct.

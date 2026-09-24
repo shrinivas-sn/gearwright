@@ -103,10 +103,23 @@ export class InputSystem {
   private readonly bindings: InputBindings;
   private context: InputContext;
   private current: ActionState = EMPTY_ACTIONS;
+  private lookScaleX = 1;
+  private lookScaleY = 1;
 
   constructor(options: InputOptions = {}) {
     this.bindings = { ...DEFAULT_BINDINGS, ...options.bindings };
     this.context = options.context ?? 'Exploration';
+  }
+
+  /** Player settings (PLAN T6.4): sensitivity multiplier and invert-Y, applied before the cap. */
+  setLookScale(sensitivity: number, invertY: boolean): void {
+    const scale = Number.isFinite(sensitivity) ? Math.min(Math.max(sensitivity, 0.25), 3) : 1;
+    this.lookScaleX = scale;
+    this.lookScaleY = invertY ? -scale : scale;
+  }
+
+  get lookScale(): { readonly x: number; readonly y: number } {
+    return { x: this.lookScaleX, y: this.lookScaleY };
   }
 
   get activeContext(): InputContext {
@@ -210,7 +223,10 @@ export class InputSystem {
     const cap = this.bindings.maxLookDeltaPerStep;
     const clampDelta = (value: number): number =>
       Number.isFinite(value) ? Math.min(Math.max(value, -cap), cap) : 0;
-    return { x: clampDelta(raw.lookDeltaX), y: clampDelta(raw.lookDeltaY) };
+    return {
+      x: clampDelta(raw.lookDeltaX * this.lookScaleX),
+      y: clampDelta(raw.lookDeltaY * this.lookScaleY)
+    };
   }
 }
 

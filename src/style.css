@@ -671,6 +671,20 @@ body {
   margin-inline: auto;
 }
 
+.gw-settings {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.gw-settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
 .gw-controls {
   width: 100%;
   border-collapse: collapse;

@@ -234,3 +234,25 @@ describe('InputSystem — overhaul T1.1 key map', () => {
     expect(input.sample(neutralSample({ held: new Set(['KeyE']) })).primary).toBe(false);
   });
 });
+
+describe('InputSystem — PLAN T6.4 settings', () => {
+  it('setLookScale(2, true) doubles X and negates+doubles Y before the cap', () => {
+    const input = new InputSystem();
+    input.setLookScale(2, true);
+    expect(input.lookScale).toEqual({ x: 2, y: -2 });
+
+    const actions = input.sample(neutralSample({ lookDeltaX: 15, lookDeltaY: 20 }));
+    expect(actions.lookDeltaX).toBe(30);
+    expect(actions.lookDeltaY).toBe(-40);
+  });
+
+  it('setLookScale(NaN, false) behaves as 1', () => {
+    const input = new InputSystem();
+    input.setLookScale(Number.NaN, false);
+    expect(input.lookScale).toEqual({ x: 1, y: 1 });
+
+    const actions = input.sample(neutralSample({ lookDeltaX: 12, lookDeltaY: -8 }));
+    expect(actions.lookDeltaX).toBe(12);
+    expect(actions.lookDeltaY).toBe(-8);
+  });
+});
