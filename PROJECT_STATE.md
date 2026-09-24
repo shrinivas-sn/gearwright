@@ -168,6 +168,20 @@ actually used. The milestone table is the contract here, not the guess in the M4
 checkpoint.
 
 ## Last Completed Checkpoint
+
+CHK-13 — **playability, visual quality, and deployment overhaul** (`PLAN.md`, 23/09/2026 → 24/09/2026).
+Comprehensive 7-phase overhaul across gameplay feel, rendering performance, level architecture, visuals, shell UX, and CI/CD:
+- **Phase 0–1 (Controls & P0):** Dedicated rotate keys (Q/F), confirm key unification, pause overlay with click-to-resume, autosave on tab-hide/close. *(T1.3 stashed `[!]` pending unlisted test boundary revision).*
+- **Phase 2 (Feel):** 30 Hz fixed sim with sub-step render interpolation + render-time look preview, shoulder camera offset (+0.45m), soft detach on drop.
+- **Phase 3 (Performance):** Replaced placeholder scene with static world meshes merged by material color, removed per-frame vector allocations.
+- **Phase 4 (Level):** Consolidated shipped world (Pressure Gallery partition wall, moved Branch A door, hub spawn, purged lab fixture).
+- **Phase 5 (Visuals):** Dynamic directional shadows (PCFShadowMap), RoomEnvironment reflections, procedural gear teeth and pipe joints, powered emissive glow.
+- **Phase 6 (UX Shell):** Title screen (Start/Continue/New Game/Controls), live pause settings panel (sensitivity, invert-Y, volume), touch-only notice.
+- **Phase 7 (Production & Deployment):** Production-quiet logging (`?log=1` harness support), global error toast, vendor chunk splitting (`three` 563.58 kB / app 201.96 kB), GitHub Actions CI/Pages deploy pipelines, verified live on GitHub Pages.
+- **Verification:** 49 test files, 595 tests passing (`npx vitest run`); clean build; CDP harness passes `boot`, `title`, `hold`, and `branch` scenarios against local build and live deployment.
+- **Live URL:** https://shrinivas-sn.github.io/gearwright/
+- **Open tasks:** T1.3 (dropped parts gravity fall) remains stashed `[!]`.
+
 CHK-12.10 — **first-contact control defects, fixed at the source: mouse capture and keyboard
 focus** (Bug 21, found by the *user* playing the shipped build — the first defect report that
 did not come from a harness). Two symptoms, one root: the game never captured the mouse and

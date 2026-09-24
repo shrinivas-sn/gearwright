@@ -211,16 +211,16 @@ Legend: `[ ]` todo · `[x]` done · `[!]` failed after retries (see log) · `[~]
 - [x] CHECKPOINT 6
 
 ### Phase 7 — Production + deployment
-- [ ] T7.1 Production-quiet game log
-- [ ] T7.2 Global error handler
-- [ ] T7.3 Split three.js into its own cached chunk
-- [ ] T7.4 CI workflow
-- [ ] T7.5 GitHub Pages deploy workflow
-- [ ] T7.6 Harness `--url` mode (test the live site)
-- [ ] T7.7 Create repo, push, enable Pages, deploy
-- [ ] T7.8 Live verification
-- [ ] T7.9 README + PROJECT_STATE closing entry + close this plan
-- [ ] CHECKPOINT 7 (final)
+- [x] T7.1 Production-quiet game log
+- [x] T7.2 Global error handler
+- [x] T7.3 Split three.js into its own cached chunk
+- [x] T7.4 CI workflow
+- [x] T7.5 GitHub Pages deploy workflow
+- [x] T7.6 Harness `--url` mode (test the live site)
+- [x] T7.7 Create repo, push, enable Pages, deploy
+- [x] T7.8 Live verification
+- [x] T7.9 README + PROJECT_STATE closing entry + close this plan
+- [x] CHECKPOINT 7 (final)
 
 ---
 
@@ -2797,6 +2797,22 @@ Verified:   `npm run typecheck` → clean (exit 0);
 Surprises:  none in Phase 6. T1.3 remains stashed [!].
 Next:       T7.1 — production-quiet game log (src/debug/log.ts)
 Commit:     overhaul(CP6): checkpoint — phase 6 complete
+
+### Phase 7 — 24/09/2026
+Done:       T7.1 (production-quiet gameLog), T7.2 (global error toast & unhandledrejection), T7.3 (separate three.js chunk), T7.4 (GitHub Actions CI workflow), T7.5 (GitHub Pages deploy workflow), T7.6 (harness --url mode), T7.7 (repo creation, push, Pages workflow enable, deploy), T7.8 (live verification against GitHub Pages), T7.9 (README, PROJECT_STATE CHK-13), CHECKPOINT 7 (final)
+Verified:   `npm run typecheck` → clean (exit 0);
+            `npx vitest run` → Test Files 49 passed (49), Tests 595 passed (595);
+            `npm run build` → dist/assets/index-Bw6QLoN-.js 201.96 kB │ gzip: 59.80 kB, dist/assets/three-CYnRnvbb.js 563.58 kB │ gzip: 142.63 kB;
+            `node scripts/browser-check.mjs boot --production` → ok: true, problems: [], bootStatus: true;
+            `node scripts/browser-check.mjs branch --production` → exit 0, ok: true, problems: [], branchBurst: all true, branchClue: discovered: true, branchReload: all true;
+            GitHub Actions Deploy workflow run 35991448169 → completed successfully (build: 32s, deploy: 8s);
+            `node scripts/browser-check.mjs title --url=https://shrinivas-sn.github.io/gearwright/` → ok: true, visibleAtBoot: true, buttonText: "Continue", hiddenAfterStart: true, lifecycle: "running";
+            `node scripts/browser-check.mjs boot --url=https://shrinivas-sn.github.io/gearwright/` → ok: true, pos: (-4.5, 0.002, 12), bootStatus: true, overlayShown: true, resumedState: "running";
+            `node scripts/browser-check.mjs hold --url=https://shrinivas-sn.github.io/gearwright/` → ok: true, hold.focused: true, hold.after.state: "Manipulation", hold.after.held: "gear-a";
+            `node scripts/browser-check.mjs branch --url=https://shrinivas-sn.github.io/gearwright/` → exit 0, ok: true, branchBurst: all true (bm1Reward, branchComplete, hubStage, plateAwake, autosave), branchClue: discovered: true, branchReload: loaded: true, cluesRestored: true, stagedRestored: true, hubStage: true.
+Surprises:  none in Phase 7. Live site verified completely green on GitHub Pages.
+Next:       Plan complete. Open item: T1.3 (gravity settle on dropped parts, stashed in stash@{0} due to phase-world.test.ts invariant).
+Commit:     overhaul(T7.9): README, project state, close plan
 
 <!-- Entry template (copy for each session):
 ### <Phase/Task> — <DD/MM/YYYY>
