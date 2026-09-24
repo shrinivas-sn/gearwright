@@ -1067,6 +1067,14 @@ function boot(): void {
   };
   const lerpVec = (a: Vec3, b: Vec3, t: number): Vec3 => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) });
 
+  /** Pooled socket-marker states (PLAN T3.3): rewritten in place every frame. */
+  const snapMarkerStates = resolvedSockets.map((socket) => ({
+    socketId: socket.instance.id,
+    center: socket.instance.pose.center,
+    halfExtents: socket.instance.halfExtents,
+    state: 'available' as 'available' | 'preview' | 'occupied'
+  }));
+
   const app: App = createApp({
     canvas,
     renderPort,
@@ -1221,18 +1229,14 @@ function boot(): void {
         scanner.present();
 
         // Every socket the level authors gets a marker, derived from live occupancy.
-        renderPort.setSnapMarkers(
-          resolvedSockets.map((socket) => ({
-            socketId: socket.instance.id,
-            center: socket.instance.pose.center,
-            halfExtents: socket.instance.halfExtents,
-            state: snap.isSocketOccupied(socket.instance.id)
-              ? 'occupied'
-              : snap.candidate?.socketId === socket.instance.id
-                ? 'preview'
-                : 'available'
-          }))
-        );
+        for (const marker of snapMarkerStates) {
+          marker.state = snap.isSocketOccupied(marker.socketId)
+            ? 'occupied'
+            : snap.candidate?.socketId === marker.socketId
+              ? 'preview'
+              : 'available';
+        }
+        renderPort.setSnapMarkers(snapMarkerStates);
 
         const focus = interaction.focus;
         renderPort.setFocusMarker(

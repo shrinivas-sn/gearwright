@@ -224,7 +224,8 @@ export class ThreeRenderer implements RenderPort {
 
     let renderer: THREE.WebGLRenderer;
     try {
-      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+      // a low-poly scene should not force a laptop's discrete GPU on
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'default' });
     } catch {
       // No WebGL2 / context creation refused -> caller surfaces EC-BRN-10.
       return false;
@@ -579,10 +580,12 @@ export class ThreeRenderer implements RenderPort {
     const renderer = this.renderer;
     if (!renderer) return EMPTY_RENDER_STATS;
     const info = renderer.info;
+    let visibleLights = 0;
+    for (const light of this.lights) if (light.visible) visibleLights += 1;
     return {
       drawCalls: info.render.calls,
       triangles: info.render.triangles,
-      lights: this.lights.filter((light) => light.visible).length,
+      lights: visibleLights,
       programs: info.programs?.length ?? 0,
       geometries: info.memory.geometries,
       textures: info.memory.textures

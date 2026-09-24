@@ -481,27 +481,26 @@ function firstOverlap(
   return null;
 }
 
+function axisOf(v: Vec3, axis: number): number { return axis === 0 ? v.x : axis === 1 ? v.y : v.z; }
+
 /** Slab-method ray vs AABB. Returns the entry hit, or null. */
 function rayVsAabb(origin: Vec3, direction: Vec3, box: InternalCollider, maxDistance: number): RayHit | null {
   let tMin = 0;
   let tMax = maxDistance;
   let normal = vec3(0, 1, 0);
 
-  const ox = [origin.x, origin.y, origin.z] as const;
-  const dx = [direction.x, direction.y, direction.z] as const;
-  const bMin = [box.min.x, box.min.y, box.min.z] as const;
-  const bMax = [box.max.x, box.max.y, box.max.z] as const;
-
   for (let axis = 0; axis < 3; axis += 1) {
-    const o = ox[axis]!;
-    const d = dx[axis]!;
+    const o = axisOf(origin, axis);
+    const d = axisOf(direction, axis);
+    const bMin = axisOf(box.min, axis);
+    const bMax = axisOf(box.max, axis);
     if (Math.abs(d) < 1e-12) {
       // Parallel: inside the slab means the axis never clips the ray.
-      if (o < bMin[axis]! || o > bMax[axis]!) return null;
+      if (o < bMin || o > bMax) return null;
       continue;
     }
-    let t1 = (bMin[axis]! - o) / d;
-    let t2 = (bMax[axis]! - o) / d;
+    let t1 = (bMin - o) / d;
+    let t2 = (bMax - o) / d;
     let faceSign = -1;
     if (t1 > t2) {
       const swap = t1;
