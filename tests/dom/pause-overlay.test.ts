@@ -28,5 +28,11 @@ describe('PauseOverlay (PLAN T1.2)', () => {
     expect(onResume).toHaveBeenCalledTimes(1);
     (root.querySelector('.gw-pause') as HTMLElement).click();
     expect(onResume).toHaveBeenCalledTimes(2);
+
+    const noResumeBtn = document.createElement('button');
+    noResumeBtn.className = 'gw-pause-resume gw-pause-noresume';
+    overlay.mountExtra(noResumeBtn);
+    noResumeBtn.click();
+    expect(onResume).toHaveBeenCalledTimes(2);
   });
 });

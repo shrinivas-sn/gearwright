@@ -1335,6 +1335,31 @@ function boot(): void {
   });
   titleScreen?.onNewGame(() => startNewGame());
 
+  // PLAN T6.3: controls table and New Game in pause panel
+  const pauseExtras = document.createElement('div');
+  pauseExtras.append(buildControlsTable(document, controlRows()));
+  const pauseNewGame = document.createElement('button');
+  pauseNewGame.type = 'button';
+  pauseNewGame.className = 'gw-pause-resume gw-pause-noresume';
+  pauseNewGame.textContent = 'New game';
+  let pauseNewArmed = false;
+  let pauseDisarmTimer: ReturnType<typeof setTimeout> | null = null;
+  pauseNewGame.addEventListener('click', () => {
+    if (!pauseNewArmed) {
+      pauseNewArmed = true;
+      pauseNewGame.textContent = 'Click again to erase progress';
+      pauseDisarmTimer = setTimeout(() => {
+        pauseNewArmed = false;
+        pauseNewGame.textContent = 'New game';
+      }, 4000);
+      return;
+    }
+    if (pauseDisarmTimer !== null) clearTimeout(pauseDisarmTimer);
+    startNewGame();
+  });
+  pauseExtras.append(pauseNewGame);
+  pauseOverlay.mountExtra(pauseExtras);
+
   // World data + first camera pose so frame one already looks correct.
   // Every machine's authored boxes are handed over too: M6 composed only the lab's
   // meshes, so P1's frame and shafts were colliders without visuals. This is the
@@ -1496,6 +1521,7 @@ function boot(): void {
     unbindEvents();
     releaseAudioGesture();
     audio.dispose();
+    if (pauseDisarmTimer !== null) clearTimeout(pauseDisarmTimer);
     titleScreen?.dispose();
     pauseOverlay.dispose();
     app.dispose();

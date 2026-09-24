@@ -665,6 +665,12 @@ body {
   text-align: left;
 }
 
+.gw-pause-noresume {
+  margin-top: 14px;
+  display: block;
+  margin-inline: auto;
+}
+
 .gw-controls {
   width: 100%;
   border-collapse: collapse;
