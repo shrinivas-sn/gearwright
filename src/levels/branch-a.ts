@@ -567,8 +567,8 @@ export const BM1_ANCHORS: ReadonlyArray<Anchor> = [
   // and the shut-off valve are the two "fits, cannot bridge" decoys (§21.4).
   { id: 'anchor/bm1-gear', pose: poseAt(-1.6, 0.12, -15.4) },
   { id: 'anchor/bm1-pipe', pose: poseAt(1.6, 0.12, -15.4) },
-  { id: 'anchor/bm1-plate', pose: poseAt(-0.6, 0.07, -14.7) },
-  { id: 'anchor/bm1-shutoff', pose: poseAt(0.6, 0.12, -14.7) }
+  { id: 'anchor/bm1-plate', pose: poseAt(-0.6, 0.07, -15.8) },
+  { id: 'anchor/bm1-shutoff', pose: poseAt(0.6, 0.12, -15.8) }
 ];
 
 export const bm1AnchorPose = anchorLookup(BM1_ANCHORS, 'BM-1');

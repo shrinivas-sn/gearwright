@@ -10,17 +10,18 @@ import { SOCKET_DEFINITIONS } from '../../src/data/sockets.ts';
 import { ComponentRegistry } from '../../src/game-state/component-registry.ts';
 import { ProgressionSystem } from '../../src/game-state/progression-system.ts';
 import {
-  BRANCH_A_CARRYABLES,
-  BRANCH_A_COMPONENTS,
-  BRANCH_A_INTERACTABLES,
-  BRANCH_A_SOCKETS
-} from '../../src/levels/branch-a.ts';
-import {
-  LAB_CARRYABLE,
-  LAB_COMPONENTS,
-  LAB_INTERACTABLES,
-  LAB_SOCKETS
-} from '../../src/levels/lab-world.ts';
+  SHIPPED_CARRYABLES,
+  SHIPPED_COMPONENTS,
+  SHIPPED_INTERACTABLES,
+  SHIPPED_SOCKETS,
+  SHIPPED_WORLD
+} from '../../src/levels/shipped-content.ts';
+import { BRANCH_A_INTERACTABLES } from '../../src/levels/branch-a.ts';
+import { KinematicPhysics } from '../../src/adapters/kinematic-physics.ts';
+import { vec3 } from '../../src/core/vec3.ts';
+import { DEFAULT_PLAYER_TUNING } from '../../src/gameplay/player-controller.ts';
+import { hubColliders } from '../../src/levels/hub.ts';
+import type { BranchState } from '../../src/game-state/progression-system.ts';
 
 /**
  * SHIPPED CONTENT INTEGRITY — "assembled" is not the same as "reachable".
@@ -42,7 +43,7 @@ import {
 
 /** The same bundle `main.ts` builds: placed components from both level files. */
 function shippedRegistry(): ComponentRegistry {
-  return new ComponentRegistry(COMPONENT_DEFINITIONS, [...LAB_COMPONENTS, ...BRANCH_A_COMPONENTS]);
+  return new ComponentRegistry(COMPONENT_DEFINITIONS, [...SHIPPED_COMPONENTS]);
 }
 
 function shippedProgression(): ProgressionSystem {
@@ -103,7 +104,7 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
 
   it('places every part the puzzles require, and defines every placed socket', () => {
     const socketDefinitionIds = SOCKET_DEFINITIONS.map((definition) => definition.id);
-    for (const socket of [...LAB_SOCKETS, ...BRANCH_A_SOCKETS]) {
+    for (const socket of [...SHIPPED_SOCKETS]) {
       expect(
         socketDefinitionIds,
         `${socket.id} references unknown socket definition ${socket.defId}`
@@ -139,10 +140,10 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
     // carried by the SM, but absent from `BRANCH_A_INTERACTABLES` — which made the
     // branch's capstone machine unassemblable no matter how it was gated.
     const targets = new Set(
-      [...LAB_INTERACTABLES, ...BRANCH_A_INTERACTABLES].map((item) => item.id)
+      [...SHIPPED_INTERACTABLES].map((item) => item.id)
     );
 
-    for (const binding of [LAB_CARRYABLE, ...BRANCH_A_CARRYABLES]) {
+    for (const binding of [...SHIPPED_CARRYABLES]) {
       expect(targets, `${binding.instanceId} is carryable but has no interaction target`).toContain(
         binding.instanceId
       );
@@ -151,7 +152,7 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
 
   it('names real placed content behind every interaction target, in a real box', () => {
     const componentIds = shippedRegistry().all.map((instance) => instance.id);
-    const socketIds = [...LAB_SOCKETS, ...BRANCH_A_SOCKETS].map((socket) => socket.id);
+    const socketIds = [...SHIPPED_SOCKETS].map((socket) => socket.id);
 
     // Branch targets are all part-derived, so each one must name a placed component.
     // (The lab's `crate-far` / `crate-locked` are the M2 *demonstration* targets for the
@@ -162,7 +163,7 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
       expect(componentIds, `no component for branch target ${item.id}`).toContain(item.id);
     }
 
-    for (const item of [...LAB_INTERACTABLES, ...BRANCH_A_INTERACTABLES]) {
+    for (const item of [...SHIPPED_INTERACTABLES]) {
       if (item.kind === 'socket') {
         expect(socketIds, `no placed socket for target ${item.id}`).toContain(item.socketId ?? item.id);
       }
@@ -195,5 +196,46 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
         ).toContain(required);
       }
     }
+  });
+});
+
+describe('shipped level — PLAN T4.4', () => {
+  const branchState = (id: string): BranchState => (id === 'branch-a' ? 'Available' : 'Locked');
+
+  it('spawns the player in free space and lets them walk through the gallery door', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([...SHIPPED_WORLD.colliders, ...hubColliders(branchState)]);
+    const capsule = DEFAULT_PLAYER_TUNING.capsule;
+    const spawn = SHIPPED_WORLD.spawn;
+    expect(physics.isPoseValid(vec3(spawn.x, spawn.y, spawn.z), capsule)).toBe(true);
+    let feet = vec3(spawn.x, spawn.y, spawn.z);
+    const out = vec3();
+    for (const waypoint of [{ x: -6, z: 10 }, { x: -6, z: 6 }, { x: -6, z: 2 }]) {
+      for (let i = 0; i < 400; i += 1) {
+        const dx = waypoint.x - feet.x;
+        const dz = waypoint.z - feet.z;
+        const distance = Math.hypot(dx, dz);
+        if (distance < 0.05) break;
+        const stepLength = Math.min(0.1, distance);
+        const result = physics.moveAndSlide(feet, vec3((dx / distance) * stepLength, -0.01, (dz / distance) * stepLength), capsule, out);
+        feet = vec3(result.position.x, result.position.y, result.position.z);
+      }
+      expect(Math.hypot(waypoint.x - feet.x, waypoint.z - feet.z)).toBeLessThan(0.1);
+    }
+  });
+
+  it('blocks the partition away from the doorway', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([...SHIPPED_WORLD.colliders, ...hubColliders(branchState)]);
+    expect(physics.isPoseValid(vec3(0, 0.01, 8.25), DEFAULT_PLAYER_TUNING.capsule)).toBe(false);
+  });
+
+  it('never places an enabled interaction target inside static geometry', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([...SHIPPED_WORLD.colliders, ...hubColliders(branchState)]);
+    const embedded = SHIPPED_INTERACTABLES.filter(
+      (item) => item.enabled && physics.isBoxBlocked(item.min, item.max)
+    ).map((item) => item.id);
+    expect(embedded).toEqual([]);
   });
 });
