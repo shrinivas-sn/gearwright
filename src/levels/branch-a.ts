@@ -183,7 +183,7 @@ function shaftMesh(
 ): LabWorldMesh {
   const center = p1AnchorPose(anchorId).center;
   return {
-    kind: 'box',
+    kind: 'cylinder-z',
     min: { x: center.x - halfExtents.x, y: center.y - halfExtents.y, z: center.z - halfExtents.z },
     max: { x: center.x + halfExtents.x, y: center.y + halfExtents.y, z: center.z + halfExtents.z },
     color: SHAFT_COLOR

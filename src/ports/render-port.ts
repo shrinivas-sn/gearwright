@@ -42,7 +42,8 @@ export interface CameraPose {
  * this list stays tiny by design.
  */
 export interface LabWorldMesh {
-  readonly kind: 'box';
+  /** 'cylinder-z': a round bar along Z filling the box (shafts). */
+  readonly kind: 'box' | 'cylinder-z';
   readonly min: { readonly x: number; readonly y: number; readonly z: number };
   readonly max: { readonly x: number; readonly y: number; readonly z: number };
   readonly color: number;

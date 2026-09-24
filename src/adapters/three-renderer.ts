@@ -341,11 +341,17 @@ export class ThreeRenderer implements RenderPort {
     // One merged mesh per colour: same look, a fraction of the draw calls.
     const byColor = new Map<number, THREE.BufferGeometry[]>();
     for (const mesh of meshes) {
-      if (mesh.kind !== 'box') continue;
       const sizeX = Math.max(0.001, mesh.max.x - mesh.min.x);
       const sizeY = Math.max(0.001, mesh.max.y - mesh.min.y);
       const sizeZ = Math.max(0.001, mesh.max.z - mesh.min.z);
-      const geometry = new THREE.BoxGeometry(sizeX, sizeY, sizeZ);
+      let geometry: THREE.BufferGeometry;
+      if (mesh.kind === 'cylinder-z') {
+        const radius = Math.min(sizeX, sizeY) / 2;
+        geometry = new THREE.CylinderGeometry(radius, radius, sizeZ, 16);
+        geometry.rotateX(Math.PI / 2);
+      } else {
+        geometry = new THREE.BoxGeometry(sizeX, sizeY, sizeZ);
+      }
       geometry.translate(mesh.min.x + sizeX / 2, mesh.min.y + sizeY / 2, mesh.min.z + sizeZ / 2);
       const list = byColor.get(mesh.color) ?? [];
       list.push(geometry);
