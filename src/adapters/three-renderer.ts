@@ -121,7 +121,7 @@ export class ThreeRenderer implements RenderPort {
   constructor(options: RendererOptions = {}) {
     this.options = {
       maxPixelRatio: options.maxPixelRatio ?? 1.5,
-      placeholderScene: options.placeholderScene ?? true
+      placeholderScene: options.placeholderScene ?? false
     };
     this.marker = new THREE.Group();
     const markerMaterial = new THREE.MeshStandardMaterial({
@@ -249,6 +249,7 @@ export class ThreeRenderer implements RenderPort {
     camera.lookAt(0, 0.6, 0);
     this.camera = camera;
 
+    this.buildLights();
     this.buildPlaceholderScene();
     // The player marker is scene furniture from the start: Phase 1 shows the
     // lab without a player; Phase 2 moves the marker every frame.
@@ -593,6 +594,18 @@ export class ThreeRenderer implements RenderPort {
     this.renderer?.setSize(this.width, this.height, false);
   }
 
+  private buildLights(): void {
+    if (!this.scene) return;
+    const hemisphere = new THREE.HemisphereLight(0xbfc6cf, 0x2a2e33, 1.1);
+    this.scene.add(hemisphere);
+    this.lights.push(hemisphere);
+
+    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    key.position.set(8, 12, 6);
+    this.scene.add(key);
+    this.lights.push(key);
+  }
+
   /**
    * Grey-box placeholder so Phase 1 can confirm rendering + measure a baseline.
    * Replaced by real level data in later milestones; never load-bearing for logic.
@@ -600,15 +613,6 @@ export class ThreeRenderer implements RenderPort {
   private buildPlaceholderScene(): void {
     if (!this.options.placeholderScene || !this.scene) return;
     const scene = this.scene;
-
-    const hemisphere = new THREE.HemisphereLight(0xbfc6cf, 0x2a2e33, 1.1);
-    scene.add(hemisphere);
-    this.lights.push(hemisphere);
-
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
-    key.position.set(8, 12, 6);
-    scene.add(key);
-    this.lights.push(key);
 
     const ground = new THREE.Mesh(
       new THREE.BoxGeometry(40, 0.4, 40),
