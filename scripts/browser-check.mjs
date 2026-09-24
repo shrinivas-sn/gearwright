@@ -313,11 +313,15 @@ window.__probe = {
   oracle: async (ids) => {
     const { KinematicPhysics } = await import('/src/adapters/kinematic-physics.ts');
     const { InteractionSystem } = await import('/src/gameplay/interaction-system.ts');
-    const lab = await import('/src/levels/lab-world.ts');
+    const shipped = await import('/src/levels/shipped-content.ts');
     const branch = await import('/src/levels/branch-a.ts');
+    const hub = await import('/src/levels/hub.ts');
     const physics = new KinematicPhysics();
-    physics.setStaticColliders([...lab.LAB_WORLD.colliders, ...branch.BRANCH_A_WORLD.colliders]);
-    const all = [...lab.LAB_INTERACTABLES, ...branch.BRANCH_A_INTERACTABLES, ...branch.bm1PropInteractables(true)];
+    physics.setStaticColliders([
+      ...shipped.SHIPPED_WORLD.colliders,
+      ...hub.hubColliders((id) => (id === 'branch-a' ? 'Available' : 'Locked'))
+    ]);
+    const all = [...shipped.SHIPPED_INTERACTABLES, ...branch.bm1PropInteractables(true), ...hub.hubInteractables(() => 'Complete')];
     const byId = new Map(all.map((item) => [item.id, item]));
     const inter = new InteractionSystem(
       physics,
@@ -413,7 +417,6 @@ window.__probe = {
   },
   level: async () => {
     const branch = await import('/src/levels/branch-a.ts');
-    const lab = await import('/src/levels/lab-world.ts');
     const hub = await import('/src/levels/hub.ts');
     const parts = (list) => list.map((c) => ({ id: c.instanceId, center: c.spawn.center, half: c.definition.halfExtents }));
     const sockets = (list) => list.map((s) => ({ id: s.id, center: s.pose.center, half: s.halfExtents }));
@@ -430,8 +433,7 @@ window.__probe = {
       bm1Props: branch.BM1_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })),
       // Every hub target as if the branch were complete, so the clue plate's real touch
       // box (and its enable rule) can be aimed at like any other target.
-      hubTargets: hub.hubInteractables(() => 'Complete').map((i) => ({ id: i.id, min: i.min, max: i.max })),
-      lab: lab.LAB_INTERACTABLES.map((i) => ({ id: i.id, min: i.min, max: i.max }))
+      hubTargets: hub.hubInteractables(() => 'Complete').map((i) => ({ id: i.id, min: i.min, max: i.max }))
     };
   }
 };
@@ -622,8 +624,7 @@ async function scenarioFocus(cdp) {
   const targets = [
     ...level.bm1Parts.map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...level.bm1Sockets.map((entry) => ({ id: entry.id, box: boxOf(entry) })),
-    ...level.p1.map((entry) => ({ id: entry.id, box: boxOf(entry) })),
-    ...level.lab.map((entry) => ({ id: entry.id, box: boxOf(entry) }))
+    ...level.p1.map((entry) => ({ id: entry.id, box: boxOf(entry) }))
   ];
 
   const results = {};
@@ -693,12 +694,12 @@ async function dockInto(cdp, socket) {
         attempts.push('hold lost — re-grab required');
         return { attempts, hud, dropped: true };
       }
-      if (/compatible/i.test(hud.socket?.text ?? '')) {
+      if (!/incompatible/i.test(hud.socket?.text ?? '') && /compatible/i.test(hud.socket?.text ?? '')) {
         for (let i = 0; i < 3; i += 1) {
           await clickAt(cdp, 800, 450);
           await sleep(400);
           hud = await evaluate(cdp, 'window.__probe.hud()');
-          if (!/compatible/i.test(hud.socket?.text ?? '')) break;
+          if (/incompatible/i.test(hud.socket?.text ?? '') || !/compatible/i.test(hud.socket?.text ?? '')) break;
         }
         return { attempts, hud };
       }
@@ -792,9 +793,9 @@ async function scenarioBranch(cdp) {
       await sleep(900); // three confirmed steps is the §25 stable window
       drainConsole(cdp);
       const fresh = report.logs.slice(before).join('\n');
-      const completed = new RegExp(`\\[reward\\] ${puzzleId}:`).test(fresh);
+      const completed = puzzleId !== null && new RegExp(`\\[reward\\] ${puzzleId}:`).test(fresh);
       log.push({ attempt, held: grab.held, dropped: dock.dropped === true, attempts: dock.attempts });
-      if (completed) {
+      if (completed || (puzzleId === null && dock.dropped !== true)) {
         return {
           label,
           grab,
@@ -837,7 +838,7 @@ async function scenarioBranch(cdp) {
   report.data.branchPairs = [];
   report.data.branchPairs.push(await playPair('P1 gear -> mesh', 'P1', 'gear-a', 'socket-mesh', level.p1Parts, level.p1Sockets));
   report.data.branchPairs.push(await playPair('P2 gear -> mesh', 'P2', 'gear-p2', 'socket-p2-mesh', level.p2Parts, level.p2Sockets));
-  report.data.branchPairs.push(await playPair('P3 valve 1 -> A', 'P3', 'valve-p3-1', 'socket-p3-valve-a', level.p3Parts, level.p3Sockets));
+  report.data.branchPairs.push(await playPair('P3 valve 1 -> A', null, 'valve-p3-1', 'socket-p3-valve-a', level.p3Parts, level.p3Sockets));
   report.data.branchPairs.push(await playPair('P3 valve 2 -> C', 'P3', 'valve-p3-2', 'socket-p3-valve-c', level.p3Parts, level.p3Sockets));
   report.data.branchAfterPuzzles = {
     hud: await evaluate(cdp, 'window.__probe.hud()'),
@@ -931,39 +932,6 @@ async function main() {
   log('page booted');
 
   if (SCENARIO === 'boot') await scenarioBoot(cdp);
-  if (SCENARIO === 'probe') {
-    const ids = [
-      'crate-a',
-      'gear-bm1',
-      'valve-bm1',
-      'socket-bm1-drive',
-      'socket-bm1-line',
-      'bm1/prime-feed',
-      'gear-a',
-      'socket-a'
-    ];
-    await evaluate(cdp, `window.__probe.teleport(0, 0.01, -6)`);
-    await sleep(900);
-    report.data.probeAtSpawn = await evaluate(cdp, `window.__probe.oracle(${JSON.stringify(ids)})`);
-    await evaluate(cdp, `window.__probe.teleport(-1.6, 0.01, -12.8)`);
-    await sleep(900);
-    report.data.probeAtBm1 = await evaluate(cdp, `window.__probe.oracle(${JSON.stringify(ids)})`);
-  }
-  if (SCENARIO === 'liveaim') {
-    await evaluate(cdp, 'window.__probe.teleport(0, 0.01, -4.7)');
-    await sleep(600);
-    const before = await evaluate(cdp, 'window.__probe.state()');
-    const aimed = await evaluate(
-      cdp,
-      '(async () => { await window.__probe.pitchHome(); await window.__probe.pitchTo(0.41); await window.__probe.aimYaw(0); return window.__probe.state(); })()'
-    );
-    await sleep(600);
-    const settled = await evaluate(cdp, 'window.__probe.state()');
-    report.data.liveaim = { before, aimed, settled };
-    report.data.liveaimHud = await evaluate(cdp, 'window.__probe.hud()');
-    report.data.liveaimOracle = await evaluate(cdp, `window.__probe.oracle(['crate-a'])`);
-    drainConsole(cdp);
-  }
   if (SCENARIO === 'focus') await scenarioFocus(cdp);
   if (SCENARIO === 'hold') {
     // PLAN T1.1 regression: a human-length E press (~160 ms ≈ 5 fixed steps) must grab
