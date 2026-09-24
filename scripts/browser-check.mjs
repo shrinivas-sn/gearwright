@@ -16,6 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const ROOT = process.cwd();
 const SCENARIO = process.argv[2] ?? 'boot';
 const PRODUCTION = process.argv.includes('--production');
+const URL_ARG = process.argv.find((arg) => arg.startsWith('--url='))?.slice('--url='.length) ?? null;
 const DEV_PORT = 5199;
 const PREVIEW_PORT = 5198;
 const DEBUG_PORT = 9333;
@@ -24,7 +25,7 @@ const PROFILE = join(ROOT, '.tmp-chrome-profile');
 // Harness URL flags: shoulder camera off (aim math assumes the camera looks through the
 // player), no title screen, game logs on even in production builds.
 const QUERY = '?shoulder=0&skipTitle=1&log=1';
-const BASE = (PRODUCTION ? `http://127.0.0.1:${PREVIEW_PORT}/` : `http://127.0.0.1:${DEV_PORT}/`) + QUERY;
+const BASE = URL_ARG !== null ? URL_ARG.replace(/\/?$/, '/') + QUERY : (PRODUCTION ? `http://127.0.0.1:${PREVIEW_PORT}/` : `http://127.0.0.1:${DEV_PORT}/`) + QUERY;
 
 const report = { scenario: SCENARIO, production: PRODUCTION, logs: [], problems: [], data: {} };
 const children = [];
@@ -462,7 +463,7 @@ async function boot(cdp) {
     try {
       up = await evaluate(cdp, `(async () => {
         if (document.querySelector('canvas[data-booted="true"]')) return true;
-        ${PRODUCTION ? '' : "try { await import('/src/levels/branch-a.ts'); return true; } catch { return false; }"}
+        ${PRODUCTION || URL_ARG !== null ? '' : "try { await import('/src/levels/branch-a.ts'); return true; } catch { return false; }"}
         return false;
       })()`);
     } catch {
@@ -934,20 +935,24 @@ async function scenarioBranch(cdp) {
 
 async function main() {
   mkdirSync(PROFILE, { recursive: true });
-  if (PRODUCTION) {
-    log('building…');
-    await new Promise((resolve, reject) => {
-      const build = spawn('npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit', shell: true });
-      build.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`build failed: ${code}`))));
-    });
-    startProcess('node', ['node_modules/vite/bin/vite.js', 'preview', '--port', String(PREVIEW_PORT), '--strictPort', '--host', '127.0.0.1'], 'preview');
-  } else {
-    startProcess('node', ['node_modules/vite/bin/vite.js', '--port', String(DEV_PORT), '--strictPort', '--host', '127.0.0.1'], 'vite');
-  }
+  if (URL_ARG === null) {
+    if (PRODUCTION) {
+      log('building…');
+      await new Promise((resolve, reject) => {
+        const build = spawn('npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit', shell: true });
+        build.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`build failed: ${code}`))));
+      });
+      startProcess('node', ['node_modules/vite/bin/vite.js', 'preview', '--port', String(PREVIEW_PORT), '--strictPort', '--host', '127.0.0.1'], 'preview');
+    } else {
+      startProcess('node', ['node_modules/vite/bin/vite.js', '--port', String(DEV_PORT), '--strictPort', '--host', '127.0.0.1'], 'vite');
+    }
 
-  const up = await waitForHttp(BASE, 60000);
-  if (!up) throw new Error('server never came up');
-  log(`server up at ${BASE}`);
+    const up = await waitForHttp(BASE, 60000);
+    if (!up) throw new Error('server never came up');
+    log(`server up at ${BASE}`);
+  } else {
+    log(`testing live URL: ${BASE}`);
+  }
 
   startProcess(
     CHROME,
