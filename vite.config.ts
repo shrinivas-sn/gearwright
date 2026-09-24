@@ -13,7 +13,13 @@ export default defineConfig({
     sourcemap: false,
     // Budget guard (ARCH §36.4): warn when the initial bundle grows past ~4 MB
     // (uncompressed) — the 8 MB cold-download ceiling is measured on the wire.
-    chunkSizeWarningLimit: 4096
+    chunkSizeWarningLimit: 4096,
+    rollupOptions: {
+      output: {
+        // three.js changes far less often than game code: its own file stays browser-cached across game releases.
+        manualChunks: { three: ['three'] }
+      }
+    }
   },
   server: {
     open: false
