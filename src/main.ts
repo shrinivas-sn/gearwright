@@ -58,6 +58,7 @@ import { indexRequirements, scannerRevealFor, type ScannerReveal } from './game-
 import { ScannerOverlay, type ScannerSpec, type ScannerState } from './presentation/scanner-overlay.ts';
 import { Hud, type HudSnapshot, type HudObjectiveView, type HudResourceView, type HudLogView, type HudHintView, type HudCaptureView, type HudScannerState, type HudSocketState } from './presentation/hud.ts';
 import { PauseOverlay, type PauseCause } from './presentation/pause-overlay.ts';
+import { TitleScreen } from './presentation/title-screen.ts';
 import { buildControlsTable, type ControlRow } from './presentation/controls-table.ts';
 import { HINT_LEVEL_DEFINITIONS, conceptualHintFor, reasonPlainText } from './data/hints.ts';
 import { MATERIAL_KINDS } from './game-state/inventory-system.ts';
@@ -539,8 +540,6 @@ function boot(): void {
       ['Pause · release mouse', 'Esc']
     ];
   };
-  void controlRows;
-  void buildControlsTable;
   const interaction = new InteractionSystem(physics, [...SHIPPED_INTERACTABLES]);
 
   // L1 truth (M4/M5): the level's components, sockets and machines, plus the puzzle
@@ -881,6 +880,17 @@ function boot(): void {
 
   // PLAN T1.2: a paused game shows why it is paused and resumes on a click.
   const pauseOverlay = new PauseOverlay(document.body);
+  // PLAN T6.2: title screen shown at boot; ?skipTitle bypasses it for tests and automation.
+  const skipTitle = new URLSearchParams(window.location.search).has('skipTitle');
+  const titleScreen = skipTitle
+    ? null
+    : new TitleScreen(document.body, { hasSave: loaded.ok, controlsTable: buildControlsTable(document, controlRows()) });
+
+  const startNewGame = (): void => {
+    suppressLeaveSave = true;
+    save.newGame();
+    window.location.reload();
+  };
   /** Why the *next* pause happens (set just before requesting it); focus loss is read from the lifecycle reason. */
   let pendingPauseCause: PauseCause = 'user';
   /** When the last pause began (ms): an Esc arriving right after a capture-loss pause must not undo it. */
@@ -1314,6 +1324,17 @@ function boot(): void {
     void inputSource.requestPointerLock();
   });
 
+  titleScreen?.onStart(() => {
+    titleScreen.hide();
+    if (app.snapshot().lifecycle === 'paused') {
+      inputSource.clearAll();
+      app.resume('user');
+    }
+    canvas.focus({ preventScroll: true });
+    void inputSource.requestPointerLock();
+  });
+  titleScreen?.onNewGame(() => startNewGame());
+
   // World data + first camera pose so frame one already looks correct.
   // Every machine's authored boxes are handed over too: M6 composed only the lab's
   // meshes, so P1's frame and shafts were colliders without visuals. This is the
@@ -1399,6 +1420,7 @@ function boot(): void {
   // be read while paused, otherwise a focus-loss pause locks the player out.
   const handlePauseKey = (event: KeyboardEvent): void => {
     if (event.code !== 'Escape') return;
+    if (titleScreen?.visible === true) return;
     const state = app.snapshot().lifecycle;
     if (state === 'running') {
       // While something is held, Escape belongs to the manipulation SM: it is the
@@ -1428,6 +1450,7 @@ function boot(): void {
   // A refusal is announced once; later clicks may still succeed (Chrome refuses re-capture for ~1 s after Esc).
   canvas.tabIndex = 0;
   const handleCanvasPointer = (event: PointerEvent): void => {
+    if (titleScreen?.visible === true) return;
     canvas.focus({ preventScroll: true });
     if (!inputSource.isPointerLocked && event.button === 0) {
       void inputSource.requestPointerLock();
@@ -1457,6 +1480,9 @@ function boot(): void {
       firstFrameSeen = true;
       window.clearTimeout(watchdogId);
       bootEl?.remove();
+      if (titleScreen?.visible === true) {
+        app.requestPause('menu');
+      }
     }
   };
   rafId = window.requestAnimationFrame(tick);
@@ -1470,6 +1496,7 @@ function boot(): void {
     unbindEvents();
     releaseAudioGesture();
     audio.dispose();
+    titleScreen?.dispose();
     pauseOverlay.dispose();
     app.dispose();
   };

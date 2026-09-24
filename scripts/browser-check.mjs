@@ -556,6 +556,34 @@ function boxOf(entry) {
   };
 }
 
+async function scenarioTitle(cdp) {
+  const titleUrl = BASE.replace('skipTitle=1&', '');
+  await cdp.send('Page.navigate', { url: titleUrl });
+  await sleep(4000);
+  const before = await evaluate(
+    cdp,
+    "({ visible: !!document.querySelector('.gw-title') && !document.querySelector('.gw-title').classList.contains('gw-title--hidden'), buttonText: document.querySelector('.gw-title-start')?.textContent })"
+  );
+  const rect = await evaluate(
+    cdp,
+    "(() => { const r = document.querySelector('.gw-title-start').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()"
+  );
+  await clickAt(cdp, rect.x, rect.y);
+  await sleep(1000);
+  const afterHidden = await evaluate(
+    cdp,
+    "document.querySelector('.gw-title').classList.contains('gw-title--hidden')"
+  );
+  const lifecycle = await evaluate(cdp, 'window.__gearwright ? window.__gearwright.snapshot().lifecycle : null');
+  report.data.title = {
+    visibleAtBoot: before.visible,
+    buttonText: before.buttonText,
+    hiddenAfterStart: afterHidden,
+    lifecycle
+  };
+  drainConsole(cdp);
+}
+
 async function scenarioBoot(cdp) {
   const state = await evaluate(cdp, 'window.__probe.state()');
   const hud = await evaluate(cdp, 'window.__probe.hud()');
@@ -932,6 +960,7 @@ async function main() {
   log('page booted');
 
   if (SCENARIO === 'boot') await scenarioBoot(cdp);
+  if (SCENARIO === 'title') await scenarioTitle(cdp);
   if (SCENARIO === 'focus') await scenarioFocus(cdp);
   if (SCENARIO === 'hold') {
     // PLAN T1.1 regression: a human-length E press (~160 ms ≈ 5 fixed steps) must grab
