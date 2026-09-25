@@ -273,7 +273,17 @@ function focusPart(
   const stand =
     approach === 'south' ? { x: pose.x, z: pose.z + standOff } : { x: pose.x + standOff, z: pose.z };
   walkTo(harness, stand);
-  aimAt(harness, livePose(harness, id) ?? pose);
+  // Aim, let the rig arrive, and check the focus *after* it has. `aimAt` converges the
+  // angle against the live pose, but the eye keeps gliding toward its desired orbit
+  // position, so a pose solved mid-glide can slide off a thin part before the key press
+  // lands. Each retry re-aims against the arrived pose — exactly what a player does:
+  // walk in, look, adjust, then press.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    aimAt(harness, livePose(harness, id) ?? pose);
+    if (!focusOn(harness, id, 12)) continue;
+    for (let i = 0; i < 12; i += 1) step(harness);
+    if (harness.interaction.focus?.id === id) return true;
+  }
   return focusOn(harness, id);
 }
 
@@ -281,11 +291,11 @@ function focusPart(
  * Focus and pick up a loose part lying on the floor.
  *
  * The stand-off matters and cannot be arbitrary: the rig's optical axis always passes
- * through the player's torso and its pitch is clamped (~31°), so the steepest possible
- * look descends ~0.6 m per metre and meets the floor about 2.2 m ahead. A part only a
- * few centimetres thick is therefore in the ray from a narrow band of distances — the
- * search covers that band, which is exactly what a player does by walking in and out
- * while looking down.
+ * through the player's torso, its default pose now sits ~1.3 m ABOVE that anchor (the
+ * third-person framing), and its pitch is clamped (~63° down / ~31° up), so the ray
+ * meets the floor a short way ahead of the eye. A part only a few centimetres thick is
+ * therefore in the ray from a narrow band of distances — the search covers that band,
+ * which is exactly what a player does by walking in and out while looking down.
  */
 function fetchPart(
   harness: Harness,
@@ -431,9 +441,13 @@ describe('P1 acceptance — the shipped first puzzle, end to end (ARCH §41 M6)'
     expect(harness.puzzle.reasonCodes).toContain('p1/drive-through-gear');
 
     // The wrong part is removable: it is the `Remove` target now, and the detach key
-    // takes it back out without touching anything else. (Reaching it needs a shallow
-    // look: the mount is near torso height, not on the floor.)
-    expect(focusPart(harness, 'plate-a', PLATE_HOME, 1.5, 'east')).toBe(true);
+    // takes it back out without touching anything else. (The mount is near torso height
+    // and the eye now rides ~1.3 m above the anchor, so the stance is a *look-out* one;
+    // the helper searches stand-offs because the useful band is rig geometry, not taste.)
+    const reachable = [1.5, 2.4, 3.2, 4.0].some((standOff) =>
+      focusPart(harness, 'plate-a', PLATE_HOME, standOff, 'east')
+    );
+    expect(reachable).toBe(true);
     expect(harness.interaction.focus?.kind).toBe('attached');
     step(harness, neutralSample({ primaryPressed: true }));
     const detached = step(harness, neutralSample({ pressed: new Set(['KeyR']) }));

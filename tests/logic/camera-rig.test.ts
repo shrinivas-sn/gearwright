@@ -107,7 +107,11 @@ describe('CameraRig — initial placement', () => {
 
     expect(pose.target).toEqual({ x: 0, y: DEFAULT_CAMERA_TUNING.targetHeight, z: 0 });
     expect(pose.eye.z).toBeCloseTo(3.9868, 3);
-    expect(pose.eye.y).toBeCloseTo(0.0788, 3);
+    // Third-person framing: the eye rides ABOVE the torso anchor and looks down. The
+    // old pin here was 0.0788 — an ankle-height camera staring up at the player — which
+    // is the framing bug the fixed pitch sign removed (see `placeAndCollide`).
+    expect(pose.eye.y).toBeCloseTo(2.7212, 3);
+    expect(pose.eye.y).toBeGreaterThan(pose.target.y);
     expect(pose.fov).toBe(DEFAULT_CAMERA_TUNING.fov);
     expect(rig.currentYaw).toBe(0);
   });
@@ -155,22 +159,41 @@ describe('CameraRig — look integration', () => {
     expect(Math.abs(rig.currentYaw)).toBeLessThan(Math.PI / 3);
   });
 
-  it('clamps pitch at the lower limit (negative look input)', () => {
+  it('clamps at the look-down limit on a mouse-down flick (eye above the target)', () => {
     const rig = new CameraRig(new FakePhysics());
     const pose = step(rig, { lookDeltaY: 1000 });
 
-    const expectedY = DEFAULT_CAMERA_TUNING.targetHeight +
+    const expectedY = DEFAULT_CAMERA_TUNING.targetHeight -
       Math.sin(DEFAULT_CAMERA_TUNING.minPitch) * DEFAULT_CAMERA_TUNING.maxDistance;
     expect(pose.eye.y).toBeCloseTo(expectedY, 3);
+    expect(pose.eye.y).toBeGreaterThan(pose.target.y);
   });
 
-  it('clamps pitch at the upper limit (positive look input)', () => {
+  it('clamps at the look-up limit on a mouse-up flick (eye below the target)', () => {
     const rig = new CameraRig(new FakePhysics());
     const pose = step(rig, { lookDeltaY: -1000 });
 
-    const expectedY = DEFAULT_CAMERA_TUNING.targetHeight +
+    const expectedY = DEFAULT_CAMERA_TUNING.targetHeight -
       Math.sin(DEFAULT_CAMERA_TUNING.maxPitch) * DEFAULT_CAMERA_TUNING.maxDistance;
     expect(pose.eye.y).toBeCloseTo(expectedY, 3);
+    expect(pose.eye.y).toBeLessThan(pose.target.y);
+  });
+
+  it('looks down when the mouse moves down (DOM movementY is positive downward)', () => {
+    const level = step(new CameraRig(new FakePhysics()));
+    const down = step(new CameraRig(new FakePhysics()), { lookDeltaY: 40 });
+
+    // An eye raised above an unchanged target is a view aimed downward. This is the
+    // player-facing contract the inverted build broke: mouse-down used to look up.
+    expect(down.eye.y).toBeGreaterThan(level.eye.y);
+    expect(down.target.y).toBeCloseTo(level.target.y, 9);
+  });
+
+  it('looks up when the mouse moves up', () => {
+    const level = step(new CameraRig(new FakePhysics()));
+    const up = step(new CameraRig(new FakePhysics()), { lookDeltaY: -40 });
+
+    expect(up.eye.y).toBeLessThan(level.eye.y);
   });
 });
 

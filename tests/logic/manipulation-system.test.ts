@@ -992,3 +992,32 @@ describe('ManipulationSystem — overhaul T2.5', () => {
   });
 });
 
+describe('ManipulationSystem — overhaul T1.3 falling parts', () => {
+  it('drops a released part onto the floor over a few steps, and saves the rest pose immediately', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders(LAB_WORLD.colliders);
+    const sm = new ManipulationSystem(physics, LAB_CARRYABLE, null);
+    step(sm, { focus: focusOn(LAB_CARRYABLE.instanceId) });
+    step(sm, { focus: focusOn(LAB_CARRYABLE.instanceId), actions: { primary: true } });
+    step(sm, { focus: focusOn(LAB_CARRYABLE.instanceId) });
+    for (let i = 0; i < 20; i += 1) step(sm);
+    expect(sm.currentPose.center.y).toBeGreaterThan(0.8);
+
+    step(sm, { actions: { secondary: true } });
+    const restY = LAB_CARRYABLE.definition.halfExtents.y;
+    expect(sm.lastValidPoseOf(LAB_CARRYABLE.instanceId)?.center.y).toBeCloseTo(restY, 4);
+
+    for (let i = 0; i < 30; i += 1) step(sm);
+    expect(sm.currentPose.center.y).toBeCloseTo(restY, 4);
+  });
+
+  it('stays put when nothing is below (scripted physics reports no support)', () => {
+    const { sm } = build();
+    grab(sm);
+    for (let i = 0; i < 10; i += 1) step(sm);
+    const held = sm.currentPose;
+    step(sm, { actions: { secondary: true } });
+    for (let i = 0; i < 10; i += 1) step(sm);
+    expect(sm.currentPose).toEqual(held);
+  });
+});

@@ -298,9 +298,16 @@ window.__probe = {
       await new Promise((resolve) => setTimeout(resolve, 90));
     }
   },
+  /**
+   * `pitch` here is a *view* angle — positive looks DOWN, the sign the aim math computes
+   * (`atan2(1.4 - centre.y, h)`) — while the rig stores the eye's elevation offset, which
+   * is the opposite sign (`CameraRig.placeAndCollide`: `direction.y = -sin(pitch)`).
+   * `pitchHome` parks the rig on its min clamp (-1.1), so driving the rig to `-pitch` is
+   * `1.1 - pitch` of rig travel, i.e. `(pitch - 1.1) / 0.006` pixels.
+   */
   pitchHome: async () => window.__probe.lookBy(0, 600),
   pitchTo: async (pitch) =>
-    window.__probe.lookBy(0, Math.max(-600, Math.min(600, (-1.1 - pitch) / 0.006))),
+    window.__probe.lookBy(0, Math.max(-600, Math.min(600, (pitch - 1.1) / 0.006))),
   stats: () => {
     const overlay = document.getElementById('debug-root');
     return { overlay: overlay ? overlay.textContent : null, memory: performance.memory ? performance.memory.usedJSHeapSize : null };
@@ -379,8 +386,11 @@ window.__probe = {
           const h = distance;
           for (const pitchOffset of [0, 0.1, -0.1]) {
             if (aims.length >= 4) break;
+            // `pitch` is a view angle (positive = looking down); the rig's own pitch is its
+            // negation, so the clamps read the other way round (maxPitch 0.55 up, minPitch
+            // -1.1 down ⇒ a view pitch in [-0.55, 1.1]).
             const pitch = Math.atan2(1.4 - centre.y, h) + pitchOffset;
-            if (pitch > 0.55 || pitch < -1.1) continue;
+            if (pitch > 1.1 || pitch < -0.55) continue;
             const dirY = Math.sin(pitch);
             const cosPitch = Math.cos(pitch);
             for (const arm of [4.2, 2.6, 1.2]) {

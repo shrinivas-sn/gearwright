@@ -225,6 +225,14 @@ const RELEASE_SEARCH_STEPS = 5;
 /** Fixed steps the snap assist stays suppressed after a detach (feel, not logic). */
 const DETACH_ASSIST_GRACE_STEPS = 15;
 
+/** Released parts fall (PLAN T1.3): gravity and terminal speed match the player's. */
+const FALL_GRAVITY = 14;
+const FALL_MAX_SPEED = 12;
+/** How far below a part the support probe looks (the room is far shallower). */
+const SUPPORT_PROBE_DISTANCE = 50;
+/** Bottom-face probe points (centre + four corners), in half-extent units. */
+const SUPPORT_SAMPLES: ReadonlyArray<readonly [number, number]> = [[0, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
 /** Screen-space order of the release search: deterministic, never data-dependent. */
 const SEARCH_DIRECTIONS: ReadonlyArray<readonly [number, number]> = [
   [0, 0],
@@ -264,6 +272,10 @@ interface CarryableRecord {
   rotationEntryYaw: number;
   /** This object's last step refused a move/rotate/place (feedback tint). */
   blocked: boolean;
+  /** True while the part is falling to its rest pose (never while held). */
+  falling: boolean;
+  /** Current fall speed, m/s (0 when resting). */
+  fallSpeed: number;
   /** Published-mirror bookkeeping (no per-step allocation). */
   publishedCenter: Vec3 | null;
   publishedYaw: number;
@@ -295,6 +307,8 @@ export class ManipulationSystem {
   private readonly scratchOtherHalf = vec3();
   private readonly scratchBox = { min: vec3(), max: vec3() };
   private readonly scratchCandidate = { center: vec3(), yaw: 0 };
+  private readonly scratchOrigin = vec3();
+  private readonly scratchDown = vec3(0, -1, 0);
 
   constructor(
     physics: PhysicsPort,
@@ -336,6 +350,8 @@ export class ManipulationSystem {
       lastValidPose: this.clonePose(pose),
       rotationEntryYaw: pose.yaw,
       blocked: false,
+      falling: false,
+      fallSpeed: 0,
       publishedCenter: null,
       publishedYaw: pose.yaw
     };
@@ -456,6 +472,7 @@ export class ManipulationSystem {
     record.preGrabPose = this.clonePose(record.pose);
     record.rotationEntryYaw = record.pose.yaw;
     this.publishRecord(record, true);
+    this.startFall(record);
     return true;
   }
 
@@ -484,6 +501,7 @@ export class ManipulationSystem {
     this.events.length = 0;
     this.blocked = false;
     if (this.detachGrace > 0) this.detachGrace -= 1;
+    this.stepFalling(stepDt);
 
     if (this.stateValue === 'Exploration') {
       this.focusId = input.focus?.id ?? null;
@@ -506,6 +524,7 @@ export class ManipulationSystem {
       if (input.actions.secondary || input.actions.cancel) {
         const record = this.recordOf(this.heldObjectId);
         if (record) this.restore(record, record.preGrabPose);
+        if (record) this.startFall(record);
         this.transition('Exploration');
         this.heldObjectId = null;
         this.emit('Cancelled', this.focusId ?? null);
@@ -598,6 +617,7 @@ export class ManipulationSystem {
         this.heldObjectId = null;
         this.transition('Exploration');
         this.publishRecord(record, true);
+        this.startFall(record);
         this.emit('Cancelled', record.binding.instanceId);
       }
       return;
@@ -761,6 +781,7 @@ export class ManipulationSystem {
     this.focusId = null;
     this.transition('Exploration');
     this.publishRecord(record, true);
+    this.startFall(record);
     this.emit('Detached', id);
   }
 
@@ -798,6 +819,9 @@ export class ManipulationSystem {
       return;
     }
 
+    // Catching a falling part is allowed; it stops falling in the player's hands.
+    record.falling = false;
+    record.fallSpeed = 0;
     record.preGrabPose = this.clonePose(record.pose);
     record.lastValidPose = this.quantisePose(record.pose);
     this.heldObjectId = record.binding.instanceId;
@@ -833,6 +857,7 @@ export class ManipulationSystem {
     this.heldObjectId = null;
     this.transition('Exploration');
     this.publishRecord(record, true);
+    this.startFall(record);
     this.emit('Released', record.binding.instanceId, reason);
   }
 
@@ -865,6 +890,87 @@ export class ManipulationSystem {
     const dy = record.pose.center.y - (playerPosition.y + this.tuning.holdHeight);
     const dz = record.pose.center.z - playerPosition.z;
     return Math.sqrt(dx * dx + dy * dy + dz * dz) > this.tuning.maxHoldRange;
+  }
+
+  /**
+   * Highest support surface under the part's footprint (static geometry via rays, other
+   * parts via their boxes), or null when nothing is below — then the part stays put, which
+   * is also what every scripted-physics test expects.
+   */
+  private supportTopBelow(record: CarryableRecord, pose: Pose): number | null {
+    rotatedHalfExtents(record.binding.definition.halfExtents, pose.yaw, this.scratchHalfExtents);
+    const hx = this.scratchHalfExtents.x;
+    const hy = this.scratchHalfExtents.y;
+    const hz = this.scratchHalfExtents.z;
+    const bottom = pose.center.y - hy;
+    let best: number | null = null;
+    for (const [sx, sz] of SUPPORT_SAMPLES) {
+      this.scratchOrigin.x = pose.center.x + sx * Math.max(hx - 0.02, 0);
+      this.scratchOrigin.y = bottom + 0.001;
+      this.scratchOrigin.z = pose.center.z + sz * Math.max(hz - 0.02, 0);
+      const hit = this.physics.castRay(this.scratchOrigin, this.scratchDown, SUPPORT_PROBE_DISTANCE);
+      if (hit !== null && hit.point.y <= bottom + 0.002 && (best === null || hit.point.y > best)) {
+        best = hit.point.y;
+      }
+    }
+    for (const id of this.order) {
+      if (id === record.binding.instanceId || id === this.heldObjectId) continue;
+      const other = this.records.get(id);
+      if (!other) continue;
+      rotatedHalfExtents(other.binding.definition.halfExtents, other.pose.yaw, this.scratchOtherHalf);
+      const overlapX =
+        pose.center.x - hx < other.pose.center.x + this.scratchOtherHalf.x &&
+        pose.center.x + hx > other.pose.center.x - this.scratchOtherHalf.x;
+      const overlapZ =
+        pose.center.z - hz < other.pose.center.z + this.scratchOtherHalf.z &&
+        pose.center.z + hz > other.pose.center.z - this.scratchOtherHalf.z;
+      if (!overlapX || !overlapZ) continue;
+      const top = other.pose.center.y + this.scratchOtherHalf.y;
+      if (top <= bottom + 0.002 && (best === null || top > best)) best = top;
+    }
+    return best;
+  }
+
+  /**
+   * Start a fall toward the support below. The *rest* pose becomes `lastValidPose` at once,
+   * so a save taken mid-fall never records a floating part (EC-SAVE-02's spirit).
+   */
+  private startFall(record: CarryableRecord): void {
+    const support = this.supportTopBelow(record, record.pose);
+    if (support === null) return;
+    const restY = quantiseCanonical(support + record.binding.definition.halfExtents.y);
+    if (record.pose.center.y - restY <= CANONICAL_PRECISION) return;
+    const rest: Pose = {
+      center: {
+        x: quantiseCanonical(record.pose.center.x),
+        y: restY,
+        z: quantiseCanonical(record.pose.center.z)
+      },
+      yaw: record.pose.yaw
+    };
+    if (this.poseBlocked(record, rest)) return; // never fall into geometry
+    record.lastValidPose = rest;
+    record.falling = true;
+    record.fallSpeed = 0;
+  }
+
+  /** Advance every falling, un-held part one step; lands exactly on its rest height. */
+  private stepFalling(dt: number): void {
+    for (const id of this.order) {
+      const record = this.records.get(id);
+      if (!record || !record.falling || id === this.heldObjectId) continue;
+      record.fallSpeed = Math.min(record.fallSpeed + FALL_GRAVITY * dt, FALL_MAX_SPEED);
+      const restY = record.lastValidPose.center.y;
+      const nextY = record.pose.center.y - record.fallSpeed * dt;
+      if (nextY <= restY) {
+        record.pose.center.y = restY;
+        record.falling = false;
+        record.fallSpeed = 0;
+      } else {
+        record.pose.center.y = nextY;
+      }
+      this.publishRecord(record, false);
+    }
   }
 
   private applyRotation(record: CarryableRecord, dt: number, rotate: number): void {
@@ -1017,10 +1123,6 @@ export class ManipulationSystem {
       }
     }
     return false;
-  }
-
-  private startFall(_record: CarryableRecord): void {
-    // Falls are simulated when T1.3 is enabled; no-op otherwise.
   }
 
   /** World AABB of the yawed object box. `centerOverride` avoids copying a pose. */

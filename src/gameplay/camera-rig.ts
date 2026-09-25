@@ -29,7 +29,12 @@ export interface CameraTuning {
   readonly distance: number;
   readonly minDistance: number;
   readonly maxDistance: number;
-  /** Pitch limits, radians (negative looks down). */
+  /**
+   * Pitch limits, radians. Pitch is the *view* angle, not the eye's elevation:
+   * negative looks down (the eye rides above the look target — the third-person
+   * default), positive looks up (the eye drops below it). `minPitch` therefore
+   * bounds how far *down* the player can aim.
+   */
   readonly minPitch: number;
   readonly maxPitch: number;
   /**
@@ -203,7 +208,7 @@ export class CameraRig {
       Math.max(this.tuning.minPitch, this.pitch - lookY * this.tuning.pitchSpeed * dt)
     );
     const cosPitch = Math.cos(pitch);
-    const direction = { x: Math.sin(yaw) * cosPitch, y: Math.sin(pitch), z: Math.cos(yaw) * cosPitch };
+    const direction = { x: Math.sin(yaw) * cosPitch, y: -Math.sin(pitch), z: Math.cos(yaw) * cosPitch };
     let arm = this.armLength;
     const hit = this.physics.castSphere(input.anchor, this.tuning.collisionRadius, direction, arm + this.tuning.skin);
     if (hit) arm = Math.min(arm, Math.max(this.tuning.minDistance, hit.distance - this.tuning.skin));
@@ -219,6 +224,8 @@ export class CameraRig {
   }
 
   private integrateLook(input: CameraStepInput, dt: number): void {
+    // Raw screen deltas: `+lookDeltaY` is the mouse moving *down*, and down must
+    // look down, so the pitch travels toward `minPitch` (negative = looking down).
     this.yaw = wrapAngle(this.yaw - input.lookDeltaX * this.tuning.yawSpeed * dt);
     const nextPitch = this.pitch - input.lookDeltaY * this.tuning.pitchSpeed * dt;
     this.pitch = Math.min(this.tuning.maxPitch, Math.max(this.tuning.minPitch, nextPitch));
@@ -274,8 +281,14 @@ export class CameraRig {
     // Direction from the look target out to the camera: with yaw 0 the eye sits
     // on +Z behind a player facing -Z, and the camera looks toward -Z (three.js
     // convention). `view = -direction` is what camera-relative movement follows.
+    //
+    // The height term is `-sin(pitch)` because pitch is the *view* angle: looking
+    // down (negative pitch) puts the eye ABOVE the target. The DOM reports
+    // `+movementY` for downward travel and the sample is passed through unnegated,
+    // so this sign is what makes mouse-down look down; `invertY` flips it one layer
+    // down, in `InputSystem.setLookScale`.
     this.direction.x = Math.sin(this.yaw) * cosPitch;
-    this.direction.y = sinPitch;
+    this.direction.y = -sinPitch;
     this.direction.z = Math.cos(this.yaw) * cosPitch;
     vec3Normalize(this.direction, this.direction);
 
