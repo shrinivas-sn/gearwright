@@ -779,11 +779,14 @@ export class Hud {
       return;
     }
     setHidden(this.entryLine, false);
+    // The one moment a new player is certain to be reading: before the first click.
+    // The full table lives behind Esc → Controls (and on the title screen), so the
+    // line carries the short form of it and points at the long one.
     setText(
       this.entryLine,
       entry.pointerLockUnavailable
-        ? 'Click the game view to focus it — keys and mouse look work without mouse capture.'
-        : 'Click the game view to focus it and capture the mouse — Esc releases the mouse, Esc again pauses.'
+        ? 'Click the game view to focus it — keys and mouse look work without mouse capture. WASD move · mouse look · E grab · Q/F rotate · R drop · H hint · all keys in Esc → Controls.'
+        : 'Click the game view to focus it and capture the mouse — Esc releases the mouse, Esc again pauses. WASD move · mouse look · E grab · Q/F rotate · R drop · H hint · all keys in Esc → Controls.'
     );
   }
 

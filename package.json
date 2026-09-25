@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "GEARWRIGHT — third-person 3D mechanical puzzle game (browser, Three.js). See GAME_ARCHITECTURE.md.",
+  "description": "GEARWRIGHT — third-person 3D mechanical puzzle game (browser, Three.js). See DOCS/CONTEXT/ARCHITECTURE.md.",
   "scripts": {
     "dev": "vite",
     "build": "npm run typecheck && vite build",

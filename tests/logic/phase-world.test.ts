@@ -172,9 +172,13 @@ describe('PhaseWorld — M3 grab / carry / release wiring (ARCH §14 order, §19
     return { world, interaction, manipulation: world.manipulation! };
   }
 
-  /** Pitches the camera down at the floor crate, then settles focus on it. */
+  /**
+   * Pitches the camera down at the floor crate, then settles focus on it. `+lookDeltaY`
+   * is the mouse moving *down* (the DOM reports downward travel as positive), and down
+   * must look down — the rig maps it to a descending view, pitch travelling to `minPitch`.
+   */
   function aimAtFloorCrate(harness: ManipHarness): void {
-    for (let i = 0; i < 4; i += 1) harness.world.step(DT, neutralSample({ lookDeltaY: -120 }));
+    for (let i = 0; i < 4; i += 1) harness.world.step(DT, neutralSample({ lookDeltaY: 120 }));
     for (let i = 0; i < 8; i += 1) harness.world.step(DT, neutralSample());
   }
 
@@ -204,7 +208,7 @@ describe('PhaseWorld — M3 grab / carry / release wiring (ARCH §14 order, §19
     for (let i = 0; i < 14; i += 1) {
       const result = harness.world.step(
         DT,
-        i < 4 ? neutralSample({ lookDeltaY: -120 }) : neutralSample()
+        i < 4 ? neutralSample({ lookDeltaY: 120 }) : neutralSample()
       );
       if (acquired) {
         steady.push(result);
@@ -262,9 +266,13 @@ describe('PhaseWorld — M3 grab / carry / release wiring (ARCH §14 order, §19
     expect(harness.world.input.activeContext).toBe('Manipulation');
     harness.world.step(DT, neutralSample());
     expect(harness.world.input.activeContext).toBe('Exploration');
-    // The object comes to rest where it was released (canonical pose, 1e-4 m).
-    const pose = harness.manipulation.currentPose;
+    // The object falls onto the floor (T1.3 gravity settle): canonicalLastValidPose
+    // immediately holds the rest pose (floor height = halfExtent.y = 0.4), while the live
+    // pose settles over a few steps.
     const canonical = harness.manipulation.canonicalLastValidPose;
+    expect(canonical.center.y).toBeCloseTo(LAB_CARRYABLE.definition.halfExtents.y, 4);
+    for (let i = 0; i < 30; i += 1) harness.world.step(DT, neutralSample());
+    const pose = harness.manipulation.currentPose;
     expect(pose.center.x).toBeCloseTo(canonical.center.x, 4);
     expect(pose.center.y).toBeCloseTo(canonical.center.y, 4);
     expect(pose.center.z).toBeCloseTo(canonical.center.z, 4);
@@ -396,7 +404,7 @@ describe('PhaseWorld — M4 snap / attach wiring (ARCH §14 steps 6–7, §21)',
 
   /** Aim at the crate 1 m ahead of spawn, grab it, rotate it, then carry it in. */
   function carryToDock(harness: SnapHarness): void {
-    for (let i = 0; i < 4; i += 1) harness.world.step(DT, neutralSample({ lookDeltaY: -120 }));
+    for (let i = 0; i < 4; i += 1) harness.world.step(DT, neutralSample({ lookDeltaY: 120 }));
     for (let i = 0; i < 8; i += 1) harness.world.step(DT, neutralSample());
     expect(harness.interaction.focus?.id).toBe(LAB_CARRYABLE.instanceId);
 
