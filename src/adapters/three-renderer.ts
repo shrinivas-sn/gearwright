@@ -13,10 +13,12 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { CharacterRig, type CharacterUpdate } from './character-rig.ts';
 import {
   EMPTY_RENDER_STATS,
   type CameraPose,
   type CarryableRenderState,
+  type CharacterFacts,
   type DebugRayState,
   type FeedbackPulseKind,
   type FeedbackPulseState,
@@ -143,9 +145,32 @@ export class ThreeRenderer implements RenderPort {
   private lastRenderAt = 0;
   private renderedFrames = 0;
   private degraded = false;
-  private readonly marker: THREE.Group;
-  private readonly markerDot: THREE.Mesh;
-  private readonly markerMaterial: THREE.MeshStandardMaterial;
+  /** The player's body: a procedurally-built skinned humanoid (see `character-rig.ts`). */
+  private readonly character = new CharacterRig();
+  /** One mutable buffer, rewritten every frame — `syncPlayerMarker` allocates nothing. */
+  private readonly characterUpdate: CharacterUpdate = {
+    position: { x: 0, y: 0, z: 0 },
+    facingYaw: 0,
+    speed: 0,
+    walkSpeed: 1.8,
+    runSpeed: 4.2,
+    grounded: true,
+    carrying: false,
+    dt: 0,
+    holdTarget: null,
+    footGroundY: null,
+    lookTarget: null,
+    cameraDistance: Number.POSITIVE_INFINITY
+  };
+  /** One mutable foot-ground buffer, so the per-frame path allocates nothing. */
+  private readonly footGround = { left: null as number | null, right: null as number | null };
+  /** The focused object's point, kept from `setFocusMarker` so the head can look at it. */
+  private readonly focusPoint = { x: 0, y: 0, z: 0 };
+  private hasFocusPoint = false;
+  /** Where the held part is, remembered from `setCarryables` (the grip target). */
+  private readonly heldPartCenter = { x: 0, y: 0, z: 0 };
+  private holding = false;
+  private lastMarkerAt = 0;
   private readonly labGroup: THREE.Group;
   private readonly focusMarker: THREE.Mesh;
   private readonly debugRay: THREE.Line;
@@ -180,25 +205,6 @@ export class ThreeRenderer implements RenderPort {
       maxPixelRatio: options.maxPixelRatio ?? 1.5,
       placeholderScene: options.placeholderScene ?? false
     };
-    this.marker = new THREE.Group();
-    const markerMaterial = new THREE.MeshStandardMaterial({
-      color: 0xd8dee6,
-      roughness: 0.5,
-      metalness: 0.2,
-      emissive: 0x6ba8e8,
-      emissiveIntensity: 0.25
-    });
-    this.markerMaterial = markerMaterial;
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 1.06, 4, 12), markerMaterial);
-    body.position.y = 1.06;
-    body.castShadow = true;
-    const dot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.09, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0xe8b23a })
-    );
-    dot.position.set(0, 1.55, -0.3);
-    this.marker.add(body, dot);
-    this.markerDot = dot;
     this.labGroup = new THREE.Group();
     this.labGroup.visible = false;
 
@@ -258,10 +264,6 @@ export class ThreeRenderer implements RenderPort {
     this.scannerRoute.frustumCulled = false;
 
     this.disposables.push(
-      body.geometry,
-      markerMaterial,
-      dot.geometry,
-      dot.material as THREE.Material,
       this.focusMarker.geometry,
       this.focusMarker.material as THREE.Material,
       rayGeometry,
@@ -318,10 +320,9 @@ export class ThreeRenderer implements RenderPort {
 
     this.buildLights();
     this.buildPlaceholderScene();
-    // The player marker is scene furniture from the start: Phase 1 shows the
-    // lab without a player; Phase 2 moves the marker every frame.
-    scene.add(this.marker);
-    this.marker.visible = false;
+    // The player's body is scene furniture from the start: it stays hidden until the first
+    // `syncPlayerMarker`, which also positions it.
+    scene.add(this.character.object);
     scene.add(this.labGroup);
     scene.add(this.focusMarker);
     scene.add(this.debugRay);
@@ -386,24 +387,62 @@ export class ThreeRenderer implements RenderPort {
     this.labGroup.visible = this.labGroup.children.length > 0;
   }
 
+  /** Player-body facts for tooling (the harness asserts the body is built, drawn and placed). */
+  characterFacts(): CharacterFacts {
+    return this.character.facts();
+  }
+
+  /**
+   * Drive the player's body for this frame. The character animates itself from the state it is
+   * handed here plus the held part it last saw in `setCarryables` (which runs later in the same
+   * frame — a 33 ms lag on the grip, invisible and never fed back into logic).
+   */
   syncPlayerMarker(state: PlayerMarkerState): void {
-    const x = Number.isFinite(state.position.x) ? state.position.x : 0;
-    const y = Number.isFinite(state.position.y) ? state.position.y : 0;
-    const z = Number.isFinite(state.position.z) ? state.position.z : 0;
-    this.marker.position.set(x, y, z);
-    this.marker.rotation.y = state.facingYaw;
-    // Run feedback: brighter emissive while sprinting; dimmed when airborne.
-    const running = state.speed > state.walkSpeed + (state.runSpeed - state.walkSpeed) * 0.5;
-    this.markerMaterial.emissiveIntensity = state.grounded ? (running ? 0.75 : 0.25) : 0.1;
-    // Facing dot sits on -Z; yaw 0 faces -Z, matching PlayerController.
-    this.markerDot.position.set(0, 1.55, -0.3);
+    const now = performance.now();
+    const dt = this.lastMarkerAt > 0 ? Math.min(Math.max(now - this.lastMarkerAt, 0) / 1000, 0.25) : 0;
+    this.lastMarkerAt = now;
+
+    const update = this.characterUpdate;
+    update.position.x = Number.isFinite(state.position.x) ? state.position.x : 0;
+    update.position.y = Number.isFinite(state.position.y) ? state.position.y : 0;
+    update.position.z = Number.isFinite(state.position.z) ? state.position.z : 0;
+    update.facingYaw = Number.isFinite(state.facingYaw) ? state.facingYaw : 0;
+    update.speed = state.speed;
+    update.walkSpeed = state.walkSpeed;
+    update.runSpeed = state.runSpeed;
+    update.grounded = state.grounded;
+    update.carrying = this.holding;
+    update.dt = dt;
+    update.holdTarget = this.holding ? this.heldPartCenter : null;
+    // Copied into one mutable buffer: the rig keeps no reference to the caller's snapshot.
+    const ground = state.footGroundY;
+    if (ground === undefined) {
+      update.footGroundY = null;
+    } else {
+      this.footGround.left = ground.left;
+      this.footGround.right = ground.right;
+      update.footGroundY = this.footGround;
+    }
+    const view = this.view;
+    update.lookTarget = this.hasFocusPoint ? this.focusPoint : view === null ? null : view.target;
+    update.cameraDistance =
+      view === null
+        ? Number.POSITIVE_INFINITY
+        : Math.hypot(view.eye.x - update.position.x, view.eye.y - update.position.y, view.eye.z - update.position.z);
+    this.character.update(update);
   }
 
   setFocusMarker(state: FocusMarkerState | null): void {
     if (!state) {
       this.focusMarker.visible = false;
+      this.hasFocusPoint = false;
       return;
     }
+    // The character looks at what the player is aiming at (falling back to the camera's aim).
+    this.hasFocusPoint = true;
+    this.focusPoint.x = state.point.x;
+    this.focusPoint.y = state.point.y;
+    this.focusPoint.z = state.point.z;
     this.focusMarker.position.set(state.point.x, state.point.y, state.point.z);
     this.focusMarker.visible = true;
   }
@@ -411,6 +450,7 @@ export class ThreeRenderer implements RenderPort {
   setCarryables(states: ReadonlyArray<CarryableRenderState>): void {
     if (!this.scene) return;
     const seen = new Set<string>();
+    let anyHeld = false;
     for (const state of states) {
       const { center, halfExtents } = state;
       seen.add(state.id);
@@ -443,7 +483,15 @@ export class ThreeRenderer implements RenderPort {
       visual.material.emissive.setHex(state.held ? 0x6b4d12 : powered ? 0x2f7a2f : state.attached ? 0x1c4a1c : 0x1f3f39);
       visual.material.emissiveIntensity = state.held ? 0.85 : powered ? 0.9 : 0.3;
       visual.mesh.visible = true;
+      // The player's hands grip whatever this call says is held.
+      if (state.held) {
+        anyHeld = true;
+        this.heldPartCenter.x = center.x;
+        this.heldPartCenter.y = center.y;
+        this.heldPartCenter.z = center.z;
+      }
     }
+    this.holding = anyHeld;
     // A component that left the level's set is hidden, not destroyed: the pool is
     // keyed by id and reused if it comes back.
     for (const [id, visual] of this.carryableVisuals) {
@@ -704,6 +752,7 @@ export class ThreeRenderer implements RenderPort {
     for (const item of this.disposables) item.dispose();
     this.disposables = [];
     this.lights = [];
+    this.character.dispose();
     this.carryableVisuals.clear();
     this.markerVisuals.clear();
     this.scannerVisuals.clear();

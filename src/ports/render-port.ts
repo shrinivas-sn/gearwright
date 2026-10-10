@@ -60,6 +60,36 @@ export interface PlayerMarkerState {
   readonly speed: number;
   readonly walkSpeed: number;
   readonly runSpeed: number;
+  /**
+   * Ground height under each foot, or null where nothing is under it (foot-planting addition).
+   * Presentation only: the rig plants the legs on it and never reports back. Absent = no
+   * planting, and the legs keep their authored gait pose.
+   */
+  readonly footGroundY?: { readonly left: number | null; readonly right: number | null } | undefined;
+}
+
+/**
+ * Player-body facts for tooling (the browser harness and the debug overlay). Presentation only:
+ * nothing here is read back into logic, and a port that draws no body may omit the method.
+ *
+ * Hands/hold are optional so old ports and test doubles keep compiling: when present the
+ * harness can prove the grip (hands converge on the held part) rather than trusting a
+ * screenshot.
+ */
+export interface CharacterFacts {
+  readonly bones: number;
+  readonly triangles: number;
+  readonly visible: boolean;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  /** World-space hand positions, when the port draws a body with hands. */
+  readonly handL?: { readonly x: number; readonly y: number; readonly z: number } | undefined;
+  readonly handR?: { readonly x: number; readonly y: number; readonly z: number } | undefined;
+  /** True while the hands are driven onto a grip target. */
+  readonly holding?: boolean | undefined;
+  /** World-space grip target the hands are driven onto, or null when the hands are free. */
+  readonly hold?: { readonly x: number; readonly y: number; readonly z: number } | null | undefined;
 }
 
 /** Focus highlight produced by `InteractionSystem` (L2), consumed by L4 (M2). */
@@ -195,8 +225,14 @@ export interface RenderPort {
    */
   setLabWorld(meshes: ReadonlyArray<LabWorldMesh>): void;
 
-  /** Move the visible player marker (Phase-2 placeholder for the character mesh). */
+  /** Move and animate the player's body from the state the simulation publishes. */
   syncPlayerMarker(state: PlayerMarkerState): void;
+
+  /**
+   * Facts about the player's body, for tooling. Optional: a port that draws no body (the test
+   * doubles) simply does not implement it, and callers use `renderPort.characterFacts?.()`.
+   */
+  characterFacts?(): CharacterFacts;
 
   /** Highlight the focused interactable, or clear it (`null`). M2 addition. */
   setFocusMarker(state: FocusMarkerState | null): void;

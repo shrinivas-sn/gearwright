@@ -299,11 +299,14 @@ window.__probe = {
     }
   },
   /**
-   * `pitch` here is a *view* angle — positive looks DOWN, the sign the aim math computes
-   * (`atan2(1.4 - centre.y, h)`) — while the rig stores the eye's elevation offset, which
-   * is the opposite sign (`CameraRig.placeAndCollide`: `direction.y = -sin(pitch)`).
-   * `pitchHome` parks the rig on its min clamp (-1.1), so driving the rig to `-pitch` is
-   * `1.1 - pitch` of rig travel, i.e. `(pitch - 1.1) / 0.006` pixels.
+   * 'pitch' here is a *view* angle — positive looks DOWN, the sign the aim math computes
+   * (atan2(1.4 - centre.y, h)) — while the rig stores the eye's elevation offset, which
+   * is the opposite sign (CameraRig.placeAndCollide: direction.y = -sin(pitch)).
+   * 'pitchHome' parks the rig on its min clamp (-1.1), so driving the rig to -pitch is
+   * 1.1 - pitch of rig travel, i.e. (pitch - 1.1) / 0.006 pixels.
+   *
+   * NOTE: this whole probe is one template literal in the harness. A backtick anywhere in
+   * here — even inside a comment — ends the template and breaks the harness at parse time.
    */
   pitchHome: async () => window.__probe.lookBy(0, 600),
   pitchTo: async (pitch) =>
@@ -311,6 +314,15 @@ window.__probe = {
   stats: () => {
     const overlay = document.getElementById('debug-root');
     return { overlay: overlay ? overlay.textContent : null, memory: performance.memory ? performance.memory.usedJSHeapSize : null };
+  },
+  /**
+   * The player's body: bone count, drawn triangles, visibility and where it stands. Read live,
+   * so the boot scenario can prove the rig is built, drawn and standing on the simulation's own
+   * position rather than trusting a screenshot.
+   */
+  character: () => {
+    const dev = window.__gearwrightDev;
+    return typeof dev.character === 'function' ? dev.character() : null;
   },
   /**
    * A second, independent InteractionSystem over a fresh physics world built from the
@@ -386,7 +398,7 @@ window.__probe = {
           const h = distance;
           for (const pitchOffset of [0, 0.1, -0.1]) {
             if (aims.length >= 4) break;
-            // `pitch` is a view angle (positive = looking down); the rig's own pitch is its
+            // 'pitch' is a view angle (positive = looking down); the rig's own pitch is its
             // negation, so the clamps read the other way round (maxPitch 0.55 up, minPitch
             // -1.1 down ⇒ a view pitch in [-0.55, 1.1]).
             const pitch = Math.atan2(1.4 - centre.y, h) + pitchOffset;
@@ -616,6 +628,20 @@ async function scenarioBoot(cdp) {
   const bootStatus = await evaluate(cdp, 'document.getElementById("boot-status") === null');
   report.data.boot = { state, hud, bootStatus, overlay: stats.overlay };
   drainConsole(cdp);
+
+  // The player's body is a procedural skinned humanoid (no glTF): this is the only place that
+  // can prove the real composition builds it, draws it, and stands it on the player's feet.
+  const character = await evaluate(cdp, 'window.__probe.character()');
+  report.data.character = character;
+  if (character === null) {
+    report.problems.push('character: the render port exposes no player body (characterFacts absent)');
+  } else {
+    if (character.bones !== 19) report.problems.push(`character: expected 19 bones, got ${character.bones}`);
+    if (character.triangles < 500) report.problems.push(`character: body has only ${character.triangles} triangles`);
+    if (character.visible !== true) report.problems.push('character: the player body is not visible');
+    const drift = Math.hypot(character.x - state.pos.x, character.z - state.pos.z);
+    if (!(drift <= 0.5)) report.problems.push(`character: body stands ${drift.toFixed(2)} m from the player`);
+  }
 
   // Bug 21 (§15/EC-BRN-06): the entry handshake. Before the first click the guidance
   // line must be up and nobody's capture should be claimed; after a real click the
@@ -1007,6 +1033,47 @@ async function main() {
         cdp,
         '({ state: window.__gearwrightDev.manipulation.state, held: window.__gearwrightDev.manipulation.heldId, yaw: window.__gearwrightDev.manipulation.currentPose.yaw })'
       );
+      // Hands toward the held part: the carry pose floats the part 1.35 m ahead of the torso
+      // while the arms only reach 0.56 m, so the analytic IK clamps at full extension along
+      // the reach direction. The gate asserts the *reach shape* (alignment + extension),
+      // yaw-independent, not the raw distance.
+      await sleep(700);
+      const grip = await evaluate(cdp, 'window.__probe.character()');
+      report.data.hold.grip = grip;
+      if (grip === null) {
+        report.problems.push('hold: the render port exposes no player body (characterFacts absent)');
+      } else if (report.data.hold.after?.held !== 'gear-a') {
+        report.problems.push(`hold: expected gear-a held, got ${report.data.hold.after?.held ?? 'nothing'}`);
+      } else if (grip.holding !== true || grip.hold === null || grip.hold === undefined) {
+        report.problems.push('hold: the body reports no grip target while gear-a is held');
+      } else if (grip.handL === undefined || grip.handR === undefined) {
+        report.problems.push('hold: the body reports no hand positions');
+      } else {
+        // Reach shape, not proximity: the carry pose floats the part 1.35 m ahead of the torso
+        // while the arms only reach 0.56 m, so the analytic IK clamps at full extension along
+        // the reach direction. The gate asserts *alignment* (each hand extended along the
+        // chest → part direction, dot > 0.9) and *extension* (> 0.4 m, not hanging at the
+        // sides) — yaw-independent, so it holds whatever way the player faces.
+        const chest = { x: grip.x, y: grip.y + 1.45, z: grip.z };
+        const toPart = { x: grip.hold.x - chest.x, y: grip.hold.y - chest.y, z: grip.hold.z - chest.z };
+        const partLen = Math.hypot(toPart.x, toPart.y, toPart.z);
+        const check = (hand) => {
+          const toHand = { x: hand.x - chest.x, y: hand.y - chest.y, z: hand.z - chest.z };
+          const handLen = Math.hypot(toHand.x, toHand.y, toHand.z);
+          const dot =
+            partLen > 1e-6 && handLen > 1e-6
+              ? (toHand.x * toPart.x + toHand.y * toPart.y + toHand.z * toPart.z) / (handLen * partLen)
+              : -1;
+          return { handLen, dot };
+        };
+        const left = check(grip.handL);
+        const right = check(grip.handR);
+        if (!(left.dot > 0.9 && right.dot > 0.9 && left.handLen > 0.4 && right.handLen > 0.4)) {
+          report.problems.push(
+            `hold: hands not extended toward the held part (left dot ${left.dot.toFixed(2)} @ ${left.handLen.toFixed(2)} m, right dot ${right.dot.toFixed(2)} @ ${right.handLen.toFixed(2)} m)`
+          );
+        }
+      }
     }
     drainConsole(cdp);
   }

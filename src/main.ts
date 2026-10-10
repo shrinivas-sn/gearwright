@@ -23,6 +23,7 @@ import { PerfOverlay } from './debug/overlay.ts';
 import { debugFlagState, isDevBuild } from './debug/flags.ts';
 import { gameLog } from './debug/log.ts';
 import { InputSystem } from './gameplay/input-system.ts';
+import { FootGrounding } from './gameplay/foot-grounding.ts';
 import { DEFAULT_PLAYER_TUNING, PlayerController } from './gameplay/player-controller.ts';
 import { CameraRig } from './gameplay/camera-rig.ts';
 import { PhaseWorld } from './gameplay/phase-world.ts';
@@ -535,6 +536,9 @@ function boot(): void {
   physics.setStaticColliders([...SHIPPED_WORLD.colliders]);
 
   const player = new PlayerController(physics, { ...SHIPPED_WORLD.spawn });
+  // Foot planting (presentation): where the ground is under each foot, so the legs can plant on
+  // a crate top instead of sinking through it. Two rays per presented frame.
+  const footGrounding = new FootGrounding(physics);
   // PLAN T2.4: over-the-shoulder by default; `?shoulder=0` centres it (the browser harness
   // aims through the player and uses this).
   const SHOULDER_OFFSET = new URLSearchParams(window.location.search).get('shoulder') === '0' ? 0 : 0.45;
@@ -1270,10 +1274,14 @@ function boot(): void {
         // in the shape `setView` already takes, so the adapter derives the facing vector
         // and the composition computes nothing audio-specific.
         audio.setListener(cameraPose);
+        const markerPosition = lerpVec(interp.player, playerState.position, blend);
+        const markerYaw = lerpAngle(interp.facingYaw, playerState.facingYaw, blend);
+        footGrounding.step(markerPosition, markerYaw);
         renderPort.syncPlayerMarker({
-          position: lerpVec(interp.player, playerState.position, blend),
-          facingYaw: lerpAngle(interp.facingYaw, playerState.facingYaw, blend),
+          position: markerPosition,
+          facingYaw: markerYaw,
           grounded: playerState.grounded,
+          footGroundY: footGrounding.snapshot(),
           speed: playerState.speed,
           walkSpeed: DEFAULT_PLAYER_TUNING.walkSpeed,
           runSpeed: DEFAULT_PLAYER_TUNING.runSpeed
@@ -1454,6 +1462,15 @@ function boot(): void {
   // when the app really booted. Harmless in normal play.
   canvas.dataset.booted = 'true';
 
+  // `?rig=1` rig preview (debug tooling, ARCH §37): a standalone body + slider panel in its
+  // own scene, lazily imported so the shipped bundle never pays for it. The game behind it
+  // runs untouched — this only adds a second canvas for animation iteration.
+  if (new URLSearchParams(window.location.search).has('rig')) {
+    void import('./adapters/rig-preview.ts').then((module) => {
+      module.mountRigPreview();
+    });
+  }
+
   const unbindEvents = bindBrowserEvents(window, canvas, {
     onResize: (width, height, pixelRatio) => app.resize({ width, height, pixelRatio }),
     onVisibilityChange: (hidden) => {
@@ -1589,6 +1606,9 @@ function boot(): void {
       interaction,
       manipulation,
       progression,
+      // Read live, not snapshot at boot: the harness proves the player's body is built,
+      // drawn and standing on the simulated position.
+      character: () => renderPort.characterFacts?.() ?? null,
       // The audio port reports its own state and last cue, so a browser check can tell
       // "silent because no context" from "silent because the unlock never happened".
       audio,
