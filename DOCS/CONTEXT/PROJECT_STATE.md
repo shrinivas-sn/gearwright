@@ -176,6 +176,7 @@ Comprehensive 7-phase overhaul across gameplay feel, rendering performance, leve
 - **Phase 3 (Performance):** Replaced placeholder scene with static world meshes merged by material color, removed per-frame vector allocations.
 - **Phase 4 (Level):** Consolidated shipped world (Pressure Gallery partition wall, moved Branch A door, hub spawn, purged lab fixture).
 - **Phase 5 (Visuals):** Dynamic directional shadows (PCFShadowMap), RoomEnvironment reflections, procedural gear teeth and pipe joints, powered emissive glow.
+
 - **Phase 6 (UX Shell):** Title screen (Start/Continue/New Game/Controls), live pause settings panel (sensitivity, invert-Y, volume), touch-only notice.
 - **Phase 7 (Production & Deployment):** Production-quiet logging (`?log=1` harness support), global error toast, vendor chunk splitting (`three` 563.58 kB / app 201.96 kB), GitHub Actions CI/Pages deploy pipelines, verified live on GitHub Pages.
 - **Verification:** 49 test files, 595 tests passing (`npx vitest run`); clean build; CDP harness passes `boot`, `title`, `hold`, and `branch` scenarios against local build and live deployment.
@@ -1948,3 +1949,18 @@ M6, M7, M8 and M9 slice 1 are all complete. There is one Next Exact Action, abov
 - Do NOT silently change architecture, state ownership, dependency direction, or
   system contracts — stop, document it (as done in "Design Decisions"), and
   add/amend an ADR first.
+
+---
+
+## Status-file archive — resolved narrative moved out of DOCS/STATUS.md (11/10/2026)
+
+Moved here verbatim so `DOCS/STATUS.md` stays current-and-next (the save-check limit: ~35 lines,
+cap 50). Nothing was rewritten; these bullets are the same text that used to sit under
+`## Completed (Overhaul Shipped)`, and are superseded by the 11/10/2026 physics & mechanics pass
+where they overlap (T1.3 gravity settle in particular).
+- **Phase 6 (UX Shell):** Title screen, pause overlay with controls, settings (sensitivity/invert-Y/volume), touch notice.
+- **Phase 7 (Deploy):** Three.js chunk split, quiet logs, error handler, CI/Pages workflows, live URL verified.
+- **Camera & look (25/09/2026, player-reported):** the vertical look axis was inverted because `CameraRig` placed the eye at `+sin(pitch)`; now `-sin(pitch)`, so the eye rides ~1.3 m above the torso anchor. Pitch clamps mean what they say (~63° down, ~31° up).
+- **First-contact guidance (25/09/2026):** the HUD entry line carries the control summary; full table behind `Esc → Controls`.
+- **T1.3 gravity settle (already shipped 25/09/2026, confirmed 10/10/2026):** released parts fall under gravity onto static geometry or other parts. `phase-world.test.ts` + `manipulation-system.test.ts` are green (67/67) and the failure stash it tracked is gone — the old "next up" line was stale, not the code.
+- **Browser harness repaired (10/10/2026):** `scripts/browser-check.mjs` had not parsed since 25/09 (a backtick inside the probe template literal ended it), which is why it was never re-run. It parses again, and `boot` now asserts the player's body (bones/triangles/visibility/position) so the visual layer has a live gate.
