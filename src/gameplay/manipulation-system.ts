@@ -276,6 +276,12 @@ interface CarryableRecord {
   falling: boolean;
   /** Current fall speed, m/s (0 when resting). */
   fallSpeed: number;
+  /**
+   * This part's support may have moved (something it stands on was carried off,
+   * rotated or detached) and its rest has to be re-checked before the next step.
+   * Dirty-driven so a room full of resting parts costs nothing while nothing moves.
+   */
+  supportDirty: boolean;
   /** Published-mirror bookkeeping (no per-step allocation). */
   publishedCenter: Vec3 | null;
   publishedYaw: number;
@@ -309,6 +315,8 @@ export class ManipulationSystem {
   private readonly scratchCandidate = { center: vec3(), yaw: 0 };
   private readonly scratchOrigin = vec3();
   private readonly scratchDown = vec3(0, -1, 0);
+  /** The box a record is vacating, captured before a move overwrites its mirror. */
+  private readonly scratchVacated = { min: vec3(), max: vec3() };
 
   constructor(
     physics: PhysicsPort,
@@ -352,6 +360,7 @@ export class ManipulationSystem {
       blocked: false,
       falling: false,
       fallSpeed: 0,
+      supportDirty: true,
       publishedCenter: null,
       publishedYaw: pose.yaw
     };
@@ -501,6 +510,9 @@ export class ManipulationSystem {
     this.events.length = 0;
     this.blocked = false;
     if (this.detachGrace > 0) this.detachGrace -= 1;
+    // Settle first: a part whose support went away this step starts falling before
+    // the fall integrator runs, so it never spends a frame resting on nothing.
+    this.stepSettle();
     this.stepFalling(stepDt);
 
     if (this.stateValue === 'Exploration') {
@@ -932,13 +944,35 @@ export class ManipulationSystem {
   }
 
   /**
+   * Is this part mounted in a socket? Read through the optional `SnapSession` seam, so
+   * a test double that knows nothing about mounting simply reports "no".
+   */
+  private isAnchored(record: CarryableRecord): boolean {
+    return this.snap?.isAttached?.(record.binding.instanceId) ?? false;
+  }
+
+  /**
+   * The height a falling part is heading for, re-read from the live world: the support
+   * directly under its current pose plus its own half-extent, or `null` when there is
+   * nothing below it at all.
+   */
+  private restYFor(record: CarryableRecord): number | null {
+    const support = this.supportTopBelow(record, record.pose);
+    if (support === null) return null;
+    return quantiseCanonical(support + record.binding.definition.halfExtents.y);
+  }
+
+  /**
    * Start a fall toward the support below. The *rest* pose becomes `lastValidPose` at once,
    * so a save taken mid-fall never records a floating part (EC-SAVE-02's spirit).
    */
   private startFall(record: CarryableRecord): void {
-    const support = this.supportTopBelow(record, record.pose);
-    if (support === null) return;
-    const restY = quantiseCanonical(support + record.binding.definition.halfExtents.y);
+    // A mounted part's pose belongs to its socket (ARCH §21.3): gravity must never
+    // touch it. Without this, every docked part that is not sitting over solid
+    // geometry would leave its machine the moment its pose was restored from a save.
+    if (this.isAnchored(record)) return;
+    const restY = this.restYFor(record);
+    if (restY === null) return;
     if (record.pose.center.y - restY <= CANONICAL_PRECISION) return;
     const rest: Pose = {
       center: {
@@ -954,13 +988,40 @@ export class ManipulationSystem {
     record.fallSpeed = 0;
   }
 
-  /** Advance every falling, un-held part one step; lands exactly on its rest height. */
+  /**
+   * Gravity settle (M11): a resting part only rests while something is under it. Every
+   * part a move may have un-supported is re-checked here, so carrying the bottom part of
+   * a stack away makes the ones above it drop — instead of leaving them hanging in the
+   * air. Dirty-driven: a room full of parts nobody touched costs one loop and no queries.
+   */
+  private stepSettle(): void {
+    for (const id of this.order) {
+      const record = this.records.get(id);
+      if (!record || !record.supportDirty) continue;
+      record.supportDirty = false;
+      if (record.falling || id === this.heldObjectId) continue;
+      if (this.isAnchored(record)) continue;
+      this.startFall(record);
+    }
+  }
+
+  /**
+   * Advance every falling, un-held part one step; lands exactly on its rest height.
+   *
+   * The rest height is re-read from the world every step rather than frozen when the
+   * fall started: a part descending underneath must carry this one down with it, and a
+   * part that lands on a machine or on another part rests on the height it really
+   * reached. When there is nothing below at all, the last committed rest pose stands.
+   */
   private stepFalling(dt: number): void {
     for (const id of this.order) {
       const record = this.records.get(id);
       if (!record || !record.falling || id === this.heldObjectId) continue;
+      const restY = this.restYFor(record) ?? record.lastValidPose.center.y;
+      // Keep the committed rest pose in step with the live support, so a save taken
+      // mid-fall still records where the part is actually going to come to rest.
+      record.lastValidPose.center.y = restY;
       record.fallSpeed = Math.min(record.fallSpeed + FALL_GRAVITY * dt, FALL_MAX_SPEED);
-      const restY = record.lastValidPose.center.y;
       const nextY = record.pose.center.y - record.fallSpeed * dt;
       if (nextY <= restY) {
         record.pose.center.y = restY;
@@ -1199,6 +1260,13 @@ export class ManipulationSystem {
   private publishRecord(record: CarryableRecord, force: boolean): void {
     if (!force && record.publishedCenter !== null && !this.poseChanged(record)) return;
 
+    // Capture the box this record is vacating *before* the mirror is overwritten: any
+    // part standing on it has to re-check its support once the move lands.
+    const prevCenter = record.publishedCenter;
+    if (prevCenter !== null) {
+      this.boxFor(record, record.publishedYaw, this.scratchVacated, prevCenter);
+    }
+
     this.boxFor(record, record.pose.yaw, this.scratchBox, undefined);
     this.geometry?.moveVolume(
       record.binding.instanceId,
@@ -1215,7 +1283,39 @@ export class ManipulationSystem {
     }
     record.publishedYaw = record.pose.yaw;
 
+    if (prevCenter !== null) {
+      this.markSupportDirty(record, this.scratchVacated, this.scratchBox);
+    }
     this.publishColliders();
+  }
+
+  /**
+   * Flag every part whose footprint covers the box a moved part left or entered, so the
+   * settle pass re-checks its support. This is what makes a stack behave: take the bottom
+   * part out and the ones above it fall, on the step the move happened, wherever they are
+   * in the room. Parts a move cannot affect are never queried.
+   */
+  private markSupportDirty(
+    moved: CarryableRecord,
+    from: { min: Vec3; max: Vec3 },
+    to: { min: Vec3; max: Vec3 }
+  ): void {
+    for (const id of this.order) {
+      if (id === moved.binding.instanceId) continue;
+      const other = this.records.get(id);
+      if (!other || other.falling) continue;
+      rotatedHalfExtents(other.binding.definition.halfExtents, other.pose.yaw, this.scratchOtherHalf);
+      const minX = other.pose.center.x - this.scratchOtherHalf.x;
+      const maxX = other.pose.center.x + this.scratchOtherHalf.x;
+      const minZ = other.pose.center.z - this.scratchOtherHalf.z;
+      const maxZ = other.pose.center.z + this.scratchOtherHalf.z;
+      if (
+        (minX < from.max.x && maxX > from.min.x && minZ < from.max.z && maxZ > from.min.z) ||
+        (minX < to.max.x && maxX > to.min.x && minZ < to.max.z && maxZ > to.min.z)
+      ) {
+        other.supportDirty = true;
+      }
+    }
   }
 
   /** Rebuild the whole kinematic carryable set from the per-record mirrors. */

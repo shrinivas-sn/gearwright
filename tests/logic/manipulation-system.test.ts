@@ -204,6 +204,12 @@ class FakeSnap implements SnapSession {
   readonly detaches: string[] = [];
   /** Ids the fake reports as *not* attached: `detach` returns false for them. */
   readonly notAttached = new Set<string>();
+  /** Ids the fake reports as mounted (M11: gravity must skip them). */
+  readonly mounted = new Set<string>();
+
+  isAttached(componentId: string): boolean {
+    return this.mounted.has(componentId);
+  }
 
   commit(componentId: string, socketId: string): SnapCommitResult {
     this.commits.push({ componentId, socketId });
@@ -1019,5 +1025,78 @@ describe('ManipulationSystem — overhaul T1.3 falling parts', () => {
     step(sm, { actions: { secondary: true } });
     for (let i = 0; i < 10; i += 1) step(sm);
     expect(sm.currentPose).toEqual(held);
+  });
+});
+
+describe('ManipulationSystem — M11 gravity settle', () => {
+  /** A 10 × 10 m floor whose top face is y = 0, like the shipped room's. */
+  const FLOOR = { min: { x: -10, y: -1, z: -10 }, max: { x: 10, y: 0, z: 10 } };
+
+  function crateAt(instanceId: string, x: number, y: number, z: number): CarryableBinding {
+    return { instanceId, definition: CRATE_DEF, spawn: { center: { x, y, z }, yaw: 0 } };
+  }
+
+  /** Two crates (half-extent 0.4) with the upper one resting exactly on the lower. */
+  function stacked(): { sm: ManipulationSystem; bottom: CarryableBinding } {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([FLOOR]);
+    const bottom = crateAt('box-bottom', 0, 0.4, 0);
+    const top = crateAt('box-top', 0, 1.2, 0);
+    return { sm: new ManipulationSystem(physics, [bottom, top], null), bottom };
+  }
+
+  function yOf(sm: ManipulationSystem, id: string): number {
+    const snapshot = sm.snapshots().find((entry) => entry.id === id);
+    expect(snapshot).toBeDefined();
+    return snapshot!.center.y;
+  }
+
+  it('leaves a stacked part alone while the part under it stays put', () => {
+    const { sm } = stacked();
+    for (let i = 0; i < 10; i += 1) step(sm);
+    expect(yOf(sm, 'box-top')).toBeCloseTo(1.2, 4);
+  });
+
+  it('drops a part whose support was carried away', () => {
+    const { sm, bottom } = stacked();
+    for (let i = 0; i < 5; i += 1) step(sm);
+    grab(sm, bottom); // the SM is now carrying the lower box out from under it
+    for (let i = 0; i < 40; i += 1) step(sm);
+    expect(yOf(sm, 'box-top')).toBeCloseTo(0.4, 4); // it fell all the way to the floor
+  });
+
+  it('keeps a part riding the part descending under it instead of stranding it', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([FLOOR]);
+    // Both start in mid-air, one exactly on top of the other: neither has an anchor.
+    const bottom = crateAt('box-bottom', 0, 2.4, 0);
+    const top = crateAt('box-top', 0, 3.2, 0);
+    const sm = new ManipulationSystem(physics, [bottom, top], null);
+    for (let i = 0; i < 90; i += 1) step(sm);
+    // The whole stack has come down two metres and is still a stack: the upper crate
+    // rides the lower one's descent rather than being left behind in mid-air.
+    expect(yOf(sm, 'box-bottom')).toBeCloseTo(0.4, 4);
+    expect(yOf(sm, 'box-top')).toBeCloseTo(1.2, 4);
+  });
+
+  it('never drops a mounted part: a docked pose belongs to its socket', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([FLOOR]);
+    const snap = new FakeSnap();
+    snap.mounted.add(CRATE.instanceId);
+    const sm = new ManipulationSystem(physics, CRATE, null, snap);
+    // Exactly what the save path does with a docked part: restore the socket pose.
+    expect(sm.restorePose(CRATE.instanceId, { center: { x: 0, y: 1.6, z: 0 }, yaw: 0 })).toBe(true);
+    for (let i = 0; i < 30; i += 1) step(sm);
+    expect(sm.currentPose.center.y).toBeCloseTo(1.6, 4);
+  });
+
+  it('drops that same part once nothing reports it as mounted', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([FLOOR]);
+    const sm = new ManipulationSystem(physics, CRATE, null, new FakeSnap());
+    expect(sm.restorePose(CRATE.instanceId, { center: { x: 0, y: 1.6, z: 0 }, yaw: 0 })).toBe(true);
+    for (let i = 0; i < 40; i += 1) step(sm);
+    expect(sm.currentPose.center.y).toBeCloseTo(0.4, 4);
   });
 });

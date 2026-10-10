@@ -28,6 +28,19 @@ texture, no glTF, no new dependency.
 
 The same day added **foot planting** (two ground rays per frame → `gameplay/foot-grounding.ts`, rig plants each leg on its own surface, pelvis drops ≤ 0.12 m to reach, stance foot only while walking) and **head look-at** (focus point, else the camera's aim). Both are presentation-only and both are pinned by tests: the crate-top case asserts the raised ankle at surface + ankle height while the other foot stays on the floor, and the look test asserts the head's own facing vector lands within ~25° of the target and returns to dead ahead when the target goes.
 
+**11/10/2026 — the plant was on the wrong half of the stride.** The stance weight was
+`0.5 + 0.5·cos(phase)`, which peaks at phase 0, but `sampleCharacterPose` drives `thighL` with
+`+sin(phase)`: the left leg is at its *frontmost* at +π/2, so phase 0 is the middle of its
+**swing**. Every frame the rig was therefore planting the swinging foot — pinning it to the
+surface and dragging it along with the body — and doing nothing for the foot that actually
+carried the body. Measured over a walk in the rig tests: the "planted" foot moved at **1.93× the
+body speed** and the swing foot could only lift **14 cm**. With the weight re-phased
+(`0.5 − 0.5·cos(phase)`) the carrying foot moves at **0.33×** the body speed, the free foot at
+**2.06×**, and the swing clears **23.7 cm**. The plant also no longer pins the ankle at its rest
+fore/aft: it owns the *contact* (ankle height above the surface, sole level, pelvis drop) while
+the distance-driven stride owns the fore/aft, so a planted foot keeps the stride's placement
+instead of sliding to the body's centre.
+
 Why procedural rather than an imported model:
 
 - **It is testable headlessly.** Pose, gait and hand placement are pure numbers in
@@ -47,10 +60,11 @@ the carry stance and the breathing idle are all blends of the same pose function
 are driven by an analytic two-bone aim that follows the held part.
 
 **Honest limits of the current body.** Rigid one-bone-per-vertex skinning (visible mechanical
-joints — deliberate, fits the industrial setting but is not a fleshy human); no foot IK (feet
-follow the leg, they do not plant); no look-at on the head; the grip is solved in *character*
-space, so the torso's own rotation leaves the hand a couple of centimetres off the ideal point;
-the body hides entirely when the camera arm is pulled inside it instead of fading.
+joints — deliberate, fits the industrial setting but is not a fleshy human); the planted foot
+tracks the surface and the stride rather than being locked to a world point (see Route A1: the
+rest pose has no leg slack for that); the grip is solved in *character* space, so the torso's own
+rotation leaves the hand a couple of centimetres off the ideal point; the body hides entirely
+when the camera arm is pulled inside it instead of fading.
 
 ---
 
@@ -88,7 +102,7 @@ and `three/tsl`; `examples/jsm/libs/` ships `meshopt_decoder`, `draco/` and `ktx
 
 | Step | Work | Why it pays |
 |---|---|---|
-| A1 | ~~**Foot IK**: probe from each ankle, plant and align the foot, drop the pelvis to reach~~ — **shipped 10/10/2026** (vertical planting; sticking the foot through the stride is the remaining half) | Removes the last "puppet" tell; also makes stairs/edges read correctly |
+| A1 | ~~**Foot IK**: probe from each ankle, plant and align the foot, drop the pelvis to reach~~ — **shipped 10/10/2026**; re-phased onto the stance and given the stride's own fore/aft 11/10/2026. Remaining: a *world-locked* plant through the stance — the rest pose is exactly extended (thigh 0.46 + shin 0.44 = 0.90 m = hip-to-ankle), so any horizontal excursion needs a knee bend and a pelvis drop: holding the foot for a full 0.775 m stance half would need ~0.14 m of drop against a 0.12 m cap. That is a rest-pose change (bent knees / lower hips), not a code change | Removes the last "puppet" tell; also makes stairs/edges read correctly |
 | A2 | ~~**Head look-at**: aim the neck/head at the focus target, clamped, blended~~ — **shipped 10/10/2026** | Player reads intent; cheap (2 joints) |
 | A3 | **Socket reach**: while `SnapPreview` is active, drive the hand aim at the socket instead of the held part | Turns an invisible mechanic into a visible one; the IK already exists |
 | A4 | **Carry per shape**: grip offset from the part's half-extents, one hand for small parts, two for wide ones | Reads as physical handling rather than a magnet |

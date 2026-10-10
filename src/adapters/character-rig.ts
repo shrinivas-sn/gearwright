@@ -207,6 +207,23 @@ export class CharacterRig {
   private readonly scratchHip = new THREE.Vector3();
   private readonly scratchLook = new THREE.Vector3();
   private readonly smoothedGround = { left: null as number | null, right: null as number | null };
+  /**
+   * Character-space fore/aft of each foot as the *stride* left it this frame (read off the
+   * posed bones before the plant touches them). The plant owns the contact — the ankle's
+   * height above its surface, the sole's level, the pelvis drop — while the distance-driven
+   * stride owns the fore/aft. Pinning the ankle at its rest offset instead made a planted
+   * foot skate forward with the body for the whole stance.
+   */
+  private readonly strideFoot = { L: { x: 0, z: 0 }, R: { x: 0, z: 0 } };
+  private readonly scratchFootWorld = new THREE.Vector3();
+  /** The root the bones are posed in; the stride read needs it to undo the root transform. */
+  private readonly rootPosition = new THREE.Vector3();
+  private rootYaw = 0;
+  /**
+   * How much of this frame's leg pose came from the plant, per foot (0 = pure stride).
+   * Read-only tooling fact — the harness and the rig tests ask "is this foot planted?".
+   */
+  private readonly plantWeight = { L: 0, R: 0 };
   private headBlend = 0;
   private footPlant = 0;
   /** Hip height actually used this frame (pose bob minus whatever the foot plant needs). */
@@ -310,6 +327,8 @@ export class CharacterRig {
     this.object.position.set(px, py, pz);
     this.object.rotation.y = Number.isFinite(state.facingYaw) ? state.facingYaw : 0;
     this.object.visible = true;
+    this.rootPosition.set(px, py, pz);
+    this.rootYaw = Number.isFinite(state.facingYaw) ? state.facingYaw : 0;
 
     for (const id of CHARACTER_JOINTS) {
       const bone = this.bones.get(id);
@@ -360,6 +379,11 @@ export class CharacterRig {
   /** True while the body is drawn (the rig tests read this instead of poking at three). */
   get visible(): boolean {
     return this.object.visible && this.mesh.visible;
+  }
+
+  /** Plant weight per foot, 0…1: 1 means that foot's pose is fully the plant's (contact). */
+  get footPlantWeights(): { readonly left: number; readonly right: number } {
+    return { left: this.plantWeight.L, right: this.plantWeight.R };
   }
 
   /** Bone count, exposed for the diagnostics overlay and the rig tests. */
@@ -431,9 +455,18 @@ export class CharacterRig {
       if (side === 'L') this.smoothedGround.left = next;
       else this.smoothedGround.right = next;
       if (next === null || this.footPlant <= 0) continue;
-      // Stance weight: 1 when standing, otherwise 1 through this leg's stance half of the cycle
-      // (phase 0 is this leg's contact) and 0 at mid-swing.
-      const stance = gaitWeight < 0.05 ? 1 : 0.5 + 0.5 * Math.cos(side === 'L' ? phase : phase + Math.PI);
+      // Where the stride has put this foot, captured before the plant moves it below.
+      this.captureStrideFoot(side);
+      // Stance weight: 1 when standing, otherwise 1 at mid-stance and 0 at mid-swing.
+      //
+      // The phase convention matters and is not what it looks like: `sampleCharacterPose`
+      // drives `thighL` with `+sin(phase)`, so the left leg is at its *frontmost* (contact) at
+      // phase = +π/2 and at its rearmost (toe-off) at phase = 3π/2 — the stance therefore spans
+      // π/2…3π/2 and peaks at π, where cos is −1. Getting this backwards (peaking at phase 0)
+      // plants the *swinging* foot instead: the IK then drags it along the surface for the whole
+      // swing, which is exactly how the walking foot came to skate.
+      const stance =
+        gaitWeight < 0.05 ? 1 : 0.5 - 0.5 * Math.cos(side === 'L' ? phase : phase + Math.PI);
       weight[side] = this.footPlant * stance;
     }
 
@@ -462,9 +495,34 @@ export class CharacterRig {
     // 3. Plant each leg on its own surface.
     for (const side of ['L', 'R'] as const) {
       const surface = side === 'L' ? this.smoothedGround.left : this.smoothedGround.right;
-      if (weight[side] <= 0 || surface === null) continue;
+      if (weight[side] <= 0 || surface === null) {
+        this.plantWeight[side] = 0;
+        continue;
+      }
+      this.plantWeight[side] = weight[side];
       this.applyFootPlant(side, surface, weight[side]);
     }
+  }
+
+  /**
+   * Read one foot's posed position back into character space, so the plant can solve onto the
+   * surface *where the stride put it*. The bones already hold this frame's pose (the root
+   * transform and every joint rotation are set before the feet are attended to), so this is the
+   * real stride position, not a cached guess. Cheap: four matrix compositions per foot.
+   */
+  private captureStrideFoot(side: 'L' | 'R'): void {
+    const foot = this.bones.get(side === 'L' ? 'footL' : 'footR');
+    if (foot === undefined) return;
+    foot.updateWorldMatrix(true, false);
+    foot.getWorldPosition(this.scratchFootWorld);
+    const cos = Math.cos(this.rootYaw);
+    const sin = Math.sin(this.rootYaw);
+    const dx = this.scratchFootWorld.x - this.rootPosition.x;
+    const dz = this.scratchFootWorld.z - this.rootPosition.z;
+    const slot = side === 'L' ? this.strideFoot.L : this.strideFoot.R;
+    // Inverse of the root's yaw about Y: world -> character (facing -Z at yaw 0).
+    slot.x = dx * cos - dz * sin;
+    slot.z = dx * sin + dz * cos;
   }
 
   /** Plant one leg so its ankle sits one ankle-height above `groundY`, knee folding forward. */
@@ -476,10 +534,11 @@ export class CharacterRig {
 
     const hipRest = this.hipRest[side];
     this.scratchHip.set(hipRest.x, hipRest.y + this.effectiveRise, hipRest.z);
-    // Vertical planting only: the ankle keeps its rest fore/aft position (the stride is the
-    // gait's job) and is raised or lowered onto the surface under it.
-    const ankleRest = this.ankleRest[side];
-    this.scratchAnkle.set(ankleRest.x, groundY + CHARACTER_ANKLE_HEIGHT, ankleRest.z);
+    // The stride's own fore/aft, the surface's height: a planted foot is re-solved onto the
+    // ground wherever the stride put it, so it keeps moving *with* the stride (which advances
+    // by distance travelled) instead of sliding along the surface with the body.
+    const stride = side === 'L' ? this.strideFoot.L : this.strideFoot.R;
+    this.scratchAnkle.set(stride.x, groundY + CHARACTER_ANKLE_HEIGHT, stride.z);
     const solved = solveLegAim(this.scratchHip, this.scratchAnkle, CHARACTER_LEG.thigh, CHARACTER_LEG.shin, this.legAim);
     if (solved === null) return;
 

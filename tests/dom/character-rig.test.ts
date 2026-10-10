@@ -146,6 +146,89 @@ describe('CharacterRig — the player’s body (procedural skinned humanoid)', (
     }
   });
 
+  it('keeps the foot that carries the body planted, and lets the other one lift', () => {
+    const rig = new CharacterRig();
+    try {
+      const WALK_SPEED = 2.2;
+      const STEP = 1 / 30;
+      let z = 0;
+      const samples: Array<{
+        bodyZ: number;
+        Lz: number;
+        Rz: number;
+        Ly: number;
+        Ry: number;
+        wL: number;
+        wR: number;
+      }> = [];
+      // Two full strides (STRIDE_WALK = 1.55 m) of ordinary walking on flat ground.
+      for (let i = 0; i < Math.ceil((3.1 / WALK_SPEED) / STEP); i += 1) {
+        z -= WALK_SPEED * STEP;
+        rig.update(
+          makeUpdate({
+            position: { x: 0, y: 0, z },
+            speed: WALK_SPEED,
+            footGroundY: { left: 0, right: 0 }
+          })
+        );
+        const left = boneWorld(rig, 'footL');
+        const right = boneWorld(rig, 'footR');
+        const weights = rig.footPlantWeights;
+        // Character-space fore/aft (the body faces -Z): what the foot does *relative* to the
+        // body. World motion is this plus the body's own travel.
+        samples.push({
+          bodyZ: z,
+          Lz: left.z - z,
+          Rz: right.z - z,
+          Ly: left.y,
+          Ry: right.y,
+          wL: weights.left,
+          wR: weights.right
+        });
+      }
+
+      // Split the walk by plant weight. A foot the game says is carrying the body must be slow
+      // in the world (it may creep — no rig is exact — but it must not skate along with the
+      // body); a foot it says is free is the fast one, because that foot is swinging. Putting
+      // the weight on the wrong half of the gait fails both halves of this: the "planted" foot
+      // then moves at swing speed, and the free one is the one dragging on the floor.
+      let carryingSpeed = 0;
+      let carryingFrames = 0;
+      let freeSpeed = 0;
+      let freeFrames = 0;
+      for (const side of ['L', 'R'] as const) {
+        for (let i = 1; i < samples.length; i += 1) {
+          const cur = samples[i]!;
+          const prev = samples[i - 1]!;
+          const bodyStep = Math.abs(cur.bodyZ - prev.bodyZ);
+          if (bodyStep < 1e-6) continue;
+          const footStep = Math.abs(
+            (side === 'L' ? cur.Lz : cur.Rz) + cur.bodyZ - ((side === 'L' ? prev.Lz : prev.Rz) + prev.bodyZ)
+          );
+          const speed = footStep / bodyStep; // 1 = skating with the body, 0 = pinned to the ground
+          const weight = side === 'L' ? cur.wL : cur.wR;
+          if (weight >= 0.7) {
+            carryingSpeed += speed;
+            carryingFrames += 1;
+          } else if (weight <= 0.2) {
+            freeSpeed += speed;
+            freeFrames += 1;
+          }
+        }
+      }
+      expect(carryingFrames).toBeGreaterThan(5);
+      expect(freeFrames).toBeGreaterThan(5);
+      expect(carryingSpeed / carryingFrames).toBeLessThan(0.6);
+      expect(freeSpeed / freeFrames).toBeGreaterThan(1.2);
+
+      // The swinging foot clears the floor instead of being held down on it.
+      const highest = Math.max(...samples.map((s) => Math.max(s.Ly, s.Ry)));
+      expect(highest).toBeGreaterThan(CHARACTER_ANKLE_HEIGHT + 0.15);
+    } finally {
+      rig.dispose();
+    }
+  });
+
   it('turns the head toward what the player is aiming at, and back again', () => {
     const rig = new CharacterRig();
     try {

@@ -111,6 +111,13 @@ export interface SnapSession {
    * attach path uses — the SM never touches the graph directly.
    */
   detach?(componentId: string): boolean;
+  /**
+   * Is this component mounted right now? Optional and additive: the manipulation
+   * SM asks it before it lets a part fall. A mounted part's pose *is* its socket's
+   * (ARCH §21.3), so gravity must never touch it — otherwise loading a save with a
+   * docked gear would drop it out of the machine it was left in.
+   */
+  isAttached?(componentId: string): boolean;
 }
 
 export class SnapSystem implements SnapSession {
@@ -199,6 +206,11 @@ export class SnapSystem implements SnapSession {
     if (socketId === null) return null;
     const resolved = this.findSocket(socketId);
     return resolved ? assignedPose(resolved.instance, resolved.definition) : null;
+  }
+
+  /** Mounted-ness of one component, read from the L1 graph (the single owner). */
+  isAttached(componentId: string): boolean {
+    return this.graph.attachmentOf(componentId) !== null;
   }
 
   /**

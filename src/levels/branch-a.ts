@@ -565,9 +565,12 @@ export const BM1_ANCHORS: ReadonlyArray<Anchor> = [
   // Loose parts wait on the floor in front of the machine, between the panel and the
   // player's approach: the gear and the pipe are the two solutions, the blanking plate
   // and the shut-off valve are the two "fits, cannot bridge" decoys (§21.4).
-  { id: 'anchor/bm1-gear', pose: poseAt(-1.6, 0.12, -15.4) },
+  // The gear and the plate rest on the gallery floor (y = 0): 0.07 and 0.04 are their
+  // own half-extents, so the authored pose *is* the resting pose and nothing settles
+  // the moment a save is loaded (the same rule P1–P3's loose parts follow).
+  { id: 'anchor/bm1-gear', pose: poseAt(-1.6, 0.07, -15.4) },
   { id: 'anchor/bm1-pipe', pose: poseAt(1.6, 0.12, -15.4) },
-  { id: 'anchor/bm1-plate', pose: poseAt(-0.6, 0.07, -15.8) },
+  { id: 'anchor/bm1-plate', pose: poseAt(-0.6, 0.04, -15.8) },
   { id: 'anchor/bm1-shutoff', pose: poseAt(0.6, 0.12, -15.8) }
 ];
 
