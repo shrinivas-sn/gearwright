@@ -974,7 +974,8 @@ async function scenarioBranch(cdp) {
   const reloadLogs = report.logs.slice(logsBeforeReload).join('\n');
   report.data.branchReload = {
     loaded: /\[save\] loaded autosave/.test(reloadLogs),
-    cluesRestored: /\[clue\] 1\/1 clue\(s\) discovered: clue\/regulator-plate/.test(reloadLogs),
+    // Two clues ship now (one per branch), so the count is 1 of 2 — the id is the point.
+    cluesRestored: /\[clue\] 1\/2 clue\(s\) discovered: clue\/regulator-plate/.test(reloadLogs),
     stagedRestored: /\[staged\] 4 staged action\(s\) restored/.test(reloadLogs),
     hubStage: /\[hub\] stage 1 \(Pressure Line Online\); branch-a=Complete \(open\)/.test(reloadLogs),
     progress: await evaluate(cdp, 'window.__probe.progress()'),

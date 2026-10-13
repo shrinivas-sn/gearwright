@@ -43,10 +43,14 @@ export const BRANCH_DEFINITIONS: ReadonlyArray<BranchDefinition> = [
     // `B1` is the branch's entry/teaching machine (a feedwater circuit) and `BM-2` is
     // its staged final machine (a steam engine), so the branch completes only once the
     // capstone has run — the same order §6 gives Branch A.
+    //
+    // §6's beat 5: the Thermal Line opens once the Pressure Gallery is Complete. Its
+    // door and its puzzles both read this (`AccessGate` for the door, `initialPuzzleState`
+    // for the SMs), so gating is one data line, never geometry.
     id: BRANCH_B_ID,
     title: 'Thermal Line',
     puzzleIds: ['B1', 'BM-2'],
-    requiresBranches: [],
+    requiresBranches: [BRANCH_A_ID],
     sealed: false
   },
   {

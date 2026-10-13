@@ -640,6 +640,25 @@ function boot(): void {
   };
   syncProgression();
 
+  /**
+   * §6/§25 branch access: when a branch becomes enterable, its puzzles walk
+   * `Locked → Available → InProgress` (`PuzzleSystem.unlock()`/`begin()`). The game ships
+   * one scene, so "the player entered the area" is simply "the branch is open" — a gated
+   * puzzle that is never unlocked would stay `Locked` forever and never evaluate (§25).
+   * Idempotent: every call is a no-op once the puzzles have started.
+   */
+  const syncBranchAccess = (): void => {
+    for (const system of puzzleSystems) {
+      const branch = progression.branchOf(system.puzzleId);
+      if (branch === null || !progression.canEnter(branch.id)) continue;
+      // `unlock()` is true only on the Locked → Available edge, so this reports a branch
+      // *opening* during play (never a list of every already-open puzzle).
+      if (system.unlock()) gameLog(`[branch] ${branch.id} open — ${system.puzzleId} available`);
+      system.begin();
+    }
+  };
+  syncBranchAccess();
+
   // --- M7 canonical owners (ARCH §26/§27/§31) ----------------------------------
   // The ledger, inventory and checkpoint are NEW state owners, not extensions:
   // rewards only ever flow through RewardLedger → RewardSystem → InventorySystem
@@ -745,6 +764,7 @@ function boot(): void {
     for (const note of loaded.notes) gameLog(`[save] ${note.code}: ${note.detail}`);
     // The restored puzzle states are the authority again (§12.2).
     syncProgression();
+    syncBranchAccess();
   } else {
     gameLog(`[save] starting fresh (${loaded.reason}: ${loaded.detail})`);
   }
@@ -894,6 +914,10 @@ function boot(): void {
     // else. Branch completion and the hub stage are logs, not state to keep in sync.
     const before = progression.hubStage.id;
     syncProgression();
+    // A branch completion can open the *next* branch (§6 beat 5): its puzzles unlock
+    // here, the same event that unlocks the door (whose collider `refreshHubVisuals`
+    // re-derives on the next presented frame).
+    syncBranchAccess();
     const after = progression.hubStage;
     if (after.id !== before) {
       gameLog(`[progression] hub stage -> ${after.id} (${after.title})`);
@@ -1091,10 +1115,16 @@ function boot(): void {
    */
   let renderedVisualKey = '';
   const refreshHubVisuals = (): void => {
-    const key = `${progression.hubStageIndex}:${actions.version}`;
+    // Door state is part of the key: a branch that *opens* during play changes what the
+    // hall blocks (the slab is a collider), not just what it draws.
+    const doors = HUB_DOORS.map((door) => `${door.branchId}:${branchStateOf(door.branchId)}`).join(',');
+    const key = `${progression.hubStageIndex}:${actions.version}:${doors}`;
     if (renderedVisualKey === key) return;
     renderedVisualKey = key;
     renderPort.setLabWorld(worldMeshes());
+    // Re-derive the blockers too: `hubColliders` is the AccessGate in collider form, and
+    // a door that opened must stop blocking in the same breath it stops being drawn.
+    physics.setStaticColliders([...SHIPPED_WORLD.colliders, ...hubColliders(branchStateOf)]);
   };
 
   const appRef: { current: App | null } = { current: null };

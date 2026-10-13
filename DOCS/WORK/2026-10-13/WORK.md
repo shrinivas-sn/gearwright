@@ -60,6 +60,21 @@ core system change?" as the pass/fail line.
   its machine; `data/rewards.ts` its milestone; `data/branches.ts` added `BM-2` to Branch B, so the
   branch completes only once its capstone has run — the same order §6 gives Branch A.
 
+### Stage C — gating Branch B behind Branch A (§6 beat 5)
+
+- **The branch is gated in one data line:** `requiresBranches: [BRANCH_A_ID]`. The door already read
+  `branchState` (`AccessGate`), so it now blocks until the gallery is Complete with no geometry edit.
+- **The missing piece was the puzzle side.** `ProgressionSystem.initialPuzzleState` returns `Locked`
+  for a gated branch's puzzles, and **nothing in the composition ever called
+  `PuzzleSystem.unlock()`** — so a gated branch would have been permanent dead content. The
+  composition gained `syncBranchAccess()`: when a branch becomes enterable, its puzzles walk
+  `Locked → Available → InProgress`. It runs at boot, after a save load, and on the same
+  `PuzzleCompleted` event that advances progression.
+- **A door that opens during play had to stop *blocking*, not just stop being drawn.**
+  `refreshHubVisuals` re-derives the static colliders whenever the door states change (they are part
+  of its composite key now), so the slab disappears from physics in the same breath it disappears
+  from the render.
+
 ## Verification
 
 | Check | Command | Result |
@@ -68,7 +83,8 @@ core system change?" as the pass/fail line.
 | Tests | `npx vitest run` | **648 passed / 55 files** (was 634 / 53) |
 | Build | `npm run build` | green — `app` 235.85 kB (gzip 69.36 kB), `three` 567.57 kB, lazy `rig-preview` 3.69 kB |
 | `boot` (real Chrome) | `node scripts/browser-check.mjs boot` | clean apart from the pre-existing ANGLE `X4122` warning; logs `branch-a=Available (open), branch-b=Available (open), branch-c=Locked (sealed)` and `0/2 clue(s) discovered` |
-| `focus` (real Chrome) | `node scripts/browser-check.mjs focus` | `no problems`; B1's three parts focus (`Grab`, ~2.09 m) from inside the Steam Works, and BM-2's parts focus likewise |
+| `focus` (real Chrome) | `node scripts/browser-check.mjs focus` | `no problems`; B1's three parts focus (`Grab`, ~2.09 m) from inside the Steam Works |
+| `branch` (real Chrome) | `node scripts/browser-check.mjs branch` | **gating proven end to end.** Boot logs `branch-a=Available (open), branch-b=Locked (sealed), branch-c=Locked (sealed)`; the run plays Branch A to completion and the next hub line is `branch-a=Complete (open), branch-b=Available (open)` — the Thermal Line door opened in play. The HUD objective then reads **`Feedwater` / `Bridge the boiler to the outlet with pipework.` / `Parts 0 / 4`**, i.e. Branch B's B1 is unlocked and evaluating, and it survives the reload (`stagedRestored: true`, `hubStage: true`, B's objective still live). Only the two documented `AudioContext` notices and the ANGLE warning appear |
 
 New/updated suites: `branch-b-solvability` (B1 completes with two open valves; a half-filled header
 fails; a shut-off valve jams the run), `bm2-staged` (BM-2 assembly, priming coverage, the
@@ -78,13 +94,11 @@ through the new doorway), and the clue-plate suite now covers the whole plate ro
 
 ## Known loose ends (recorded, not fixed)
 
-- **Branch B is un-gated.** `progression-system.ts` supports gating (`requiresBranches`) and the
-  door reads it, but **nothing in the composition calls `PuzzleSystem.unlock()`**, so a gated branch
-  would start its puzzles `Locked` forever. The shipped-content integrity suite encodes exactly that
-  ("every shipped puzzle … not born Locked"), which is why Branch B ships available from boot. Making
-  B require A is the natural next step and needs one composition-side edge (unlock on branch
-  availability) plus a collider refresh when a door opens mid-session — a real, small change, but a
-  change, so it was left out of a content-only commit.
+- **Branch B is now gated behind Branch A** (Stage C). This is the one place the content-only
+  claim bends: gating needed a small composition-side edge (`syncBranchAccess`) plus a collider
+  refresh, because `PuzzleSystem.unlock()`/`begin()` were implemented and tested but never called by
+  the running game. No L1 system changed — the edge is composition wiring, the same category as
+  `hubColliders`.
 - **Branch B is two machines, not four.** It has the §6 template's entry machine (B1) and final
   staged machine (BM-2); the combining and open-ended beats (Branch A's P2/P3 analogues) are the
   next content.

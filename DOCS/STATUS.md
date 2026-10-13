@@ -10,7 +10,7 @@
   - **B1 "Feedwater"** — the entry machine, and the first shipped puzzle built on the `componentAt` requirement kind: two feedwater ports must both hold an open valve, the outlet must see both runs' combined pressure, and a `safety unjammed` catches the shut-off-valve near-miss.
   - **BM-2 "Steam Engine"** — the staged capstone (assembly → order-flexible priming of inlet/outlet/drain → an ordered throttle pull), the second instance of ADR-018. The branch completes only once it has run, exactly as BM-1 closes Branch A.
   - **Clue plates now place per clue.** The second clue exposed a latent bug: every clue's plate shared one hard-coded box (and its focus ray). Branch A's plate keeps its Regulator-column geometry; the Thermal Line's is bolted to the plinth face. The clue suite now checks the whole row against real physics.
-  - **Un-gated on purpose:** Branch B is `Available` from boot because nothing in the composition calls `PuzzleSystem.unlock()` yet — a gated branch's puzzles would start `Locked` forever. Gating B behind A is the next step and needs a small composition-side edge (recorded in the 13/10 log).
+  - **Gated behind Branch A (§6 beat 5):** `requiresBranches: [BRANCH_A_ID]`, so the Thermal Line door is sealed until the Pressure Gallery is Complete. This needed the one piece the running game had never used: the composition now calls `PuzzleSystem.unlock()`/`begin()` when a branch becomes enterable (`syncBranchAccess`), and `refreshHubVisuals` re-derives the static colliders when a door opens mid-session. Verified in a real browser: boot seals B, completing A opens it, and B1's objective (`Feedwater`) goes live.
 
 - **The player's body (10/10/2026):** the shipped build previously drew **no player at all** — the capsule marker was created `visible = false` and never unhidden. It is now a **procedural skinned humanoid**: 19 bones, one `SkinnedMesh`, one material, 1440 triangles, no asset and no dependency. Distance-driven gait (feet never slide), walk/run blend, airborne tuck, carry stance, breathing idle, and analytic two-bone **hand IK that grips the held part**. Pose maths is pure (`core/character-pose.ts`, headless-tested); the rig is `adapters/character-rig.ts`; the port gained only an **optional** `characterFacts()`.
 
@@ -33,8 +33,7 @@
 
 ## Next up (start here)
 1. **Finish Branch B's puzzle curve** — it has the entry machine (B1) and the staged capstone (BM-2); add the combining and open-ended beats (Branch A's P2/P3 analogues) so the branch teaches as it grows.
-2. **Gate Branch B behind Branch A** — one composition-side edge that calls `PuzzleSystem.unlock()` when a branch becomes available, plus a static-collider refresh when a door opens mid-session (the door slab must disappear in play). Small, real, and the last thing standing between Branch B and the §6 progression order.
-3. **Decide the shooting scope** (`DOCS/CONTEXT/SHOOTING-MECHANIC.md` §5): it needs one explicit call, then an ADR line updating `ARCHITECTURE.md` §3's "Combat out of scope".
-4. **Branch C (Great Crucible):** power grid coupling, multi-branch dependencies, endgame trigger — the third door is still a sealed visual.
-5. **Audio & Atmosphere:** procedural gear ratchets / steam hiss and subtle particle FX.
-6. **World-locked foot plant** (`CHARACTER-3D.md` Route A1): the plant is now on the correct half of the stride, but locking the foot to a world point for a whole stance needs leg slack the rest pose does not have (it is exactly extended) — so it wants a play-test call on bending the rest pose, not more code.
+2. **Decide the shooting scope** (`DOCS/CONTEXT/SHOOTING-MECHANIC.md` §5): it needs one explicit call, then an ADR line updating `ARCHITECTURE.md` §3's "Combat out of scope".
+3. **Branch C (Great Crucible):** power grid coupling, multi-branch dependencies, endgame trigger — the third door is still a sealed visual.
+4. **Audio & Atmosphere:** procedural gear ratchets / steam hiss and subtle particle FX.
+5. **World-locked foot plant** (`CHARACTER-3D.md` Route A1): the plant is now on the correct half of the stride, but locking the foot to a world point for a whole stance needs leg slack the rest pose does not have (it is exactly extended) — so it wants a play-test call on bending the rest pose, not more code.

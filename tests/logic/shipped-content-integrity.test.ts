@@ -52,18 +52,35 @@ function shippedProgression(): ProgressionSystem {
 }
 
 describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)', () => {
-  it('gives every shipped puzzle a branch, so none is born Locked', () => {
+  it('gives every shipped puzzle a branch, and never leaves one permanently Locked', () => {
     const progression = shippedProgression();
     expect(PUZZLE_DEFINITIONS.length).toBeGreaterThan(0);
 
     for (const definition of PUZZLE_DEFINITIONS) {
       // A puzzle with no branch is one the player can stand in and never finish: the
-      // §25 gating states do not evaluate, so `Locked` is permanent (nothing in the
-      // composition calls `unlock()` — there is no door to walk through).
-      expect(progression.branchOf(definition.id), `${definition.id} belongs to no branch`).not.toBeNull();
-      expect(progression.initialPuzzleState(definition.id), `${definition.id} starts gated`).not.toBe(
-        'Locked'
-      );
+      // §25 gating states do not evaluate, so `Locked` is permanent.
+      const branch = progression.branchOf(definition.id);
+      expect(branch, `${definition.id} belongs to no branch`).not.toBeNull();
+      // A puzzle in an ungated branch starts in play. A puzzle in a *gated* branch starts
+      // `Locked` on purpose — the composition's `syncBranchAccess` walks it
+      // `Locked → Available → InProgress` the moment its gating branch completes (§6
+      // beat 5 / §25). The failure to guard against is a puzzle born Locked with no way
+      // to open, so gated puzzles must name a requirement.
+      if (progression.initialPuzzleState(definition.id) === 'Locked') {
+        expect(
+          branch?.requiresBranches.length ?? 0,
+          `${definition.id} is gated with no requirement — it can never open`
+        ).toBeGreaterThan(0);
+      }
+    }
+
+    // And the gate is satisfiable: completing the gating branch opens every puzzle.
+    progression.update(['P1', 'P2', 'P3', 'BM-1']);
+    for (const definition of PUZZLE_DEFINITIONS) {
+      expect(
+        progression.initialPuzzleState(definition.id),
+        `${definition.id} never becomes playable`
+      ).not.toBe('Locked');
     }
   });
 
@@ -175,19 +192,26 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
     }
   });
 
-  it('completes Branch B when its machine has run, and only then advances the hub stage', () => {
+  it('opens Branch B only when Branch A completes, and completes it only once BM-2 has run', () => {
     const progression = shippedProgression();
 
-    // Branch B's entry machine alone is not completion: its staged capstone (BM-2)
-    // must run first, exactly as BM-1 closes Branch A.
-    progression.update(['B1']);
+    // §6 beat 5: the Thermal Line is gated behind the Pressure Gallery, so at boot it is
+    // sealed and its puzzles are `Locked`.
+    expect(progression.branchState(BRANCH_B_ID)).toBe('Locked');
+    expect(progression.initialPuzzleState('B1')).toBe('Locked');
+
+    progression.update(['P1', 'P2', 'P3', 'BM-1']);
+    expect(progression.branchState(BRANCH_B_ID)).toBe('Available');
+    expect(progression.initialPuzzleState('B1')).not.toBe('Locked');
+    expect(progression.hubStage.id).toBe('stage/pressure-online');
+
+    // Its entry machine alone is not completion: the staged capstone (BM-2) must run
+    // first, exactly as BM-1 closes Branch A.
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1']);
     expect(progression.branchState(BRANCH_B_ID)).toBe('InProgress');
-    progression.update(['B1', 'BM-2']);
-    expect(progression.branchState(BRANCH_B_ID)).toBe('Complete');
-    // "Regulator Awake" needs A **and** B: one branch alone is not a stage.
-    expect(progression.hubStage.id).toBe('stage/dormant');
 
     progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'BM-2']);
+    expect(progression.branchState(BRANCH_B_ID)).toBe('Complete');
     expect(progression.hubStage.id).toBe('stage/regulator-awake');
   });
 

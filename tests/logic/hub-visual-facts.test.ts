@@ -113,24 +113,26 @@ function plate(meshes: ReadonlyArray<LabWorldMesh>): LabWorldMesh | undefined {
 }
 
 describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', () => {
-  it('a fresh game: only the sealed door is red, both open doorways have no slab, everything else is cold', () => {
+  it('a fresh game: the sealed doors are red, the open doorway has no slab, everything else is cold', () => {
     const system = progression();
     const meshes = hubMeshes(stateReader(system), system.hubStageIndex, () => false);
 
-    // Branch A and Branch B both ship content, so both doorways are open (no slab);
-    // Branch C is still a sealed visual.
-    expect(slabs(meshes, HUB_DOORS[1]!.x)).toHaveLength(0);
+    // Walkthrough step 2: A is the one open doorway (it is this branch's, by design);
+    // B is gated behind A (§6 beat 5) and C is still a sealed visual, so both are red
+    // slabs on a fresh game.
+    expect(slabs(meshes, HUB_DOORS[1]!.x)).toHaveLength(1);
     expect(slabs(meshes, HUB_DOORS[2]!.x)).toHaveLength(1);
     expect(slabs(meshes, HUB_DOORS[0]!.x)).toHaveLength(0);
+    expect(slabs(meshes, HUB_DOORS[1]!.x)[0]!.color).toBe(SEALED_RED);
     expect(slabs(meshes, HUB_DOORS[2]!.x)[0]!.color).toBe(SEALED_RED);
 
-    // The open doors' posts are lit teal; the sealed one stays stone. (Each door
+    // The open door's posts are lit teal; the sealed ones stay stone. (Each door
     // has exactly two posts — the count is asserted so this cannot pass vacuously.)
     expect(doorPosts(meshes, HUB_DOORS[0]!.x)).toHaveLength(2);
     expect(doorPosts(meshes, HUB_DOORS[1]!.x)).toHaveLength(2);
     expect(doorPosts(meshes, HUB_DOORS[2]!.x)).toHaveLength(2);
     for (const post of doorPosts(meshes, HUB_DOORS[0]!.x)) expect(post.color).toBe(OPEN_TEAL);
-    for (const post of doorPosts(meshes, HUB_DOORS[1]!.x)) expect(post.color).toBe(OPEN_TEAL);
+    for (const post of doorPosts(meshes, HUB_DOORS[1]!.x)) expect(post.color).toBe(STONE);
     for (const post of doorPosts(meshes, HUB_DOORS[2]!.x)) expect(post.color).toBe(STONE);
 
     // Dormant hall: every trunk and the bus cold, the column cold.
@@ -148,7 +150,7 @@ describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', 
     expect(system.hasClue(CLUE_REGULATOR_PLATE)).toBe(false);
   });
 
-  it('completing Branch A: the slab stays for C, the A trunk and bus light gold, the column warms, the plate goes gold', () => {
+  it('completing Branch A: the Thermal Line opens, the slab stays for C, the A trunk and bus light gold, the column warms, the plate goes gold', () => {
     const system = progression();
     // Branch A is P1–P3 **and its final machine** (§7/OQ-3): the branch, the hub stage
     // and the clue all land when the dynamo runs, which is §6 beats 6–8 in order.
