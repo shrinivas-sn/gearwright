@@ -19,6 +19,11 @@ import {
   BRANCH_A_INITIAL_ATTACHMENTS,
   BRANCH_A_SOCKETS
 } from '../../../src/levels/branch-a.ts';
+import {
+  SHIPPED_COMPONENTS,
+  SHIPPED_INITIAL_ATTACHMENTS,
+  SHIPPED_SOCKETS
+} from '../../../src/levels/shipped-content.ts';
 
 export interface BranchContentOptions {
   /** Override the machine set (defaults to every shipped definition). */
@@ -36,6 +41,31 @@ export function branchContent(options: BranchContentOptions = {}): MachineConten
     socketDefinitions: SOCKET_DEFINITIONS,
     machines: options.machines ?? MACHINE_DEFINITIONS
   };
+}
+
+/**
+ * The whole **shipped** content bundle (Branch A + Branch B), assembled exactly as
+ * `main.ts` assembles it. Suites that iterate `PUZZLE_DEFINITIONS` need this rather
+ * than the Branch A fixture: a puzzle whose parts are not in the bundle has nothing
+ * for a requirement to point at, which reads as a broken reveal rather than a missing
+ * fixture.
+ */
+export function shippedContent(): MachineContent {
+  return {
+    registry: new ComponentRegistry(COMPONENT_DEFINITIONS, SHIPPED_COMPONENTS),
+    sockets: SHIPPED_SOCKETS,
+    socketDefinitions: SOCKET_DEFINITIONS,
+    machines: MACHINE_DEFINITIONS
+  };
+}
+
+/** A graph at the shipped content's canonical starting state. */
+export function shippedGraph(): MachineGraph {
+  const graph = new MachineGraph();
+  graph.configure(shippedContent());
+  graph.reset(SHIPPED_INITIAL_ATTACHMENTS);
+  graph.recomputeIfDirty();
+  return graph;
 }
 
 /** A graph at the branch's initial state (P1's two shafts and P2's crank/output mounted). */

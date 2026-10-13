@@ -24,7 +24,13 @@ export const PARTITION_Z_MAX = 8.5;
 const BOXES: ReadonlyArray<RoomBox> = [
   { min: [-20, -1, -20], max: [20, 0, 20], color: ROOM_FLOOR },
   { min: [-21, 0, -21], max: [21, 4, -20], color: ROOM_WALL },
-  { min: [-21, 0, 20], max: [21, 4, 21], color: ROOM_WALL },
+  // North wall, west of the Branch B doorway (the door is at x = 0, opening ±1.0;
+  // the gap is cut 1.3 wide so the door's posts clear the wall face).
+  { min: [-21, 0, 20], max: [-1.3, 4, 21], color: ROOM_WALL },
+  // North wall, east of the doorway.
+  { min: [1.3, 0, 20], max: [21, 4, 21], color: ROOM_WALL },
+  // Lintel over the doorway, above the 3.2 m door height.
+  { min: [-1.3, 3.2, 20], max: [1.3, 4, 21], color: ROOM_WALL },
   { min: [-21, 0, -20], max: [-20, 4, 20], color: ROOM_WALL },
   { min: [20, 0, -20], max: [21, 4, 20], color: ROOM_WALL },
   // Partition, west of the doorway (door posts fill x -7.2…-7.0 and -5.0…-4.8).

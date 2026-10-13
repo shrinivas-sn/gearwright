@@ -35,12 +35,18 @@ export const BRANCH_DEFINITIONS: ReadonlyArray<BranchDefinition> = [
     sealed: false
   },
   {
-    // Sealed (§6): the door is a visual, and progression agrees it is not enterable.
+    // §6 expansion path: Branch B "Thermal Line" is content, not architecture — a
+    // branch definition, puzzle/reward data, a door anchor and a hub stage (all of
+    // which already existed). Its door opens because it is no longer `sealed` and has
+    // no unmet requirements; the AccessGate reads that state, never the geometry.
+    //
+    // `B1` is the branch's entry/teaching machine (a feedwater circuit). Its final
+    // staged machine (`BM-2`) lands in the same branch when it is authored.
     id: BRANCH_B_ID,
-    title: 'Branch B',
-    puzzleIds: [],
+    title: 'Thermal Line',
+    puzzleIds: ['B1'],
     requiresBranches: [],
-    sealed: true
+    sealed: false
   },
   {
     id: BRANCH_C_ID,

@@ -192,6 +192,32 @@ export const BM1_LINE_PORT_DEF: SocketDefinition = {
   snapYaw: 0
 };
 
+/**
+ * B1's two feedwater ports (Branch B). Same shape as P3's pipe ports: routing is
+ * declared by the machine's links, so `ownerPortId` is omitted and the ownership
+ * conduction step is skipped.
+ *
+ * Two ports (not one) is the whole lesson: the machine's `componentAt` requirement asks
+ * that **both** be occupied, so a single valve — the P3 answer — is not enough. The
+ * ports are distinct sockets, so the declared links stay honest data.
+ */
+export const B1_FLOW_A_DEF: SocketDefinition = {
+  id: 'def/b1-flow-a',
+  machineId: 'B1-feedwater',
+  ownerComponentId: 'b1-header',
+  socketKind: 'pipe-port',
+  accepts: ['pipe'],
+  portDirection: 'in',
+  carrier: 'pressure',
+  snapYaw: 0
+};
+
+/** B1's second feedwater port: same reusable definition shape, other placement. */
+export const B1_FLOW_B_DEF: SocketDefinition = {
+  ...B1_FLOW_A_DEF,
+  id: 'def/b1-flow-b'
+};
+
 export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   DOCK_A_DEF,
   MOUNT_A_DEF,
@@ -207,7 +233,10 @@ export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   P3_VALVE_C_DEF,
   // ADR-018 / M9 remainder — BM-1's drive mount and pressure line.
   BM1_DRIVE_MOUNT_DEF,
-  BM1_LINE_PORT_DEF
+  BM1_LINE_PORT_DEF,
+  // Branch B — B1's two feedwater ports.
+  B1_FLOW_A_DEF,
+  B1_FLOW_B_DEF
 ];
 
 export function socketDefinitionOf(defId: string): SocketDefinition | null {

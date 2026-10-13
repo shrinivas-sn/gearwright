@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { BRANCH_A_ID, BRANCH_DEFINITIONS } from '../../src/data/branches.ts';
+import { BRANCH_A_ID, BRANCH_B_ID, BRANCH_DEFINITIONS } from '../../src/data/branches.ts';
 import { COMPONENT_DEFINITIONS } from '../../src/data/components.ts';
 import { HUB_STAGE_DEFINITIONS } from '../../src/data/hub-stages.ts';
 import { MACHINE_DEFINITIONS } from '../../src/data/machines.ts';
@@ -17,6 +17,7 @@ import {
   SHIPPED_WORLD
 } from '../../src/levels/shipped-content.ts';
 import { BRANCH_A_INTERACTABLES } from '../../src/levels/branch-a.ts';
+import { BRANCH_B_INTERACTABLES } from '../../src/levels/branch-b.ts';
 import { KinematicPhysics } from '../../src/adapters/kinematic-physics.ts';
 import { vec3 } from '../../src/core/vec3.ts';
 import { DEFAULT_PLAYER_TUNING } from '../../src/gameplay/player-controller.ts';
@@ -158,7 +159,7 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
     // (The lab's `crate-far` / `crate-locked` are the M2 *demonstration* targets for the
     // range filter and the disabled filter — deliberately not components, which is why
     // only the socket and box rules below apply to the lab set.)
-    for (const item of BRANCH_A_INTERACTABLES) {
+    for (const item of [...BRANCH_A_INTERACTABLES, ...BRANCH_B_INTERACTABLES]) {
       if (item.kind === 'prop' || item.kind === 'scanner') continue;
       expect(componentIds, `no component for branch target ${item.id}`).toContain(item.id);
     }
@@ -172,6 +173,20 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
       expect(item.max.y, `${item.id} height`).toBeGreaterThan(item.min.y);
       expect(item.max.z, `${item.id} depth`).toBeGreaterThan(item.min.z);
     }
+  });
+
+  it('completes Branch B when its machine has run, and only then advances the hub stage', () => {
+    const progression = shippedProgression();
+
+    // Branch B ships one puzzle (B1) — the branch is Complete the moment it has run,
+    // which is the §6 expansion path working end to end.
+    progression.update(['B1']);
+    expect(progression.branchState(BRANCH_B_ID)).toBe('Complete');
+    // "Regulator Awake" needs A **and** B: one branch alone is not a stage.
+    expect(progression.hubStage.id).toBe('stage/dormant');
+
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1']);
+    expect(progression.hubStage.id).toBe('stage/regulator-awake');
   });
 
   it('names real content from every branch and every hub stage', () => {
@@ -228,6 +243,30 @@ describe('shipped level — PLAN T4.4', () => {
     const physics = new KinematicPhysics();
     physics.setStaticColliders([...SHIPPED_WORLD.colliders, ...hubColliders(branchState)]);
     expect(physics.isPoseValid(vec3(0, 0.01, 8.25), DEFAULT_PLAYER_TUNING.capsule)).toBe(false);
+  });
+
+  it('lets the player walk through the Branch B doorway into the Steam Works', () => {
+    // Both shipping branches open; C stays sealed. This is the room behind the north
+    // wall — the doorway is a real gap, and the floor beyond it is walkable.
+    const openState = (): BranchState => 'Available';
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([...SHIPPED_WORLD.colliders, ...hubColliders(openState)]);
+    const capsule = DEFAULT_PLAYER_TUNING.capsule;
+    let feet = vec3(SHIPPED_WORLD.spawn.x, SHIPPED_WORLD.spawn.y, SHIPPED_WORLD.spawn.z);
+    const out = vec3();
+    // Around the Regulator's plinth (x -3..3, z 14..17) and through the north doorway.
+    for (const waypoint of [{ x: -5, z: 14 }, { x: -5, z: 18.5 }, { x: 0, z: 19 }, { x: 0, z: 22.5 }]) {
+      for (let i = 0; i < 600; i += 1) {
+        const dx = waypoint.x - feet.x;
+        const dz = waypoint.z - feet.z;
+        const distance = Math.hypot(dx, dz);
+        if (distance < 0.05) break;
+        const stepLength = Math.min(0.1, distance);
+        const result = physics.moveAndSlide(feet, vec3((dx / distance) * stepLength, -0.01, (dz / distance) * stepLength), capsule, out);
+        feet = vec3(result.position.x, result.position.y, result.position.z);
+      }
+      expect(Math.hypot(waypoint.x - feet.x, waypoint.z - feet.z), `reached z=${waypoint.z}`).toBeLessThan(0.1);
+    }
   });
 
   it('never places an enabled interaction target inside static geometry', () => {

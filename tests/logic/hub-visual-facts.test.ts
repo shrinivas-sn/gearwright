@@ -113,24 +113,24 @@ function plate(meshes: ReadonlyArray<LabWorldMesh>): LabWorldMesh | undefined {
 }
 
 describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', () => {
-  it('a fresh game: sealed doors are red, the open doorway has no slab, everything else is cold', () => {
+  it('a fresh game: only the sealed door is red, both open doorways have no slab, everything else is cold', () => {
     const system = progression();
     const meshes = hubMeshes(stateReader(system), system.hubStageIndex, () => false);
 
-    // Walkthrough step 2: B and C are red slabs; A is an open doorway (no slab).
-    expect(slabs(meshes, HUB_DOORS[1]!.x)).toHaveLength(1);
+    // Branch A and Branch B both ship content, so both doorways are open (no slab);
+    // Branch C is still a sealed visual.
+    expect(slabs(meshes, HUB_DOORS[1]!.x)).toHaveLength(0);
     expect(slabs(meshes, HUB_DOORS[2]!.x)).toHaveLength(1);
     expect(slabs(meshes, HUB_DOORS[0]!.x)).toHaveLength(0);
-    expect(slabs(meshes, HUB_DOORS[1]!.x)[0]!.color).toBe(SEALED_RED);
     expect(slabs(meshes, HUB_DOORS[2]!.x)[0]!.color).toBe(SEALED_RED);
 
-    // The open door's posts are lit teal; the sealed ones stay stone. (Each door
+    // The open doors' posts are lit teal; the sealed one stays stone. (Each door
     // has exactly two posts — the count is asserted so this cannot pass vacuously.)
     expect(doorPosts(meshes, HUB_DOORS[0]!.x)).toHaveLength(2);
     expect(doorPosts(meshes, HUB_DOORS[1]!.x)).toHaveLength(2);
     expect(doorPosts(meshes, HUB_DOORS[2]!.x)).toHaveLength(2);
     for (const post of doorPosts(meshes, HUB_DOORS[0]!.x)) expect(post.color).toBe(OPEN_TEAL);
-    for (const post of doorPosts(meshes, HUB_DOORS[1]!.x)) expect(post.color).toBe(STONE);
+    for (const post of doorPosts(meshes, HUB_DOORS[1]!.x)) expect(post.color).toBe(OPEN_TEAL);
     for (const post of doorPosts(meshes, HUB_DOORS[2]!.x)) expect(post.color).toBe(STONE);
 
     // Dormant hall: every trunk and the bus cold, the column cold.
@@ -143,12 +143,12 @@ describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', 
     const system = progression();
     const meshes = hubMeshes(stateReader(system), system.hubStageIndex, () => false);
 
-    expect(CLUE_DEFINITIONS).toHaveLength(1); // the walkthrough names exactly one plate
+    expect(CLUE_DEFINITIONS).toHaveLength(2); // one plate per branch that ships a clue
     expect(plate(meshes)?.color).toBe(PLATE_DORMANT);
     expect(system.hasClue(CLUE_REGULATOR_PLATE)).toBe(false);
   });
 
-  it('completing Branch A: slabs stay for B/C, the A trunk and bus light gold, the column warms, the plate goes gold', () => {
+  it('completing Branch A: the slab stays for C, the A trunk and bus light gold, the column warms, the plate goes gold', () => {
     const system = progression();
     // Branch A is P1–P3 **and its final machine** (§7/OQ-3): the branch, the hub stage
     // and the clue all land when the dynamo runs, which is §6 beats 6–8 in order.
@@ -157,9 +157,9 @@ describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', 
 
     const meshes = hubMeshes(stateReader(system), system.hubStageIndex, (id) => system.hasClue(id));
 
-    // The slabs that remain are exactly the sealed branches' — and still red.
+    // The only slab that remains is the still-sealed Branch C's — and still red.
     expect(slabs(meshes, HUB_DOORS[0]!.x)).toHaveLength(0);
-    expect(slabs(meshes, HUB_DOORS[1]!.x)[0]!.color).toBe(SEALED_RED);
+    expect(slabs(meshes, HUB_DOORS[1]!.x)).toHaveLength(0);
     expect(slabs(meshes, HUB_DOORS[2]!.x)[0]!.color).toBe(SEALED_RED);
 
     // Walkthrough step 4: trunk lines/bus gold with the Regulator column warming.
@@ -169,7 +169,8 @@ describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', 
     expect(bus(meshes)?.color).toBe(TRUNK_GOLD);
     expect(column(meshes)?.color).toBe(REGULATOR_WARMED);
     expect(system.branchState(BRANCH_A_ID)).toBe('Complete');
-    expect(system.branchState(BRANCH_B_ID)).toBe('Locked');
+    // Branch B ships and is un-gated, so it is Available whatever A does; C is sealed.
+    expect(system.branchState(BRANCH_B_ID)).toBe('Available');
     expect(system.branchState(BRANCH_C_ID)).toBe('Locked');
   });
 

@@ -194,13 +194,62 @@ export const BM1_PRESSURE_DYNAMO: MachineDefinition = {
   primingActions: BM1_PRIMING_ACTIONS
 };
 
+/**
+ * B1 "Feedwater" (Branch B) — the branch's entry/teaching machine, and the first
+ * shipped puzzle to use the `componentAt` requirement kind.
+ *
+ * A boiler feeds an outlet through two parallel ports on a header:
+ *
+ *   - `link-b1-flow-a`  boiler → outlet  (a pipe in `socket-b1-flow-a`)
+ *   - `link-b1-flow-b`  boiler → outlet  (a pipe in `socket-b1-flow-b`)
+ *
+ * Both links reach the same output node, so a single correctly seated valve already
+ * powers the outlet — which is exactly why the puzzle *also* asks that both ports are
+ * occupied (`componentAt`). The two predicates catch different failures: `connected`
+ * and `output` catch a shut-off valve (it fits and conducts nothing), `componentAt`
+ * catches the half-done circuit. No new mechanic, no new code.
+ */
+export const B1_FEEDWATER_MACHINE: MachineDefinition = {
+  id: 'B1-feedwater',
+  title: 'Feedwater',
+  rootNodes: [
+    { kind: 'component', id: 'b1-boiler' },
+    { kind: 'component', id: 'b1-header' },
+    { kind: 'component', id: 'b1-outlet' }
+  ],
+  links: [
+    {
+      id: 'link-b1-flow-a',
+      viaSocketId: 'socket-b1-flow-a',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'b1-boiler' },
+      to: { kind: 'component', id: 'b1-outlet' }
+    },
+    {
+      id: 'link-b1-flow-b',
+      viaSocketId: 'socket-b1-flow-b',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'b1-boiler' },
+      to: { kind: 'component', id: 'b1-outlet' }
+    }
+  ],
+  outputs: [{ node: { kind: 'component', id: 'b1-outlet' }, kind: 'pressure' }],
+  // Above both parallel runs (1 each), so a correctly plumbed header never reports
+  // `overpressure`.
+  maxOutput: 3
+};
+
 export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   P1_MESH_MACHINE,
   // M8 — Branch A's second and third machines.
   P2_RIGHT_TURN_MACHINE,
   P3_THREE_VALVES_MACHINE,
   // ADR-018 / M9 remainder — the branch machine, staged.
-  BM1_PRESSURE_DYNAMO
+  BM1_PRESSURE_DYNAMO,
+  // Branch B — B1's feedwater circuit.
+  B1_FEEDWATER_MACHINE
 ];
 
 export function machineDefinitionOf(machineId: string): MachineDefinition | null {

@@ -7,7 +7,7 @@ import { indexRequirements, scannerRevealFor } from '../../src/game-state/scanne
 import type { MachineContent } from '../../src/game-state/component-registry.ts';
 import type { MachineGraph } from '../../src/game-state/machine-graph.ts';
 import type { Requirement } from '../../src/game-state/validator.ts';
-import { branchContent, branchGraph } from './support/branch-a-content.ts';
+import { branchContent, branchGraph, shippedContent, shippedGraph } from './support/branch-a-content.ts';
 import { p1Content, p1Graph } from './support/p1-mesh.ts';
 
 /**
@@ -165,8 +165,11 @@ describe('scannerRevealFor — §29.3 (collects what the requirement names, neve
   });
 
   it('resolves every shipped requirement, deterministically and without throwing', () => {
-    const content = branchContent();
-    const graph = branchGraph();
+    // The shipped bundle, not the Branch A fixture: this loop walks *every* puzzle in
+    // `PUZZLE_DEFINITIONS`, so a branch added later must be in scope for each
+    // requirement to have something real to point at.
+    const content = shippedContent();
+    const graph = shippedGraph();
     const index = indexRequirements(
       PUZZLE_DEFINITIONS.flatMap((definition) => [...definition.requirements])
     );

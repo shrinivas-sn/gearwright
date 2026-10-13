@@ -67,9 +67,10 @@ describe('ProgressionSystem — branch state is derived, never stored (ARCH §26
   it('never opens a sealed branch, and never opens an unknown one', () => {
     const system = progression();
     system.update(['P1', 'P2', 'P3', 'BM-1']);
-    // §6: B and C are sealed visuals in the MVP — content absence is explicit data,
-    // so a door and progression cannot disagree about it.
-    expect(system.branchState(BRANCH_B_ID)).toBe('Locked');
+    // §6: Branch C is still a sealed visual — content absence is explicit data, so a
+    // door and progression cannot disagree about it. Branch B has content now, so it
+    // opens with no architecture change (the §6 expansion path).
+    expect(system.branchState(BRANCH_B_ID)).toBe('Available');
     expect(system.branchState(BRANCH_C_ID)).toBe('Locked');
     // A door naming a branch that does not exist must not open either.
     expect(system.branchState('branch/does-not-exist')).toBe('Locked');

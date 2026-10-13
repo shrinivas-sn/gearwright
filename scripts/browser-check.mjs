@@ -453,6 +453,10 @@ window.__probe = {
       } catch {}
     }
     if (!branch) return null;
+    // Branch B ships alongside A, so its parts and sockets are probe-able too (the
+    // focus scenario walks them, which is how the new room proves it is reachable).
+    let branchB = null;
+    try { branchB = await import('/src/levels/branch-b.ts'); } catch { /* optional */ }
     const parts = (list) => list.map((c) => ({ id: c.instanceId, center: c.spawn.center, half: c.definition.halfExtents }));
     const sockets = (list) => list.map((s) => ({ id: s.id, center: s.pose.center, half: s.halfExtents }));
     return {
@@ -466,6 +470,8 @@ window.__probe = {
       bm1Parts: parts(branch.BM1_CARRYABLES),
       bm1Sockets: sockets(branch.BM1_SOCKETS),
       bm1Props: branch.BM1_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })),
+      b1Parts: branchB ? parts(branchB.B1_CARRYABLES) : [],
+      b1Sockets: branchB ? sockets(branchB.B1_SOCKETS) : [],
       hubTargets
     };
   }
@@ -703,6 +709,8 @@ async function scenarioFocus(cdp) {
   const targets = [
     ...level.bm1Parts.map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...level.bm1Sockets.map((entry) => ({ id: entry.id, box: boxOf(entry) })),
+    ...(level.b1Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
+    ...(level.b1Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...level.p1.map((entry) => ({ id: entry.id, box: boxOf(entry) }))
   ];
 

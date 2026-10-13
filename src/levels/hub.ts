@@ -22,7 +22,7 @@
  * advances.
  */
 
-import { CLUE_DEFINITIONS, clueDefinitionOf } from '../data/clues.ts';
+import { CLUE_DEFINITIONS, CLUE_REGULATOR_PLATE, CLUE_THERMAL_PLATE, clueDefinitionOf } from '../data/clues.ts';
 import type { BranchState } from '../game-state/progression-system.ts';
 import type { Interactable } from '../gameplay/interaction-system.ts';
 import type { StaticCollider } from '../ports/physics-port.ts';
@@ -47,7 +47,7 @@ const DOOR_Z = 19.3;
  */
 export const HUB_DOORS: ReadonlyArray<HubDoor> = [
   { id: 'door/branch-a', branchId: 'branch-a', title: 'Pressure Gallery', x: -6, z: 8.0 },
-  { id: 'door/branch-b', branchId: 'branch-b', title: 'Branch B', x: 0, z: DOOR_Z },
+  { id: 'door/branch-b', branchId: 'branch-b', title: 'Thermal Line', x: 0, z: DOOR_Z },
   { id: 'door/branch-c', branchId: 'branch-c', title: 'Branch C', x: 6, z: DOOR_Z }
 ];
 const DOOR_HALF_WIDTH = 1.0;
@@ -138,6 +138,43 @@ const PLATE_TOUCH_BOX = {
   max: [PLATE_HALF_WIDTH + 0.1, PLATE_Y_TO + 0.2, COLUMN_FRONT_Z - 0.01] as const
 };
 
+interface PlatePlacement {
+  readonly box: {
+    readonly min: readonly [number, number, number];
+    readonly max: readonly [number, number, number];
+  };
+  readonly touch: {
+    readonly min: readonly [number, number, number];
+    readonly max: readonly [number, number, number];
+  };
+}
+
+/**
+ * Per-clue plate placement (level data, exactly like every other authored box here).
+ *
+ * With one clue the plate was a single constant; with two it is a *row*, because two
+ * plates at the same coordinates would silently share a focus ray — the second clue
+ * becomes unreadable while everything still builds and the hub still draws a plate.
+ * The first plate keeps its original geometry (the Regulator column's front face);
+ * the Thermal Line's plate is bolted lower and to the left, on the plinth's front
+ * face, so it clears the column and both are reachable in turn.
+ */
+const PLATE_PLACEMENTS: Readonly<Record<string, PlatePlacement>> = {
+  [CLUE_REGULATOR_PLATE]: { box: PLATE_BOX, touch: PLATE_TOUCH_BOX },
+  [CLUE_THERMAL_PLATE]: {
+    // Plinth front face is z = 14; the plate is flush against it (back at 14.0),
+    // with its interaction volume stopping short of the collider (14.0), left of
+    // the column (which begins at x = -1.2 above y = 1).
+    box: { min: [-2.1, 0.45, 13.93], max: [-1.1, 0.9, 14.0] },
+    touch: { min: [-2.2, 0.3, 13.68], max: [-1.0, 1.05, 13.99] }
+  }
+};
+
+/** A clue with no authored placement falls back to the column plate (§6 beat 8). */
+function platePlacementOf(clueId: string): PlatePlacement {
+  return PLATE_PLACEMENTS[clueId] ?? { box: PLATE_BOX, touch: PLATE_TOUCH_BOX };
+}
+
 function boxMesh(box: Box): LabWorldMesh {
   return {
     kind: 'box',
@@ -210,16 +247,19 @@ export function cluePlateActive(
 export function hubInteractables(
   branchState: (branchId: string) => BranchState
 ): ReadonlyArray<Interactable> {
-  return CLUE_DEFINITIONS.map((clue) => ({
-    id: clue.id,
-    kind: 'prop' as const,
-    min: { x: PLATE_TOUCH_BOX.min[0], y: PLATE_TOUCH_BOX.min[1], z: PLATE_TOUCH_BOX.min[2] },
-    max: { x: PLATE_TOUCH_BOX.max[0], y: PLATE_TOUCH_BOX.max[1], z: PLATE_TOUCH_BOX.max[2] },
-    enabled: cluePlateActive(branchState, clue.id),
-    verb: 'Inspect',
-    // Exploration only: reading a plate mid-carry would be a context leak (§18).
-    contexts: ['Exploration'] as const
-  }));
+  return CLUE_DEFINITIONS.map((clue) => {
+    const touch = platePlacementOf(clue.id).touch;
+    return {
+      id: clue.id,
+      kind: 'prop' as const,
+      min: { x: touch.min[0], y: touch.min[1], z: touch.min[2] },
+      max: { x: touch.max[0], y: touch.max[1], z: touch.max[2] },
+      enabled: cluePlateActive(branchState, clue.id),
+      verb: 'Inspect',
+      // Exploration only: reading a plate mid-carry would be a context leak (§18).
+      contexts: ['Exploration'] as const
+    };
+  });
 }
 
 export function hubMeshes(
@@ -263,10 +303,11 @@ export function hubMeshes(
   // whether its story beat has happened, so the hub never draws a lie about progress.
   for (const clue of CLUE_DEFINITIONS) {
     const awake = cluePlateActive(branchState, clue.id);
+    const placement = platePlacementOf(clue.id).box;
     meshes.push(
       boxMesh({
-        min: PLATE_BOX.min,
-        max: PLATE_BOX.max,
+        min: placement.min,
+        max: placement.max,
         color: !awake ? HUB_PLATE_DORMANT : hasClue(clue.id) ? HUB_PLATE_READ : HUB_PLATE_AWAKE
       })
     );

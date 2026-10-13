@@ -45,9 +45,9 @@ describe('Crucible Hall — the AccessGate reads branch state, never geometry (�
     const system = progression();
     expect(HUB_DOORS.map((door) => door.branchId)).toEqual([BRANCH_A_ID, BRANCH_B_ID, BRANCH_C_ID]);
 
-    // Branch A is enterable; B and C are sealed visuals (§6).
+    // A and B ship content and are enterable; C is still a sealed visual (§6).
     expect(system.canEnter(BRANCH_A_ID)).toBe(true);
-    expect(system.canEnter(BRANCH_B_ID)).toBe(false);
+    expect(system.canEnter(BRANCH_B_ID)).toBe(true);
     expect(system.canEnter(BRANCH_C_ID)).toBe(false);
     // An unknown branch is not enterable either — a door cannot open onto nothing.
     expect(system.canEnter('branch/missing')).toBe(false);

@@ -27,6 +27,9 @@ export const MILESTONE_BM1_PRESSURE_DYNAMO = 'milestone/bm1-pressure-dynamo';
  */
 export const SCANNER_BLUEPRINT = 'blueprint/scanner';
 
+/** Branch B — B1 "Feedwater" (the thermal branch's entry machine). */
+export const MILESTONE_B1_FEEDWATER = 'milestone/b1-feedwater';
+
 export const REWARD_DEFINITIONS: ReadonlyArray<RewardDefinition> = [
   {
     id: MILESTONE_P1_FIRST_MESH,
@@ -53,6 +56,17 @@ export const REWARD_DEFINITIONS: ReadonlyArray<RewardDefinition> = [
     materials: [
       { kind: 'brass', amount: 2 },
       { kind: 'alloy', amount: 1 }
+    ],
+    blueprints: []
+  },
+  {
+    // Branch B's reward uses only existing materials, exactly like BM-1: an expansion
+    // must not invent a resource kind to feel bigger (§27.2 rule 5).
+    id: MILESTONE_B1_FEEDWATER,
+    title: 'Feedwater',
+    materials: [
+      { kind: 'brass', amount: 2 },
+      { kind: 'sealant', amount: 2 }
     ],
     blueprints: []
   },

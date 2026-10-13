@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { BRANCH_A_ID, branchDefinitionOf } from '../../src/data/branches.ts';
-import { CLUE_DEFINITIONS, CLUE_REGULATOR_PLATE, clueDefinitionOf } from '../../src/data/clues.ts';
+import {
+  CLUE_DEFINITIONS,
+  CLUE_REGULATOR_PLATE,
+  CLUE_THERMAL_PLATE,
+  clueDefinitionOf
+} from '../../src/data/clues.ts';
 import { HUB_STAGE_DEFINITIONS } from '../../src/data/hub-stages.ts';
 import { ProgressionSystem } from '../../src/game-state/progression-system.ts';
 import {
@@ -84,6 +89,8 @@ describe('the plate wakes with its branch, and reports being read (§6 beats 5/8
     const read = stateReader(system);
 
     expect(cluePlateActive(read, CLUE_REGULATOR_PLATE)).toBe(false);
+    // This fixture defines Branch A only, so *both* plates start asleep — the thermal
+    // plate reports on a branch this system does not know, which never activates.
     expect(hubInteractables(read).every((target) => !target.enabled)).toBe(true);
 
     const dormant = plateOf(system);
@@ -95,7 +102,11 @@ describe('the plate wakes with its branch, and reports being read (§6 beats 5/8
 
     system.update(['P1', 'P2', 'P3']);
     expect(cluePlateActive(read, CLUE_REGULATOR_PLATE)).toBe(true);
-    expect(hubInteractables(read).every((target) => target.enabled)).toBe(true);
+    // Wake is per clue, not global: Branch A lights its own plate and leaves the
+    // thermal plate (a different branch's) asleep.
+    const targetsById = new Map(hubInteractables(read).map((target) => [target.id, target]));
+    expect(targetsById.get(CLUE_REGULATOR_PLATE)?.enabled).toBe(true);
+    expect(targetsById.get(CLUE_THERMAL_PLATE)?.enabled).toBe(false);
 
     // The plate changed appearance with the branch completing — no level edit anywhere.
     expect(plateOf(system)?.color).not.toBe(dormant?.color);
@@ -182,6 +193,21 @@ describe('the plate wakes with its branch, and reports being read (§6 beats 5/8
       interaction.update(camera);
     }
     expect(interaction.focus?.id).toBe(CLUE_REGULATOR_PLATE);
+  });
+
+  it('keeps every plate out of static geometry, however many clues ship', () => {
+    // The single-plate placement was a constant; the row is now per clue. A plate
+    // pressed against a collider is dropped by §18 and becomes silently unreadable, so
+    // this checks the *whole* set against the real physics — the failure mode the
+    // second plate would otherwise reintroduce.
+    const read = (): 'Complete' => 'Complete';
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders(hubColliders(read));
+    const plates = hubInteractables(read);
+    expect(plates.length).toBe(CLUE_DEFINITIONS.length);
+    for (const target of plates) {
+      expect(physics.isBoxBlocked(target.min, target.max), `${target.id} is box-blocked`).toBe(false);
+    }
   });
 
   it('is content about progress, never a condition on it (§26)', () => {

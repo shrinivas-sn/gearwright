@@ -13,7 +13,7 @@
  * (§26: "progression never inspects the world directly — it consumes events").
  */
 
-import { BRANCH_A_ID } from './branches.ts';
+import { BRANCH_A_ID, BRANCH_B_ID } from './branches.ts';
 
 export interface ClueDefinition {
   readonly id: string;
@@ -27,6 +27,9 @@ export interface ClueDefinition {
 /** The clue carried by the plate on the Great Regulator's column (§6 beat 8). */
 export const CLUE_REGULATOR_PLATE = 'clue/regulator-plate';
 
+/** Branch B's clue: the second plate, woken by the Thermal Line's completion. */
+export const CLUE_THERMAL_PLATE = 'clue/thermal-plate';
+
 export const CLUE_DEFINITIONS: ReadonlyArray<ClueDefinition> = [
   {
     id: CLUE_REGULATOR_PLATE,
@@ -35,6 +38,14 @@ export const CLUE_DEFINITIONS: ReadonlyArray<ClueDefinition> = [
     text:
       'A brass plate, hammered flat and bolted to the Regulator’s column, reads: ' +
       '“PRESSURE FIRST. THE CRUCIBLE REMEMBERS WHAT THE GALLERY GAVE IT.”'
+  },
+  {
+    id: CLUE_THERMAL_PLATE,
+    title: 'Regulator Plate — “Heat Follows”',
+    branchId: BRANCH_B_ID,
+    text:
+      'A second plate, scorched along one edge, sits beside the first: ' +
+      '“HEAT FOLLOWS PRESSURE. THEN THE CRUCIBLE WAKES.”'
   }
 ];
 
