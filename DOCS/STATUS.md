@@ -1,11 +1,17 @@
 # Project Status — Gearwright
 
-**Branch:** `main` | **Date:** 2026-10-11 | **Phase:** Post-Overhaul / Character & Content Expansion
-**Worktree:** `E:\gearwright` · **Status file:** `DOCS/STATUS.md` (index: `DOCS/README.md`; this session's log: `DOCS/WORK/2026-10-11/WORK.md`)
+**Branch:** `main` | **Date:** 2026-10-13 | **Phase:** Post-Overhaul / Branch Expansion (Branch B shipped)
+**Worktree:** `E:\gearwright` · **Status file:** `DOCS/STATUS.md` (index: `DOCS/README.md`; this session's log: `DOCS/WORK/2026-10-13/WORK.md`)
 **Live Game:** https://shrinivas-sn.github.io/gearwright/
 **Repository:** https://github.com/shrinivas-sn/gearwright
 
 ## Shipped state (what stands today)
+- **Branch B "Thermal Line" (13/10/2026):** the second branch exists — behind the hub's north door (a real doorway now, cut into `game-room.ts`'s north wall) is the **Steam Works**, with two machines and its own clue plate. It is the ARCH §6 **expansion path** made real: added by content alone (a `BranchDefinition`, puzzle/reward data, a door anchor and a hub stage that already existed), with no L1 system, port, adapter or save-schema change. The composition gained one generalisation worth recording: BM-1's prop wiring became a `STAGED_RIGS` table, so a staged machine is one entry, not a code path.
+  - **B1 "Feedwater"** — the entry machine, and the first shipped puzzle built on the `componentAt` requirement kind: two feedwater ports must both hold an open valve, the outlet must see both runs' combined pressure, and a `safety unjammed` catches the shut-off-valve near-miss.
+  - **BM-2 "Steam Engine"** — the staged capstone (assembly → order-flexible priming of inlet/outlet/drain → an ordered throttle pull), the second instance of ADR-018. The branch completes only once it has run, exactly as BM-1 closes Branch A.
+  - **Clue plates now place per clue.** The second clue exposed a latent bug: every clue's plate shared one hard-coded box (and its focus ray). Branch A's plate keeps its Regulator-column geometry; the Thermal Line's is bolted to the plinth face. The clue suite now checks the whole row against real physics.
+  - **Un-gated on purpose:** Branch B is `Available` from boot because nothing in the composition calls `PuzzleSystem.unlock()` yet — a gated branch's puzzles would start `Locked` forever. Gating B behind A is the next step and needs a small composition-side edge (recorded in the 13/10 log).
+
 - **The player's body (10/10/2026):** the shipped build previously drew **no player at all** — the capsule marker was created `visible = false` and never unhidden. It is now a **procedural skinned humanoid**: 19 bones, one `SkinnedMesh`, one material, 1440 triangles, no asset and no dependency. Distance-driven gait (feet never slide), walk/run blend, airborne tuck, carry stance, breathing idle, and analytic two-bone **hand IK that grips the held part**. Pose maths is pure (`core/character-pose.ts`, headless-tested); the rig is `adapters/character-rig.ts`; the port gained only an **optional** `characterFacts()`.
 
 - **Foot planting & head look-at (10/10/2026, session 2):** `gameplay/foot-grounding.ts` probes the surface under each foot (two rays/frame) and the rig plants the legs on it — ankle one `CHARACTER_ANKLE_HEIGHT` above the surface, sole level, pelvis dropping ≤ 0.12 m so a planted foot always reaches; only the stance foot plants mid-stride. The neck and head also ease onto the focused object (or the camera's aim) and back. Both are presentation-only: no game state reads them.
@@ -26,8 +32,9 @@
 - **Only known console output:** the ANGLE `X4122` shader-precision warning (in every scenario, also present in the 24/09 reports) and, in `branch` only, the AudioContext autoplay notices that the plan has recorded since 23/09.
 
 ## Next up (start here)
-1. **Build Branch B (Thermal/Steam line)** — the biggest thing actually missing: the door is a sealed visual with nothing behind it. Design the room layout, unseal the door at Hub Stage 1, add thermal line puzzles.
-2. **Decide the shooting scope** (`DOCS/CONTEXT/SHOOTING-MECHANIC.md` §5): it needs one explicit call, then an ADR line updating `ARCHITECTURE.md` §3's "Combat out of scope".
-3. **Branch C (Great Crucible):** power grid coupling, multi-branch dependencies, endgame trigger.
-4. **Audio & Atmosphere:** procedural gear ratchets / steam hiss and subtle particle FX.
-5. **World-locked foot plant** (`CHARACTER-3D.md` Route A1): the plant is now on the correct half of the stride, but locking the foot to a world point for a whole stance needs leg slack the rest pose does not have (it is exactly extended) — so it wants a play-test call on bending the rest pose, not more code.
+1. **Finish Branch B's puzzle curve** — it has the entry machine (B1) and the staged capstone (BM-2); add the combining and open-ended beats (Branch A's P2/P3 analogues) so the branch teaches as it grows.
+2. **Gate Branch B behind Branch A** — one composition-side edge that calls `PuzzleSystem.unlock()` when a branch becomes available, plus a static-collider refresh when a door opens mid-session (the door slab must disappear in play). Small, real, and the last thing standing between Branch B and the §6 progression order.
+3. **Decide the shooting scope** (`DOCS/CONTEXT/SHOOTING-MECHANIC.md` §5): it needs one explicit call, then an ADR line updating `ARCHITECTURE.md` §3's "Combat out of scope".
+4. **Branch C (Great Crucible):** power grid coupling, multi-branch dependencies, endgame trigger — the third door is still a sealed visual.
+5. **Audio & Atmosphere:** procedural gear ratchets / steam hiss and subtle particle FX.
+6. **World-locked foot plant** (`CHARACTER-3D.md` Route A1): the plant is now on the correct half of the stride, but locking the foot to a world point for a whole stance needs leg slack the rest pose does not have (it is exactly extended) — so it wants a play-test call on bending the rest pose, not more code.
