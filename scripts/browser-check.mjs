@@ -472,6 +472,9 @@ window.__probe = {
       bm1Props: branch.BM1_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })),
       b1Parts: branchB ? parts(branchB.B1_CARRYABLES) : [],
       b1Sockets: branchB ? sockets(branchB.B1_SOCKETS) : [],
+      bm2Parts: branchB ? parts(branchB.BM2_CARRYABLES) : [],
+      bm2Sockets: branchB ? sockets(branchB.BM2_SOCKETS) : [],
+      bm2Props: branchB ? branchB.BM2_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })) : [],
       hubTargets
     };
   }
@@ -711,6 +714,8 @@ async function scenarioFocus(cdp) {
     ...level.bm1Sockets.map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.b1Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.b1Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
+    ...(level.bm2Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
+    ...(level.bm2Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...level.p1.map((entry) => ({ id: entry.id, box: boxOf(entry) }))
   ];
 

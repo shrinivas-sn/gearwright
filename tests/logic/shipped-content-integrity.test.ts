@@ -178,14 +178,16 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
   it('completes Branch B when its machine has run, and only then advances the hub stage', () => {
     const progression = shippedProgression();
 
-    // Branch B ships one puzzle (B1) — the branch is Complete the moment it has run,
-    // which is the §6 expansion path working end to end.
+    // Branch B's entry machine alone is not completion: its staged capstone (BM-2)
+    // must run first, exactly as BM-1 closes Branch A.
     progression.update(['B1']);
+    expect(progression.branchState(BRANCH_B_ID)).toBe('InProgress');
+    progression.update(['B1', 'BM-2']);
     expect(progression.branchState(BRANCH_B_ID)).toBe('Complete');
     // "Regulator Awake" needs A **and** B: one branch alone is not a stage.
     expect(progression.hubStage.id).toBe('stage/dormant');
 
-    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1']);
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'BM-2']);
     expect(progression.hubStage.id).toBe('stage/regulator-awake');
   });
 

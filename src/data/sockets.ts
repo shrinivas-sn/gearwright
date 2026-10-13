@@ -218,6 +218,34 @@ export const B1_FLOW_B_DEF: SocketDefinition = {
   id: 'def/b1-flow-b'
 };
 
+/**
+ * BM-2's drive mount (Branch B): the gear-mount a gear bridges the crank to the
+ * flywheel through, exactly as BM-1's drive mount does. Accepts `plate` too, so the
+ * blanking plate "fits and cannot bridge" lesson holds in the thermal branch.
+ */
+export const BM2_DRIVE_MOUNT_DEF: SocketDefinition = {
+  id: 'def/bm2-drive-mount',
+  machineId: 'BM-2',
+  ownerComponentId: 'bm2-flywheel',
+  socketKind: 'gear-mount',
+  accepts: ['gear', 'plate'],
+  portDirection: 'in',
+  carrier: 'rotation',
+  snapYaw: 0
+};
+
+/** BM-2's steam port: the pressure run from the boiler to the condenser. */
+export const BM2_STEAM_PORT_DEF: SocketDefinition = {
+  id: 'def/bm2-steam-port',
+  machineId: 'BM-2',
+  ownerComponentId: 'bm2-condenser',
+  socketKind: 'pipe-port',
+  accepts: ['pipe'],
+  portDirection: 'in',
+  carrier: 'pressure',
+  snapYaw: 0
+};
+
 export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   DOCK_A_DEF,
   MOUNT_A_DEF,
@@ -236,7 +264,10 @@ export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   BM1_LINE_PORT_DEF,
   // Branch B — B1's two feedwater ports.
   B1_FLOW_A_DEF,
-  B1_FLOW_B_DEF
+  B1_FLOW_B_DEF,
+  // Branch B — BM-2's drive mount and steam port.
+  BM2_DRIVE_MOUNT_DEF,
+  BM2_STEAM_PORT_DEF
 ];
 
 export function socketDefinitionOf(defId: string): SocketDefinition | null {

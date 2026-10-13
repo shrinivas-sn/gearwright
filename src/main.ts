@@ -27,7 +27,7 @@ import { FootGrounding } from './gameplay/foot-grounding.ts';
 import { DEFAULT_PLAYER_TUNING, PlayerController } from './gameplay/player-controller.ts';
 import { CameraRig } from './gameplay/camera-rig.ts';
 import { PhaseWorld } from './gameplay/phase-world.ts';
-import { DEFAULT_INTERACTION_TUNING, InteractionSystem } from './gameplay/interaction-system.ts';
+import { DEFAULT_INTERACTION_TUNING, InteractionSystem, type Interactable } from './gameplay/interaction-system.ts';
 import { ManipulationSystem } from './gameplay/manipulation-system.ts';
 import { SnapSystem, type ResolvedSocket } from './gameplay/snap-system.ts';
 import { FeedbackModel } from './gameplay/feedback-model.ts';
@@ -84,6 +84,15 @@ import {
   bm1PropInteractables,
   bm1PropMeshes
 } from './levels/branch-a.ts';
+import {
+  B1_CARRYABLES,
+  B1_SOCKETS,
+  BM2_CARRYABLES,
+  BM2_SOCKETS,
+  BM2_PROPS,
+  bm2PropInteractables,
+  bm2PropMeshes
+} from './levels/branch-b.ts';
 import {
   SHIPPED_CARRYABLES,
   SHIPPED_COMPONENTS,
@@ -781,29 +790,52 @@ function boot(): void {
   // outputs present means a gear is turning the dynamo and pressure is reaching the
   // gauge — that is the structural stage, read from the graph rather than invented in
   // the puzzle (the validator cannot observe "when").
-  const bm1StructureComplete = (): boolean => {
-    const machine = graph.machineState('BM-1');
-    return machine !== null && machine.outputs.length === 2;
+  //
+  // Generalised (Branch B): the rigs are data — a machine id, its prop §18 targets and
+  // its prop meshes — so adding a staged machine is one entry here, never a code path
+  // (ADR-018, second instance).
+  const STAGED_RIGS: ReadonlyArray<{
+    readonly machineId: string;
+    readonly interactables: (enabled: boolean) => ReadonlyArray<Interactable>;
+    readonly meshes: (performed: (actionId: string) => boolean) => ReadonlyArray<LabWorldMesh>;
+  }> = [
+    { machineId: 'BM-1', interactables: bm1PropInteractables, meshes: bm1PropMeshes },
+    { machineId: 'BM-2', interactables: bm2PropInteractables, meshes: bm2PropMeshes }
+  ];
+  /**
+   * "Assembled" is structural: every declared output is present (a gear turns it, a pipe
+   * feeds it). Read from the graph's derived state, never invented in the puzzle — the
+   * validator cannot observe "when".
+   */
+  const structureComplete = (machineId: string): boolean => {
+    const machine = graph.machineState(machineId);
+    const definition = MACHINE_DEFINITIONS.find((entry) => entry.id === machineId);
+    return (
+      machine !== null &&
+      definition !== undefined &&
+      machine.outputs.length === definition.outputs.length
+    );
   };
-  /** One-way latch: the props install the first time the structure completes. */
-  let bm1PropsOn = false;
-  const syncBm1Props = (): void => {
-    const on = bm1StructureComplete();
-    // Installed once when the structure completes and never dropped afterwards inside
-    // a session: a completed machine's props stay usable (re-running is allowed), and
-    // re-setting here would reset focus worthlessly. Latching the *installation* is
-    // safe precisely because the props log nothing that matters until the log does.
-    if (on && !bm1PropsOn) {
-      bm1PropsOn = true;
-      interaction.setInteractables([
-        ...SHIPPED_INTERACTABLES,
-        ...hubInteractables(branchStateOf),
-        ...bm1PropInteractables(true)
-      ]);
-      gameLog('[staged] BM-1 structure complete — priming lines are live');
+  /** One-way latch per machine: the props install once and stay usable for the session. */
+  const installedRigs = new Set<string>();
+  const syncStagedProps = (): void => {
+    let installed = false;
+    for (const rig of STAGED_RIGS) {
+      if (installedRigs.has(rig.machineId) || !structureComplete(rig.machineId)) continue;
+      installedRigs.add(rig.machineId);
+      installed = true;
+      gameLog(`[staged] ${rig.machineId} structure complete — priming lines are live`);
     }
+    if (!installed) return;
+    interaction.setInteractables([
+      ...SHIPPED_INTERACTABLES,
+      ...hubInteractables(branchStateOf),
+      ...STAGED_RIGS.filter((rig) => installedRigs.has(rig.machineId)).flatMap((rig) =>
+        rig.interactables(true)
+      )
+    ]);
   };
-  syncBm1Props();
+  syncStagedProps();
 
   /** Same edge rule as the clue plates: the wake is reported once, then it stays quiet. */
   const reportedStagedWake = new Set<string>();
@@ -1050,7 +1082,7 @@ function boot(): void {
   const worldMeshes = (): ReadonlyArray<LabWorldMesh> => [
     ...SHIPPED_WORLD.meshes,
     ...hubMeshes(branchStateOf, progression.hubStageIndex, (clueId) => progression.hasClue(clueId)),
-    ...bm1PropMeshes((actionId) => actions.has(actionId))
+    ...STAGED_RIGS.flatMap((rig) => rig.meshes((actionId) => actions.has(actionId)))
   ];
   /**
    * The world is rebuilt when either of its two inputs moves: the hub stage (§26) or
@@ -1207,10 +1239,10 @@ function boot(): void {
           }
         }
         // The staged gates are edge-triggered on derived state, like the hub: a newly
-        // completed structure installs the props (and syncBm1Props's own latch makes
+        // completed structure installs the props (and syncStagedProps's own latch makes
         // this a no-op in the steady state). The *actions* take effect earlier, in the
         // same fixed step they are appended, through the world's `stagedVersion`.
-        syncBm1Props();
+        syncStagedProps();
         // §6 beat 8's central-machine clue, consumed where §31.4 says events are: the
         // plate was only focusable because its branch completed, so reaching it *is*
         // the discovery (§4 "EXPLORE → DISCOVER"). Discovered once, then autosaved —
@@ -1623,7 +1655,12 @@ function boot(): void {
           P3_SOCKETS,
           BM1_CARRYABLES,
           BM1_SOCKETS,
-          BM1_PROPS
+          BM1_PROPS,
+          B1_CARRYABLES,
+          B1_SOCKETS,
+          BM2_CARRYABLES,
+          BM2_SOCKETS,
+          BM2_PROPS
         },
         hubInteractables
       }

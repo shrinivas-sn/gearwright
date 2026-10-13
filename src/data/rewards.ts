@@ -29,6 +29,8 @@ export const SCANNER_BLUEPRINT = 'blueprint/scanner';
 
 /** Branch B — B1 "Feedwater" (the thermal branch's entry machine). */
 export const MILESTONE_B1_FEEDWATER = 'milestone/b1-feedwater';
+/** Branch B — BM-2 "Steam Engine" (the thermal branch's staged capstone). */
+export const MILESTONE_BM2_STEAM_ENGINE = 'milestone/bm2-steam-engine';
 
 export const REWARD_DEFINITIONS: ReadonlyArray<RewardDefinition> = [
   {
@@ -67,6 +69,18 @@ export const REWARD_DEFINITIONS: ReadonlyArray<RewardDefinition> = [
     materials: [
       { kind: 'brass', amount: 2 },
       { kind: 'sealant', amount: 2 }
+    ],
+    blueprints: []
+  },
+  {
+    // The thermal branch's capstone pays in materials, exactly like BM-1 — no new
+    // resource kind, no second blueprint competing with the scanner (§27.2 rule 5).
+    id: MILESTONE_BM2_STEAM_ENGINE,
+    title: 'Steam Engine',
+    materials: [
+      { kind: 'brass', amount: 3 },
+      { kind: 'alloy', amount: 1 },
+      { kind: 'sealant', amount: 1 }
     ],
     blueprints: []
   },

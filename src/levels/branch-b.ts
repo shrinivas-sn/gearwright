@@ -19,14 +19,18 @@
  */
 
 import {
+  BLANKING_PLATE_DEF,
   BOILER_DEF,
   componentDefinitionOf,
+  DRIVEN_SHAFT_DEF,
+  GEAR_DEF,
   MANIFOLD_DEF,
   OUTLET_DEF,
+  SHAFT_DEF,
   SHUT_OFF_VALVE_DEF,
   VALVE_DEF
 } from '../data/components.ts';
-import { B1_FLOW_A_DEF, B1_FLOW_B_DEF } from '../data/sockets.ts';
+import { B1_FLOW_A_DEF, B1_FLOW_B_DEF, BM2_DRIVE_MOUNT_DEF, BM2_STEAM_PORT_DEF } from '../data/sockets.ts';
 import type { Attachment } from '../game-state/machine-graph.ts';
 import type { Pose, SocketInstance } from '../game-state/component-model.ts';
 import type { ComponentInstance } from '../game-state/component-registry.ts';
@@ -204,19 +208,186 @@ export const B1_INTERACTABLES: ReadonlyArray<Interactable> = interactablesOf(B1_
 /** B1 starts with nothing plumbed in: the outlet unpowered, the header empty. */
 export const B1_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [];
 
+/* --- BM-2 "Steam Engine" --------------------------------------------------- */
+
+/**
+ * BM-2 stands at the north end of the Steam Works (z = 32): the crank and its gear
+ * mount on the west, the boiler line and the condenser on the east, and a control panel
+ * in front carrying the four **staged props**.
+ *
+ * Its layout mirrors BM-1's deliberately — same mounting line, same panel-in-front
+ * arrangement, same two decoys — because a second branch is supposed to prove the
+ * machinery generalises, and the props' ids *are* the staged action ids.
+ */
+const BM2_Z = 32;
+const BM2_MACHINE_Y = 1.0;
+const BM2_PROP_Y = 1.25;
+const BM2_PANEL_Z = 30.6;
+
+export const BM2_ANCHORS: ReadonlyArray<Anchor> = [
+  { id: 'anchor/bm2-crank', pose: poseAt(-3.4, BM2_MACHINE_Y, BM2_Z) },
+  { id: 'anchor/bm2-flywheel', pose: poseAt(0, BM2_MACHINE_Y, BM2_Z) },
+  { id: 'anchor/bm2-condenser', pose: poseAt(3.0, 0.9, BM2_Z) },
+  { id: 'anchor/bm2-boiler', pose: poseAt(5.6, 1.1, BM2_Z) },
+  // Loose parts wait on the floor in front of the machine, between the panel and the
+  // player's approach (the gear and the pipe are the solutions, the blanking plate and
+  // the shut-off valve the two "fits, cannot bridge" decoys, §21.4).
+  { id: 'anchor/bm2-gear', pose: poseAt(-1.6, 0.07, 29.4) },
+  { id: 'anchor/bm2-pipe', pose: poseAt(1.6, 0.12, 29.4) },
+  { id: 'anchor/bm2-plate', pose: poseAt(-0.6, 0.04, 29.8) },
+  { id: 'anchor/bm2-shutoff', pose: poseAt(0.6, 0.12, 29.8) }
+];
+
+export const bm2AnchorPose = anchorLookup(BM2_ANCHORS, 'BM-2');
+
+/** The four fixed nodes: crank (rotation source), flywheel, condenser and boiler. */
+export const BM2_FIXED: ReadonlyArray<ComponentInstance> = [
+  { id: 'bm2-crank', defId: SHAFT_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/bm2-crank', flags: {} },
+  { id: 'bm2-flywheel', defId: DRIVEN_SHAFT_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/bm2-flywheel', flags: {} },
+  { id: 'bm2-condenser', defId: OUTLET_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/bm2-condenser', flags: {} },
+  { id: 'bm2-boiler', defId: BOILER_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/bm2-boiler', flags: {} }
+];
+
+/** The two halves of the assembly, each with its decoy (decoys registered, not required). */
+export const BM2_LOOSE_PARTS: ReadonlyArray<ComponentInstance> = [
+  { id: 'gear-bm2', defId: GEAR_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/bm2-gear', flags: { required: 'BM-2', unique: true } },
+  { id: 'valve-bm2', defId: VALVE_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/bm2-pipe', flags: { required: 'BM-2', unique: true } },
+  { id: 'plate-bm2', defId: BLANKING_PLATE_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/bm2-plate', flags: { unique: true } },
+  { id: 'shutoff-bm2', defId: SHUT_OFF_VALVE_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/bm2-shutoff', flags: { unique: true } }
+];
+
+export const BM2_COMPONENTS: ReadonlyArray<ComponentInstance> = [...BM2_FIXED, ...BM2_LOOSE_PARTS];
+
+export const BM2_CARRYABLES: ReadonlyArray<CarryableBinding> = carryablesOf(BM2_LOOSE_PARTS, bm2AnchorPose);
+
+/** The drive mount (west) and the steam port (east), each bridged by one part. */
+export const BM2_SOCKETS: ReadonlyArray<SocketInstance> = [
+  {
+    id: 'socket-bm2-drive',
+    defId: BM2_DRIVE_MOUNT_DEF.id,
+    pose: poseAt(-1.7, BM2_MACHINE_Y, BM2_Z),
+    halfExtents: { x: 0.4, y: 0.4, z: 0.4 }
+  },
+  {
+    id: 'socket-bm2-steam',
+    defId: BM2_STEAM_PORT_DEF.id,
+    pose: poseAt(4.3, BM2_MACHINE_Y, BM2_Z),
+    halfExtents: { x: 0.4, y: 0.4, z: 0.4 }
+  }
+];
+
+const BM2_IRON_COLOR = 0x6f7b86;
+const BM2_PANEL_COLOR = 0x4a5057;
+const BM2_SHAFT_COLOR = 0xb8c2cc;
+const BM2_FLYWHEEL_COLOR = 0xd2a04f;
+const BM2_CONDENSER_COLOR = 0x5fb8a6;
+const BM2_BOILER_COLOR = 0xc06a4a;
+/** A staged prop: dark until its action is logged, then lit in its accent colour. */
+const BM2_PROP_DORMANT = 0x2f3439;
+
+const BM2_BOXES: ReadonlyArray<StructureBox> = [
+  // Flywheel plinth (solid) — also the flywheel's physical presence.
+  { min: [-1.0, 0, 31.3], max: [1.0, 0.5, 32.5], color: BM2_IRON_COLOR, solid: true },
+  // Crank pedestal (solid), clear of the drive socket's volume.
+  { min: [-3.8, 0, 31.4], max: [-3.0, 0.8, 32.4], color: BM2_IRON_COLOR, solid: true },
+  // Condenser post (solid), clear of the steam port's volume.
+  { min: [2.6, 0, 31.5], max: [3.4, 0.6, 32.3], color: BM2_IRON_COLOR, solid: true },
+  // Boiler plinth (solid).
+  { min: [5.0, 0, 31.1], max: [6.2, 0.5, 32.3], color: BM2_IRON_COLOR, solid: true },
+  // Control panel (solid). The props sit *above* its top face (y = 0.95) with a 10 cm
+  // gap, so §18 never discards a prop as embedded in its own panel.
+  { min: [-2.6, 0, 30.4], max: [2.6, 0.95, 30.8], color: BM2_PANEL_COLOR, solid: true }
+];
+
+export const BM2_WORLD: PlacedWorld = {
+  colliders: structureColliders(BM2_BOXES),
+  meshes: [
+    ...structureMeshes(BM2_BOXES),
+    componentMesh(bm2AnchorPose('anchor/bm2-crank'), SHAFT_DEF.halfExtents, BM2_SHAFT_COLOR),
+    componentMesh(bm2AnchorPose('anchor/bm2-flywheel'), DRIVEN_SHAFT_DEF.halfExtents, BM2_FLYWHEEL_COLOR),
+    componentMesh(bm2AnchorPose('anchor/bm2-condenser'), OUTLET_DEF.halfExtents, BM2_CONDENSER_COLOR),
+    componentMesh(bm2AnchorPose('anchor/bm2-boiler'), BOILER_DEF.halfExtents, BM2_BOILER_COLOR)
+    // The staged props are deliberately absent: their appearance is a function of the
+    // action history (ADR-018), composed by `bm2PropMeshes` — the same split BM-1 uses.
+  ]
+};
+
+/** Half-extents of a prop's interaction volume (matches BM-1's). */
+const BM2_PROP_HALF = { x: 0.25, y: 0.2, z: 0.2 };
+
+/** One staged prop. `id` **is** the action id (`data/actions.ts`). */
+export interface Bm2Prop {
+  readonly id: string;
+  readonly title: string;
+  readonly verb: string;
+  readonly centerX: number;
+  readonly accent: number;
+}
+
+export const BM2_PROPS: ReadonlyArray<Bm2Prop> = [
+  { id: 'bm2/prime-inlet', title: 'Inlet line', verb: 'Open', centerX: -2.0, accent: 0xc06a4a },
+  { id: 'bm2/prime-outlet', title: 'Outlet line', verb: 'Open', centerX: -0.7, accent: 0xc06a4a },
+  { id: 'bm2/prime-drain', title: 'Drain line', verb: 'Open', centerX: 0.7, accent: 0xc06a4a },
+  { id: 'bm2/engage', title: 'Throttle', verb: 'Engage', centerX: 2.0, accent: 0xd2b04f }
+];
+
+/**
+ * The staged props as §18 targets, enabled from the machine's derived `Assembled`
+ * state — "the priming stage only exists on a built machine", exactly as BM-1's are.
+ */
+export function bm2PropInteractables(enabled: boolean): ReadonlyArray<Interactable> {
+  return BM2_PROPS.map((prop): Interactable => ({
+    id: prop.id,
+    kind: 'prop',
+    min: { x: prop.centerX - BM2_PROP_HALF.x, y: BM2_PROP_Y - BM2_PROP_HALF.y, z: BM2_PANEL_Z - BM2_PROP_HALF.z },
+    max: { x: prop.centerX + BM2_PROP_HALF.x, y: BM2_PROP_Y + BM2_PROP_HALF.y, z: BM2_PANEL_Z + BM2_PROP_HALF.z },
+    enabled,
+    verb: prop.verb,
+    contexts: ['Exploration'] as const
+  }));
+}
+
+/**
+ * The props' visuals, a pure function of the action history (ADR-018/§26): a prop whose
+ * action has been performed is lit in its accent colour, so rendering cannot disagree
+ * with validation.
+ */
+export function bm2PropMeshes(performed: (actionId: string) => boolean): ReadonlyArray<LabWorldMesh> {
+  return BM2_PROPS.map((prop): LabWorldMesh => ({
+    kind: 'box',
+    min: { x: prop.centerX - BM2_PROP_HALF.x, y: BM2_PROP_Y - BM2_PROP_HALF.y, z: BM2_PANEL_Z - BM2_PROP_HALF.z },
+    max: { x: prop.centerX + BM2_PROP_HALF.x, y: BM2_PROP_Y + BM2_PROP_HALF.y, z: BM2_PANEL_Z + BM2_PROP_HALF.z },
+    color: performed(prop.id) ? prop.accent : BM2_PROP_DORMANT
+  }));
+}
+
+/** BM-2 starts unassembled: neither the gear nor the pipe is mounted. */
+export const BM2_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [];
+
 /* --- Branch B, assembled --------------------------------------------------- */
 
-export const BRANCH_B_COMPONENTS: ReadonlyArray<ComponentInstance> = [...B1_COMPONENTS];
+export const BRANCH_B_COMPONENTS: ReadonlyArray<ComponentInstance> = [...B1_COMPONENTS, ...BM2_COMPONENTS];
 
-export const BRANCH_B_SOCKETS: ReadonlyArray<SocketInstance> = [...B1_SOCKETS];
+export const BRANCH_B_SOCKETS: ReadonlyArray<SocketInstance> = [...B1_SOCKETS, ...BM2_SOCKETS];
 
-export const BRANCH_B_CARRYABLES: ReadonlyArray<CarryableBinding> = [...B1_CARRYABLES];
+export const BRANCH_B_CARRYABLES: ReadonlyArray<CarryableBinding> = [...B1_CARRYABLES, ...BM2_CARRYABLES];
 
-export const BRANCH_B_INTERACTABLES: ReadonlyArray<Interactable> = [...B1_INTERACTABLES];
+/**
+ * The static interaction targets. BM-2's staged props are *not* here: whether they
+ * exist is a function of the puzzle's §25 state, so the composition installs them
+ * through `bm2PropInteractables` exactly as it does BM-1's.
+ */
+export const BRANCH_B_INTERACTABLES: ReadonlyArray<Interactable> = [
+  ...B1_INTERACTABLES,
+  ...interactablesOf(BM2_CARRYABLES)
+];
 
-export const BRANCH_B_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [...B1_INITIAL_ATTACHMENTS];
+export const BRANCH_B_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [
+  ...B1_INITIAL_ATTACHMENTS,
+  ...BM2_INITIAL_ATTACHMENTS
+];
 
 export const BRANCH_B_WORLD: PlacedWorld = {
-  colliders: [...B1_WORLD.colliders],
-  meshes: [...B1_WORLD.meshes]
+  colliders: [...B1_WORLD.colliders, ...BM2_WORLD.colliders],
+  meshes: [...B1_WORLD.meshes, ...BM2_WORLD.meshes]
 };

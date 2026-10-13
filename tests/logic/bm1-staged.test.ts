@@ -209,7 +209,7 @@ describe('BM-1 — a real PuzzleSystem walks §25 to Complete (EC-PZ-01/02)', ()
   });
 
   it('props and their visuals read the same log the validator reads (ADR-018)', () => {
-    expect(BM1_PROPS.map((prop) => prop.id)).toEqual([...STAGED_ACTIONS]);
+    expect(BM1_PROPS.map((prop) => prop.id)).toEqual([...STAGED_ACTIONS.slice(0, 4)]);
     expect(bm1PropInteractables(false).every((prop) => prop.enabled === false)).toBe(true);
     expect(bm1PropInteractables(true).every((prop) => prop.enabled === true)).toBe(true);
     expect(bm1PropInteractables(true).every((prop) => prop.kind === 'prop')).toBe(true);

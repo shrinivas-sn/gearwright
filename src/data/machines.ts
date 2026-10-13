@@ -11,7 +11,7 @@
  */
 
 import type { MachineDefinition } from '../game-state/component-model.ts';
-import { BM1_PRIMING_ACTIONS } from './actions.ts';
+import { BM1_PRIMING_ACTIONS, BM2_PRIMING_ACTIONS } from './actions.ts';
 
 /**
  * P1 "First Mesh" — carry a gear into the mesh socket and the two shafts become one
@@ -241,6 +241,51 @@ export const B1_FEEDWATER_MACHINE: MachineDefinition = {
   maxOutput: 3
 };
 
+/**
+ * BM-2 "Steam Engine" (Branch B) — the thermal branch's staged final machine, and
+ * the second instance of ADR-018's assembly → priming → activation pattern. It is
+ * deliberately the same *shape* as BM-1 (two carriers, two output nodes, three
+ * priming lines, one ordered activation) because the point of a second branch is
+ * that the machinery generalises, not that every branch invents a mechanic.
+ *
+ *   - `link-bm2-drive`  bm2-crank → bm2-flywheel  (a gear in `socket-bm2-drive`)
+ *   - `link-bm2-steam`  bm2-boiler → bm2-condenser  (a pipe in `socket-bm2-steam`)
+ */
+export const BM2_STEAM_ENGINE: MachineDefinition = {
+  id: 'BM-2',
+  title: 'Steam Engine',
+  rootNodes: [
+    { kind: 'component', id: 'bm2-crank' },
+    { kind: 'component', id: 'bm2-flywheel' },
+    { kind: 'component', id: 'bm2-boiler' },
+    { kind: 'component', id: 'bm2-condenser' }
+  ],
+  links: [
+    {
+      id: 'link-bm2-drive',
+      viaSocketId: 'socket-bm2-drive',
+      viaTags: ['gear'],
+      carrier: 'rotation',
+      from: { kind: 'component', id: 'bm2-crank' },
+      to: { kind: 'component', id: 'bm2-flywheel' }
+    },
+    {
+      id: 'link-bm2-steam',
+      viaSocketId: 'socket-bm2-steam',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'bm2-boiler' },
+      to: { kind: 'component', id: 'bm2-condenser' }
+    }
+  ],
+  outputs: [
+    { node: { kind: 'component', id: 'bm2-flywheel' }, kind: 'rotation' },
+    { node: { kind: 'component', id: 'bm2-condenser' }, kind: 'pressure' }
+  ],
+  maxOutput: 1.5,
+  primingActions: BM2_PRIMING_ACTIONS
+};
+
 export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   P1_MESH_MACHINE,
   // M8 — Branch A's second and third machines.
@@ -248,8 +293,9 @@ export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   P3_THREE_VALVES_MACHINE,
   // ADR-018 / M9 remainder — the branch machine, staged.
   BM1_PRESSURE_DYNAMO,
-  // Branch B — B1's feedwater circuit.
-  B1_FEEDWATER_MACHINE
+  // Branch B — B1's feedwater circuit and BM-2's staged steam engine.
+  B1_FEEDWATER_MACHINE,
+  BM2_STEAM_ENGINE
 ];
 
 export function machineDefinitionOf(machineId: string): MachineDefinition | null {
