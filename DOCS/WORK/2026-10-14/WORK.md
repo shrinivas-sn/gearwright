@@ -75,6 +75,17 @@ See `DOCS/STATUS.md` for the standing project status and the `## Next up` resume
 - `npm run build` clean.
 - Browser: `scenarioBranch` run against a clean profile; report in `.tmp-browser-report-branch.json`, summarised above. Stale focus attempt killed; fresh focus run is backgrounded and re-checked.
 
+## Session 2 — TPP realism rebuild (same 19 bones, same 1 draw call)
+
+- `src/adapters/character-rig.ts` only: the procedural body now reads as a workshop
+  worker — cranium/jaw/nose/ears/hair/brows/eyes, jacket torso with shirt/collar/strap,
+  gloved fingers + thumb, trousers/knee/calf/cuffed boots with soles. Still one merged
+  `SkinnedMesh`, one material, 19 bones, no asset, no dependency, no port change.
+- Material retuned for cloth/skin/leather (`roughness 0.72`, `metalness 0.08`) with a
+  softer run/carry emissive; foot sole kept exactly one ankle-height below the ankle so
+  foot planting still lands. Typecheck clean; rig suites re-run next (runner stalled once).
+- Scope guard: nothing outside `E:\gearwright` touched.
+
 ## Still open after this session
 
 - **BM-2 is not yet reached/played live** by the harness in this session's branch run — it was reached through B2's objective line being the current one, but the staged capstone itself (assembly + priming + throttle) is the next session's content/proof work, per STATUS.md §Next up #1.

@@ -3,15 +3,16 @@
  *
  * The player character is generated, not imported: one `SkinnedMesh`, one material, nineteen
  * bones, and no texture or glTF download. That keeps the whole body at **one draw call** (plus
- * its shadow pass) and at ~1.4 k triangles against the 250 k ceiling in `core/perf.ts`, while
- * still being a skinned figure that walks, runs, jumps and carries a part in its hands.
+ * its shadow pass) and well under the 250 k triangle ceiling in `core/perf.ts`, while reading
+ * as a real workshop worker — head and face, jacket, gloved hands, boots — who walks, runs,
+ * jumps and carries a part in their hands.
  *
  * All motion maths lives in `core/character-pose.ts` (headless, tested). This file only maps
  * those numbers onto bones: euler angles for the body, and a basis built from the solved
  * two-bone aim for the arms while something is held. It never reads game logic and never
  * writes to it — presentation only.
  *
- * Vertex colours carry the material variation (steel body, darker limbs, brass joints) so the
+ * Vertex colours carry the material variation (skin, cloth, leather, brass accent) so the
  * detail costs no extra draw call.
  */
 
@@ -38,11 +39,20 @@ import {
 import type { Vec3 } from '../core/vec3.ts';
 import type { CharacterFacts } from '../ports/render-port.ts';
 
-/** Palette: same family as the world and the carryables, so the player reads as part of the level. */
-const BODY_COLOR = 0x9aa2ab;
-const LIMB_COLOR = 0x767d85;
-const JOINT_COLOR = 0xb0863f;
-const VISOR_COLOR = 0xe8b23a;
+/** Palette: a workshop worker who belongs in the level — cloth/skin/leather, brass only as accent. */
+const SKIN_COLOR = 0xc68a5e;
+const SKIN_SHADOW_COLOR = 0xa96f45;
+const HAIR_COLOR = 0x2c2420;
+const JACKET_COLOR = 0x4b5d6e;
+const JACKET_DARK_COLOR = 0x3a4755;
+const SHIRT_COLOR = 0x8d969f;
+const PANTS_COLOR = 0x3a4149;
+const PANTS_DARK_COLOR = 0x2e343b;
+const BOOT_COLOR = 0x33291f;
+const SOLE_COLOR = 0x191512;
+const GLOVE_COLOR = 0x54483c;
+const STRAP_COLOR = 0xb0863f;
+const EYE_COLOR = 0x201914;
 
 /** Below this camera distance the body would fill the view (spring arm pulled in by a wall). */
 const HIDE_BELOW_CAMERA_DISTANCE = 0.75;
@@ -268,10 +278,10 @@ export class CharacterRig {
     this.geometry = this.buildBodyGeometry();
     this.material = new THREE.MeshStandardMaterial({
       vertexColors: true,
-      roughness: 0.55,
-      metalness: 0.35,
-      emissive: 0x1f3f39,
-      emissiveIntensity: 0.25
+      roughness: 0.72,
+      metalness: 0.08,
+      emissive: 0x2a1f14,
+      emissiveIntensity: 0.22
     });
     this.mesh = new THREE.SkinnedMesh(this.geometry, this.material);
     this.mesh.castShadow = true;
@@ -367,10 +377,10 @@ export class CharacterRig {
 
     this.stepHeadLook(state.lookTarget, dt);
 
-    // Material feedback: the same "running" and "carrying" reads the capsule marker used.
+    // Material feedback: the same "running" and "carrying" reads the marker used to have.
     const running = speed > walkSpeed + (runSpeed - walkSpeed) * 0.5;
-    this.material.emissiveIntensity = state.carrying ? 0.8 : running ? 0.7 : 0.25;
-    this.material.emissive.setHex(state.carrying ? 0x6b4d12 : 0x1f3f39);
+    this.material.emissiveIntensity = state.carrying ? 0.55 : running ? 0.45 : 0.22;
+    this.material.emissive.setHex(state.carrying ? 0x6b4d12 : 0x2a1f14);
 
     // A spring arm pulled inside the body would show the inside of the head.
     this.mesh.visible = !(Number.isFinite(state.cameraDistance) && state.cameraDistance < HIDE_BELOW_CAMERA_DISTANCE);
@@ -659,9 +669,9 @@ export class CharacterRig {
   }
 
   /**
-   * One merged skinned geometry for the whole body: pelvis, spine, chest, neck and head, two
-   * shoulder/upper-arm/forearm/hand chains and two thigh/shin/foot chains, with brass caps on
-   * the elbows and knees. Every part binds to a single bone (see `segmentGeometry`).
+   * One merged skinned geometry for the whole body: a workshop worker with a real head/face,
+   * jacket torso, gloved hands and boots. Still one mesh + one material, still 19 bones —
+   * only the silhouette and the vertex colours change, never the skeleton or the ports.
    */
   private buildBodyGeometry(): THREE.BufferGeometry {
     const parts: THREE.BufferGeometry[] = [];
@@ -670,26 +680,54 @@ export class CharacterRig {
       id: CharacterJointId,
       geometry: THREE.BufferGeometry,
       color: number,
-      center: readonly [number, number, number]
+      center: readonly [number, number, number],
+      scale: readonly [number, number, number] | null = null,
     ): void => {
+      if (scale !== null) geometry.scale(scale[0], scale[1], scale[2]);
       geometry.translate(center[0], center[1], center[2]);
       parts.push(segmentGeometry(geometry, index(id), color));
     };
+    const tapered = (
+      topRadius: number,
+      bottomRadius: number,
+      length: number,
+      segments = 12,
+    ): THREE.BufferGeometry =>
+      new THREE.CylinderGeometry(topRadius, bottomRadius, length, segments, 1);
+    const ball = (radius: number, width = 12, height = 9): THREE.BufferGeometry =>
+      new THREE.SphereGeometry(radius, width, height);
     const box = (width: number, height: number, depth: number): THREE.BufferGeometry =>
       new THREE.BoxGeometry(width, height, depth);
-    const limb = (radius: number, length: number): THREE.BufferGeometry =>
-      new THREE.CylinderGeometry(radius, radius * 0.92, length, 10);
-    const cap = (radius: number): THREE.BufferGeometry => new THREE.SphereGeometry(radius, 10, 7);
 
-    // Torso: pelvis fills the gap below the hips bone, the spine and chest ride above it.
-    add('hips', box(0.3, 0.16, 0.2), LIMB_COLOR, [0, -0.03, 0]);
-    add('spine', box(0.26, 0.15, 0.18), BODY_COLOR, [0, -0.075, 0]);
-    add('chest', box(0.34, 0.2, 0.21), BODY_COLOR, [0, -0.1, 0]);
-    add('chest', box(0.2, 0.1, 0.06), JOINT_COLOR, [0, -0.16, -0.1]);
-    add('neck', limb(0.045, 0.18), JOINT_COLOR, [0, -0.09, 0]);
-    add('head', box(0.2, 0.28, 0.24), BODY_COLOR, [0, -0.09, 0]);
-    // A visor on the facing (-Z) side: the one warm accent that shows which way the player looks.
-    add('head', box(0.15, 0.06, 0.02), VISOR_COLOR, [0, -0.06, -0.12]);
+    // Pelvis + trousers: seat, belt line and a brass buckle facing the camera (-Z is front).
+    add('hips', tapered(0.155, 0.14, 0.17, 14), PANTS_DARK_COLOR, [0, -0.035, 0], [1.18, 1, 0.82]);
+    add('hips', box(0.3, 0.045, 0.21), STRAP_COLOR, [0, 0.045, 0]);
+    add('hips', box(0.06, 0.035, 0.02), EYE_COLOR, [0, 0.045, -0.105]);
+    add('spine', tapered(0.15, 0.155, 0.16, 14), JACKET_DARK_COLOR, [0, -0.075, 0], [1.15, 1, 0.78]);
+    // Jacket skirt flares over the hips so the waist never pinches when the legs swing.
+    add('spine', tapered(0.155, 0.175, 0.09, 14), JACKET_DARK_COLOR, [0, -0.15, 0.01], [1.18, 1, 0.85]);
+    // Chest: broad jacket shoulders tapering to the waist, open collar with shirt beneath.
+    add('chest', tapered(0.185, 0.15, 0.22, 16), JACKET_COLOR, [0, -0.1, 0], [1.22, 1, 0.8]);
+    add('chest', tapered(0.105, 0.125, 0.17, 12), SHIRT_COLOR, [0, -0.1, -0.055], [1, 1, 0.55]);
+    add('chest', box(0.055, 0.09, 0.025), SHIRT_COLOR, [0, -0.035, -0.115]);
+    add('chest', tapered(0.035, 0.05, 0.1, 10), STRAP_COLOR, [0, -0.13, -0.115], [1.4, 1, 0.5]);
+    // Collar rolls around the neck base; a brass badge catches the light on the back.
+    add('chest', tapered(0.075, 0.095, 0.06, 12), JACKET_DARK_COLOR, [0, 0.02, 0.02], [1.25, 1, 1]);
+    add('chest', box(0.05, 0.06, 0.015), STRAP_COLOR, [0, -0.06, 0.1]);
+    // Neck + trapezius wedge so the head never floats above the shoulders.
+    add('neck', tapered(0.062, 0.085, 0.12, 12), SKIN_SHADOW_COLOR, [0, -0.09, 0.005], [1.35, 1, 0.95]);
+    // Head: cranium, tapered jaw, nose, ears, hair cap + bun, brows and eyes on -Z face.
+    add('head', ball(0.105, 16, 12), SKIN_COLOR, [0, -0.075, -0.005], [0.92, 1.08, 0.98]);
+    add('head', tapered(0.085, 0.055, 0.1, 12), SKIN_COLOR, [0, -0.16, -0.035], [1, 1, 0.92]);
+    add('head', box(0.035, 0.055, 0.04), SKIN_SHADOW_COLOR, [0, -0.135, -0.1]);
+    add('head', ball(0.022, 8, 6), SKIN_SHADOW_COLOR, [-0.098, -0.09, 0.0], [0.55, 1, 0.8]);
+    add('head', ball(0.022, 8, 6), SKIN_SHADOW_COLOR, [0.098, -0.09, 0.0], [0.55, 1, 0.8]);
+    add('head', ball(0.108, 16, 10), HAIR_COLOR, [0, -0.045, 0.028], [0.96, 0.92, 1.0]);
+    add('head', ball(0.045, 10, 8), HAIR_COLOR, [0, -0.02, 0.115], [1, 1, 1]);
+    add('head', box(0.032, 0.012, 0.012), HAIR_COLOR, [-0.048, -0.085, -0.088]);
+    add('head', box(0.032, 0.012, 0.012), HAIR_COLOR, [0.048, -0.085, -0.088]);
+    add('head', ball(0.013, 8, 6), EYE_COLOR, [-0.042, -0.1, -0.093], [1, 1, 0.55]);
+    add('head', ball(0.013, 8, 6), EYE_COLOR, [0.042, -0.1, -0.093], [1, 1, 0.55]);
 
     for (const side of ['L', 'R'] as const) {
       const sign = side === 'L' ? -1 : 1;
@@ -701,19 +739,31 @@ export class CharacterRig {
       const shin: CharacterJointId = side === 'L' ? 'shinL' : 'shinR';
       const foot: CharacterJointId = side === 'L' ? 'footL' : 'footR';
 
-      add(shoulder, cap(0.07), JOINT_COLOR, [sign * 0.02, 0, 0]);
-      add(upperArm, limb(0.055, CHARACTER_ARM.upper), LIMB_COLOR, [0, -CHARACTER_ARM.upper / 2, 0]);
-      add(foreArm, cap(0.055), JOINT_COLOR, [0, 0, 0]);
-      add(foreArm, limb(0.05, CHARACTER_ARM.fore), LIMB_COLOR, [0, -CHARACTER_ARM.fore / 2, 0]);
-      add(hand, box(0.09, 0.12, 0.07), JOINT_COLOR, [0, -0.05, 0]);
+      // Shoulder cap + jacket sleeve, skin wrist, gloved hand with fingers + thumb.
+      add(shoulder, ball(0.075, 12, 9), JACKET_COLOR, [sign * 0.02, -0.01, 0], [1, 1.05, 1]);
+      add(upperArm, tapered(0.062, 0.052, CHARACTER_ARM.upper, 12), JACKET_COLOR, [0, -CHARACTER_ARM.upper / 2, 0]);
+      add(upperArm, tapered(0.056, 0.047, 0.07, 10), JACKET_DARK_COLOR, [0, -CHARACTER_ARM.upper + 0.035, 0]);
+      add(foreArm, ball(0.052, 10, 8), JACKET_COLOR, [0, -0.01, 0], [1, 1.1, 1]);
+      add(foreArm, tapered(0.05, 0.038, CHARACTER_ARM.fore, 12), SKIN_COLOR, [0, -CHARACTER_ARM.fore / 2 - 0.01, 0]);
+      add(hand, box(0.075, 0.1, 0.05), GLOVE_COLOR, [0, -0.045, -0.005]);
+      add(hand, box(0.018, 0.055, 0.02), GLOVE_COLOR, [-0.028, -0.1, -0.005]);
+      add(hand, box(0.018, 0.055, 0.02), GLOVE_COLOR, [-0.009, -0.103, -0.005]);
+      add(hand, box(0.018, 0.055, 0.02), GLOVE_COLOR, [0.009, -0.103, -0.005]);
+      add(hand, box(0.018, 0.055, 0.02), GLOVE_COLOR, [0.028, -0.1, -0.005]);
+      add(hand, box(0.02, 0.05, 0.022), GLOVE_COLOR, [sign * 0.045, -0.05, -0.015], [1, 1, 1]);
 
-      add(thigh, cap(0.085), JOINT_COLOR, [0, 0, 0]);
-      add(thigh, limb(0.08, 0.42), LIMB_COLOR, [0, -0.23, 0]);
-      add(shin, cap(0.07), JOINT_COLOR, [0, 0, 0]);
-      add(shin, limb(0.062, 0.42), LIMB_COLOR, [0, -0.22, 0]);
+      // Thigh + knee, shin + calf, cuffed boot. The sole still sits exactly one ankle-height
+      // below the ankle — the height the leg IK plants.
+      add(thigh, ball(0.088, 12, 9), PANTS_COLOR, [0, -0.01, 0], [1, 1.1, 1]);
+      add(thigh, tapered(0.085, 0.062, 0.42, 12), PANTS_COLOR, [0, -0.23, 0]);
+      add(shin, ball(0.06, 10, 8), PANTS_DARK_COLOR, [0, -0.01, 0], [1, 1, 1]);
+      add(shin, tapered(0.06, 0.048, 0.3, 12), PANTS_COLOR, [0, -0.16, 0.005]);
+      add(shin, tapered(0.055, 0.062, 0.12, 12), PANTS_DARK_COLOR, [0, -0.36, 0.005]);
       // The foot reaches forward (-Z) so the character has a visible stance direction, and its
       // sole sits exactly `CHARACTER_ANKLE_HEIGHT` below the ankle — the height the leg IK plants.
-      add(foot, box(0.11, FOOT_HEIGHT, 0.25), BODY_COLOR, [0, -(CHARACTER_ANKLE_HEIGHT - FOOT_HEIGHT / 2), -0.05]);
+      add(foot, box(0.11, FOOT_HEIGHT - 0.02, 0.25), BOOT_COLOR, [0, -(CHARACTER_ANKLE_HEIGHT - (FOOT_HEIGHT - 0.02) / 2) + 0.01, -0.05]);
+      add(foot, box(0.115, 0.02, 0.255), SOLE_COLOR, [0, -(CHARACTER_ANKLE_HEIGHT - 0.01), -0.05]);
+      add(foot, tapered(0.055, 0.058, 0.09, 10), BOOT_COLOR, [0, 0.045, 0.045], [1, 1, 1]);
     }
 
     const merged = mergeGeometries(parts, false);
