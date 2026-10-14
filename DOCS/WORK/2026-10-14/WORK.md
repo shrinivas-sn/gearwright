@@ -81,10 +81,16 @@ See `DOCS/STATUS.md` for the standing project status and the `## Next up` resume
   worker — cranium/jaw/nose/ears/hair/brows/eyes, jacket torso with shirt/collar/strap,
   gloved fingers + thumb, trousers/knee/calf/cuffed boots with soles. Still one merged
   `SkinnedMesh`, one material, 19 bones, no asset, no dependency, no port change.
+- Two-bone skin ramps across shoulders/elbows/knees so bent joints stay watertight;
+  rigid binding kept for head/torso/hands/boots. Foot sole and material feedback as above.
 - Material retuned for cloth/skin/leather (`roughness 0.72`, `metalness 0.08`) with a
   softer run/carry emissive; foot sole kept exactly one ankle-height below the ankle so
   foot planting still lands. Typecheck clean; rig suites re-run next (runner stalled once).
 - Scope guard: nothing outside `E:\gearwright` touched.
+- Stage 1 committed as `0e8a98a` (worker silhouette + soft joint blends).
+- Stage 2: backpack straps/buckles/waist strap for the TPP back view; thumb returned
+  to the anatomically inner side (`sign * -0.045`); typecheck clean; triangle budget
+  unchanged in shape (harness floor 500, rig ceiling 20_000, bones pinned at 19).
 
 ## Still open after this session
 

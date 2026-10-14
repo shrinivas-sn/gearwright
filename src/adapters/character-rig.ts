@@ -139,7 +139,8 @@ function clampSigned(value: number, limit: number): number {
 function segmentGeometry(
   geometry: THREE.BufferGeometry,
   boneIndex: number,
-  color: number
+  color: number,
+  blend: { readonly from: number; readonly to: number; readonly second: number } | null = null
 ): THREE.BufferGeometry {
   const count = geometry.getAttribute('position').count;
   const colors = new Float32Array(count * 3);
@@ -148,14 +149,24 @@ function segmentGeometry(
   const blue = (color & 0xff) / 255;
   const skinIndex = new Uint16Array(count * 4);
   const skinWeight = new Float32Array(count * 4);
+  const positions = geometry.getAttribute('position');
+  const span = blend === null || blend.to === blend.from ? 1 : blend.to - blend.from;
   for (let i = 0; i < count; i += 1) {
     colors[i * 3] = red;
     colors[i * 3 + 1] = green;
     colors[i * 3 + 2] = blue;
-    // Rigid skinning: every vertex belongs to exactly one bone. The body is a machine, so the
-    // visible joints are characterisation rather than a limitation.
-    skinIndex[i * 4] = boneIndex;
-    skinWeight[i * 4] = 1;
+    if (blend === null) {
+      // Rigid skinning for the parts that never bend (head, torso panels, hands, boots).
+      skinIndex[i * 4] = boneIndex;
+      skinWeight[i * 4] = 1;
+    } else {
+      // Two-bone linear ramp along local Y: keeps elbows/knees/shoulders watertight.
+      const t = Math.min(Math.max((positions.getY(i) - blend.from) / span, 0), 1);
+      skinIndex[i * 4] = t < 0.5 ? boneIndex : blend.second;
+      skinIndex[i * 4 + 1] = t < 0.5 ? blend.second : boneIndex;
+      skinWeight[i * 4] = 1 - t;
+      skinWeight[i * 4 + 1] = t;
+    }
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndex, 4));
@@ -682,10 +693,18 @@ export class CharacterRig {
       color: number,
       center: readonly [number, number, number],
       scale: readonly [number, number, number] | null = null,
+      blend: { readonly from: number; readonly to: number; readonly second: CharacterJointId } | null = null,
     ): void => {
       if (scale !== null) geometry.scale(scale[0], scale[1], scale[2]);
       geometry.translate(center[0], center[1], center[2]);
-      parts.push(segmentGeometry(geometry, index(id), color));
+      parts.push(
+        segmentGeometry(
+          geometry,
+          index(id),
+          color,
+          blend === null ? null : { from: blend.from, to: blend.to, second: index(blend.second) },
+        ),
+      );
     };
     const tapered = (
       topRadius: number,
@@ -714,6 +733,13 @@ export class CharacterRig {
     // Collar rolls around the neck base; a brass badge catches the light on the back.
     add('chest', tapered(0.075, 0.095, 0.06, 12), JACKET_DARK_COLOR, [0, 0.02, 0.02], [1.25, 1, 1]);
     add('chest', box(0.05, 0.06, 0.015), STRAP_COLOR, [0, -0.06, 0.1]);
+    // Backpack straps over the shoulders + waist strap: the TPP camera lives behind the
+    // worker, so the back gets its own read — brass buckles, dark leather bands.
+    add('chest', box(0.05, 0.2, 0.02), PANTS_DARK_COLOR, [-0.11, -0.1, 0.075]);
+    add('chest', box(0.05, 0.2, 0.02), PANTS_DARK_COLOR, [0.11, -0.1, 0.075]);
+    add('chest', box(0.055, 0.03, 0.025), STRAP_COLOR, [-0.11, -0.16, 0.075]);
+    add('chest', box(0.055, 0.03, 0.025), STRAP_COLOR, [0.11, -0.16, 0.075]);
+    add('spine', box(0.26, 0.035, 0.19), STRAP_COLOR, [0, -0.03, 0.01]);
     // Neck + trapezius wedge so the head never floats above the shoulders.
     add('neck', tapered(0.062, 0.085, 0.12, 12), SKIN_SHADOW_COLOR, [0, -0.09, 0.005], [1.35, 1, 0.95]);
     // Head: cranium, tapered jaw, nose, ears, hair cap + bun, brows and eyes on -Z face.
@@ -741,23 +767,44 @@ export class CharacterRig {
 
       // Shoulder cap + jacket sleeve, skin wrist, gloved hand with fingers + thumb.
       add(shoulder, ball(0.075, 12, 9), JACKET_COLOR, [sign * 0.02, -0.01, 0], [1, 1.05, 1]);
-      add(upperArm, tapered(0.062, 0.052, CHARACTER_ARM.upper, 12), JACKET_COLOR, [0, -CHARACTER_ARM.upper / 2, 0]);
+      add(
+        upperArm,
+        tapered(0.062, 0.052, CHARACTER_ARM.upper, 12),
+        JACKET_COLOR,
+        [0, -CHARACTER_ARM.upper / 2, 0],
+        null,
+        { from: 0.02, to: -0.06, second: shoulder },
+      );
       add(upperArm, tapered(0.056, 0.047, 0.07, 10), JACKET_DARK_COLOR, [0, -CHARACTER_ARM.upper + 0.035, 0]);
       add(foreArm, ball(0.052, 10, 8), JACKET_COLOR, [0, -0.01, 0], [1, 1.1, 1]);
-      add(foreArm, tapered(0.05, 0.038, CHARACTER_ARM.fore, 12), SKIN_COLOR, [0, -CHARACTER_ARM.fore / 2 - 0.01, 0]);
+      add(
+        foreArm,
+        tapered(0.05, 0.038, CHARACTER_ARM.fore, 12),
+        SKIN_COLOR,
+        [0, -CHARACTER_ARM.fore / 2 - 0.01, 0],
+        null,
+        { from: 0.02, to: -0.05, second: upperArm },
+      );
       add(hand, box(0.075, 0.1, 0.05), GLOVE_COLOR, [0, -0.045, -0.005]);
       add(hand, box(0.018, 0.055, 0.02), GLOVE_COLOR, [-0.028, -0.1, -0.005]);
       add(hand, box(0.018, 0.055, 0.02), GLOVE_COLOR, [-0.009, -0.103, -0.005]);
       add(hand, box(0.018, 0.055, 0.02), GLOVE_COLOR, [0.009, -0.103, -0.005]);
       add(hand, box(0.018, 0.055, 0.02), GLOVE_COLOR, [0.028, -0.1, -0.005]);
-      add(hand, box(0.02, 0.05, 0.022), GLOVE_COLOR, [sign * 0.045, -0.05, -0.015], [1, 1, 1]);
+      add(hand, box(0.02, 0.05, 0.022), GLOVE_COLOR, [sign * -0.045, -0.05, -0.015], [1, 1, 1]);
 
       // Thigh + knee, shin + calf, cuffed boot. The sole still sits exactly one ankle-height
       // below the ankle — the height the leg IK plants.
       add(thigh, ball(0.088, 12, 9), PANTS_COLOR, [0, -0.01, 0], [1, 1.1, 1]);
       add(thigh, tapered(0.085, 0.062, 0.42, 12), PANTS_COLOR, [0, -0.23, 0]);
       add(shin, ball(0.06, 10, 8), PANTS_DARK_COLOR, [0, -0.01, 0], [1, 1, 1]);
-      add(shin, tapered(0.06, 0.048, 0.3, 12), PANTS_COLOR, [0, -0.16, 0.005]);
+      add(
+        shin,
+        tapered(0.06, 0.048, 0.3, 12),
+        PANTS_COLOR,
+        [0, -0.16, 0.005],
+        null,
+        { from: 0.02, to: -0.08, second: thigh },
+      );
       add(shin, tapered(0.055, 0.062, 0.12, 12), PANTS_DARK_COLOR, [0, -0.36, 0.005]);
       // The foot reaches forward (-Z) so the character has a visible stance direction, and its
       // sole sits exactly `CHARACTER_ANKLE_HEIGHT` below the ankle — the height the leg IK plants.
