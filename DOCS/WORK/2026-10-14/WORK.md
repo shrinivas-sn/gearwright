@@ -98,7 +98,98 @@ See `DOCS/STATUS.md` for the standing project status and the `## Next up` resume
   startup (30 s tool timeout, no report written) — typecheck + production build are the
   proof for this stage, live-harness re-run stays open.
 
+## Session 3 — BM-2 played live, the carry fixes, and B3 "Bypass"
+
+### Accepted scope (STATUS.md §Next up #1–3)
+
+- Play **BM-2 live through the full curve** (A → B1 → B2 → BM-2) in one real Chrome session.
+- Re-run the open harness scenarios on the TPP worker mesh (`boot` + `hold`).
+- Start the branch's **open-ended beat** so the Thermal Line teaches as it grows.
+- Constraint: the 19-bone / one-draw-call TPP body, and nothing outside `E:\gearwright`.
+
+### The live proof, and the three real bugs it exposed
+
+The `branch` scenario now plays BM-2 too (`playBm2Sequence`: gear → drive mount, pipe → steam
+port, the three priming lines in any order, then the throttle) and asserts the branch's own
+consequences — `[reward] BM-2:milestone/bm2-steam-engine applied`, `branch branch-b complete`,
+`hub stage -> stage/regulator-awake`, the thermal plate waking, the autosave, and a reload
+(`8 staged action(s)`, `2/2 clue(s)`, both doors `Complete (open)`).
+
+The first two live runs failed in Branch B, and the failures were **not** content bugs — they
+were harness navigation bugs that a hop trace turned into facts:
+
+1. **Hops outran the carried part.** `hopTo` teleported 0.8 m per step while the part closes at
+   most `maxLinearSpeed` (8 m/s), so past `maxHoldRange` (2.6 m) it was soft-detached
+   (EC-MAN-07) — every B2/B3/BM-2 dock died on its first hop. Now: 0.4 m steps, each followed by
+   a wait until the part is abreast again (≤2.1 m), and `lookBy` turns in small chunks while
+   carrying for the same reason (a 1 rad chunk sweeps the 1.35 m carry lead along an arc).
+2. **A teleport could land inside a machine post.** The physics then resolved the capsule
+   downwards — *through the floor*; the trace caught the player at y = −1.9 with the part left
+   26 m behind. `hopTo` now plans a route on a 0.5 m grid over the level's **own** static
+   colliders (shipped + hub + Branch B), walks it, rolls back to the last good spot and returns
+   `false` when a vantage is blocked, and `dockInto` skips that vantage instead of carrying on
+   from under the floor.
+3. **A lost part is not at its spawn.** Re-grabbing focused the level's *spawn* box, so a part
+   that had fallen mid-carry reported NOT FOCUSABLE while lying in plain sight. Grab now reads
+   the manipulation layer's **live** pose (`__probe.partBox`), and `dockInto` re-grabs the part
+   the caller names after any lost hold, trying the remaining vantages before giving up.
+
+Supporting changes: a `dock` scenario (one pair, ~2 min) for minute-scale feedback — it isolated
+each fix — and `HARNESS_DEV_PORT` / `HARNESS_DEBUG_PORT` / `HARNESS_PROFILE` overrides so a long
+run and a short check can go at once.
+
+### Live results (14/10, real Chrome)
+
+- `branch` — **the whole curve played end to end**: all eight dock pairs on the *first* attempt,
+  BM-1 and BM-2 both run, `branch-a` and `branch-b` Complete, hub `stage/regulator-awake`, both
+  clues read, reload `8 staged action(s)` + `2/2 clue(s)`; `problems` empty apart from the known
+  ANGLE `X4122` warning and the AudioContext autoplay notices.
+- `boot` — `{bones: 19, triangles: 3936, visible: true}` on the player's own position.
+- `hold` — `{focused: true, held: "gear-a", grip: {holding: true, bones: 19}}`, reach-shape gate green.
+- `dock` — green (part held at a steady 1.71 m along a planned route).
+
+### Content — B3 "Bypass", the Thermal Line's open-ended beat
+
+- **`data/puzzles/b3.ts`** — one source, two consumers, three routes; requirements are two
+  `connected` runs, a `componentAt` coverage floor (both carriers seated), the pressure floor and
+  `safety: unjammed`. Objective text per requirement.
+- **`data/machines.ts`** — `B3_BYPASS_MACHINE`: three links, and the cross-run (`socket-b3-route-c`)
+  declaring a link to *each* consumer, which is what makes A+B, A+C and B+C all correct;
+  `maxOutput: 2.5` so the largest reachable value is not an overpressure.
+- **`data/sockets.ts`** — `B3_ROUTE_A/B/C_DEF` (three `pipe-port` docks on one header, the closed
+  shape P3 uses).
+- **`data/rewards.ts`** — `MILESTONE_B3_BYPASS` (materials only, no new resource kind).
+- **`data/hints.ts`** — the L4 nudge for `b3`, plus the `bm2` nudge the capstone never had.
+- **`data/branches.ts`** — `puzzleIds: ['B1', 'B2', 'B3', 'BM-2']`.
+- **`levels/branch-b.ts`** — B3 placed in the Steam Works' **west bay** (the mirror of B2's east
+  bay): boiler plinth, two consumer posts, a three-port header at z = 23.2 and the three parts
+  resting in a row south of it, wired into the branch's aggregates.
+- **`main.ts`** — the dev handle exposes `B2_*` and `B3_*` alongside `B1_*`/`BM2_*`.
+- **`scripts/browser-check.mjs`** — the probe reads B3's parts/sockets, `focus` walks them, and the
+  branch scenario plays the open-ended beat's A+C pair before the capstone.
+
+### Tests
+
+- **`tests/logic/b3-bypass.test.ts`** (new, 7 tests) — opens powered with every route empty; A+B,
+  A+C and B+C all complete; one route alone is refused; the shut-off valve fits, jams and dead-ends
+  its run; swapping the near-miss for a serviceable valve still completes; a real `PuzzleSystem`
+  latches exactly once with the B3 milestone.
+- **`shipped-content-integrity.test.ts`** — the ladder now steps B1 → B2 → B3 → BM-2 (`B3` also
+  starts `Locked` behind Branch A).
+- **`hint-system.test.ts`** — the nudge keys are `['b2','b3','bm1','bm2','p1','p2','p3']`, and
+  `conceptualHintFor('B3')` / `('BM-2')` resolve.
+
+### Verification notes (session 3)
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **661 tests across 57 files**, all passing.
+- `npm run build` — green: `three` 567.57 kB unchanged, `app` 247.81 kB (gzip 72.12 kB), lazy
+  `rig-preview` 3.69 kB unchanged (the TPP body is untouched: same 19 bones, one mesh).
+- Live: `boot`, `hold`, `dock` and the full `branch` curve, all green (see above).
+- Scope guard: nothing outside `E:\gearwright` touched; `main` pushed to `origin/main` this session.
+
 ## Still open after this session
 
-- **BM-2 is not yet reached/played live** by the harness in this session's branch run — it was reached through B2's objective line being the current one, but the staged capstone itself (assembly + priming + throttle) is the next session's content/proof work, per STATUS.md §Next up #1.
-- **Browser focus scenario for B2's four parts + two sockets** — I started a clean re-run (background); I will verify it lands and read the report before calling this content "probed," not before.
+- **Branch B has not been walked by a human since B3 landed.** The harness plays it; nobody has looked at whether the west bay (B3) and the east bay (B2) read as different machines from the doorway, or whether B3's third port is discoverable without the objective line spelling it out. That is now STATUS.md §Next up #1.
+- **`focus` was not re-run with B3's parts.** The scenario now walks them, but the last recorded `focus` report predates B3 — it is a probe of content reachability, not a gate, so the branch run's own first-attempt docks are the current evidence that B3 is reachable in the composition.
+- **The B2 steam-port pocket is tight** (gauge post and boiler plinth leave a ~0.6 m gap): the harness now routes around it deliberately, and a human should confirm it feels like a workshop rather than a maze — a placement tweak would be level data only.
