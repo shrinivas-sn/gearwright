@@ -74,7 +74,9 @@ export const CONCEPTUAL_HINTS: Readonly<Record<string, string>> = {
   p2: 'Motion does not keep its sense: the part that carries the drive decides which way the output turns.',
   p3: 'What matters is that pressure can travel from the source to each outlet — and that nothing dead-ends the flow.',
   bm1: 'Some machines ask to be brought up in order: build it, prime it, then drive it. Order is part of the mechanism.',
-  b2: 'A machine can want two different things at once — motion and flow arrive by different parts, and the part carrying the drive decides which way the output turns.'
+  b2: 'A machine can want two different things at once — motion and flow arrive by different parts, and the part carrying the drive decides which way the output turns.',
+  b3: 'Two consumers can share one source. What matters is that pressure can reach each of them, that the runs actually conduct, and that one part may serve both runs at once.',
+  bm2: 'A big machine is brought up in order, like the last one: build it, prime every line it names, then open the throttle. The sequencing is part of the mechanism, not decoration.'
 };
 
 /** `p1`, `bm1` … — the lookup form of a puzzle id, so `P1`, `BM1` and `BM-1` all resolve. */

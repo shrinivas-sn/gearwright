@@ -5,7 +5,7 @@
  * composition actually does: boot logs, HUD read-outs, focus acquisition from real
  * vantages, a played BM-1 sequence, console errors, and §36 budget numbers.
  *
- * Usage: node tmp-browser-check.mjs [boot|focus|bm1|branch] [--production]
+ * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|dock|bm1|branch|b2audit] [--production]
  */
 
 import { spawn } from 'node:child_process';
@@ -17,11 +17,14 @@ const ROOT = process.cwd();
 const SCENARIO = process.argv[2] ?? 'boot';
 const PRODUCTION = process.argv.includes('--production');
 const URL_ARG = process.argv.find((arg) => arg.startsWith('--url='))?.slice('--url='.length) ?? null;
-const DEV_PORT = 5199;
-const PREVIEW_PORT = 5198;
-const DEBUG_PORT = 9333;
+// Ports and profile are overridable so two scenarios can run at once: a long scenario (the
+// full branch curve) and a short one (a single dock check) on separate dev/Chrome ports,
+// instead of queueing behind each other.
+const DEV_PORT = Number(process.env.HARNESS_DEV_PORT ?? 5199);
+const PREVIEW_PORT = Number(process.env.HARNESS_PREVIEW_PORT ?? 5198);
+const DEBUG_PORT = Number(process.env.HARNESS_DEBUG_PORT ?? 9333);
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const PROFILE = join(ROOT, '.tmp-chrome-profile');
+const PROFILE = join(ROOT, process.env.HARNESS_PROFILE ?? '.tmp-chrome-profile');
 // Harness URL flags: shoulder camera off (aim math assumes the camera looks through the
 // player), no title screen, game logs on even in production builds.
 const QUERY = '?shoulder=0&skipTitle=1&log=1';
@@ -255,10 +258,27 @@ window.__probe = {
    * frame, each consumed by that frame's fixed step.
    */
   lookBy: async (dx, dy) => {
-    const steps = Math.max(Math.ceil(Math.abs(dx) / 119), Math.ceil(Math.abs(dy) / 119), 1);
+    const dev = window.__gearwrightDev;
+    const carrying = () => dev.manipulation?.heldId !== null && dev.manipulation?.heldId !== undefined;
+    // While carrying, a fast look sweeps the 1.35 m carry lead along an arc the part
+    // cannot follow: it closes maxLinearSpeed (8 m/s) per fixed step, so a 1 rad chunk
+    // moves the target ~1.35 m instantly and past maxHoldRange (2.6 m) the part is
+    // soft-detached (EC-MAN-07) mid-sweep — which is what kept killing the B2 and BM-2
+    // docks. Carrying therefore turns in small chunks, each followed by a wait for the
+    // part to come abreast again; empty-handed looking is unchanged (119 px, the input
+    // system's own per-step clamp).
+    const maxChunk = carrying() ? 24 : 119;
+    const steps = Math.max(Math.ceil(Math.abs(dx) / maxChunk), Math.ceil(Math.abs(dy) / maxChunk), 1);
     for (let i = 0; i < steps; i += 1) {
       window.__probe.look(dx / steps, dy / steps);
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      for (let frame = 0; frame < 20 && carrying(); frame += 1) {
+        const pose = dev.manipulation.currentPose;
+        if (pose === null || pose === undefined) break;
+        const player = dev.player.snapshot().position;
+        if (Math.hypot(pose.center.x - player.x, pose.center.z - player.z) <= 2.1) break;
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
     }
   },
   /** Yaw integrates as yaw - dX * 0.25 * (1/30)  →  dX = -radians * 120. */
@@ -280,23 +300,214 @@ window.__probe = {
    * per rendered frame, ~28 s per aim — which is what stalled the first bm1 run.)
    */
   /**
+   * The shipped static colliders, for path planning.
+   *
+   * The harness moves the player by teleport, which has no notion of collision: hopping a
+   * held part straight at a socket used to send the player *through* a machine post, and
+   * the physics resolved the overlapping capsule downwards — through the floor (a hop trace
+   * caught the player at y = -1.9 with the part left 26 m behind). Planning a route around
+   * the level's own colliders is the fix, so the same world the game collides with is read
+   * here (hub doors taken as open: every branch the harness drives is enterable).
+   */
+  staticColliders: async () => {
+    if (window.__probe.__colliders !== undefined) return window.__probe.__colliders;
+    const shipped = await import('/src/levels/shipped-content.ts');
+    const hub = await import('/src/levels/hub.ts');
+    const branchB = await import('/src/levels/branch-b.ts');
+    window.__probe.__colliders = [
+      ...shipped.SHIPPED_WORLD.colliders,
+      ...hub.hubColliders(() => 'Complete'),
+      ...branchB.BRANCH_B_WORLD.colliders
+    ];
+    return window.__probe.__colliders;
+  },
+  /**
+   * A walkable route from (ax, az) to (bx, bz), on a 0.5 m grid over the hall and the
+   * Steam Works, using the same static colliders the player collides with.
+   *
+   * Straight-line hopping is not enough: B2's steam port sits in a pocket walled by the
+   * gauge post and the boiler plinth, so the direct line from the part's spawn crosses a
+   * plinth — and a teleport that lands inside one sends the player *through the floor*.
+   * A breadth-first search over the free cells fixes that generally: it routes around
+   * whatever the level has (posts, plinths, the Regulator, walls) and returns the corner
+   * list to hop through. Returns null when no route exists.
+   */
+  findPath: async (ax, az, bx, bz) => {
+    const list = await window.__probe.staticColliders();
+    const half = 0.36; // the player capsule's own half-width: what actually fits
+    const step = 0.5;
+    const minX = -9;
+    const maxX = 9;
+    const minZ = -20;
+    const maxZ = 35;
+    const nx = Math.round((maxX - minX) / step) + 1;
+    const nz = Math.round((maxZ - minZ) / step) + 1;
+    const blocked = new Uint8Array(nx * nz);
+    for (let iz = 0; iz < nz; iz += 1) {
+      for (let ix = 0; ix < nx; ix += 1) {
+        const x = minX + ix * step;
+        const z = minZ + iz * step;
+        for (const box of list) {
+          if (box.max.y <= 0.25) continue;
+          if (x + half > box.min.x && x - half < box.max.x && z + half > box.min.z && z - half < box.max.z) {
+            blocked[iz * nx + ix] = 1;
+            break;
+          }
+        }
+      }
+    }
+    const cellOf = (x, z) => [Math.round((x - minX) / step), Math.round((z - minZ) / step)];
+    const worldOf = (ix, iz) => [minX + ix * step, minZ + iz * step];
+    const free = (ix, iz) => ix >= 0 && iz >= 0 && ix < nx && iz < nz && blocked[iz * nx + ix] === 0;
+    // A vantage can stand hard against a plinth (a socket next to its machine): fall back
+    // to the nearest free cell, so "almost there" still plans.
+    let [gx, gz] = cellOf(bx, bz);
+    if (!free(gx, gz)) {
+      let best = null;
+      for (let radius = 1; radius <= 6 && best === null; radius += 1) {
+        for (let dz = -radius; dz <= radius && best === null; dz += 1) {
+          for (let dx = -radius; dx <= radius; dx += 1) {
+            if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+            if (!free(gx + dx, gz + dz)) continue;
+            best = [gx + dx, gz + dz];
+            break;
+          }
+        }
+      }
+      if (best === null) return null;
+      [gx, gz] = best;
+    }
+    const [sx, sz] = cellOf(ax, az);
+    if (!free(sx, sz)) return null;
+    const start = sz * nx + sx;
+    const goal = gz * nx + gx;
+    const cameFrom = new Int32Array(nx * nz).fill(-1);
+    const queue = [start];
+    cameFrom[start] = start;
+    let found = false;
+    for (let head = 0; head < queue.length && !found; head += 1) {
+      const current = queue[head];
+      const cx = current % nx;
+      const cz = Math.floor(current / nx);
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nxi = cx + dx;
+        const nzi = cz + dz;
+        if (!free(nxi, nzi)) continue;
+        const next = nzi * nx + nxi;
+        if (cameFrom[next] !== -1) continue;
+        cameFrom[next] = current;
+        if (next === goal) {
+          found = true;
+          break;
+        }
+        queue.push(next);
+      }
+    }
+    if (!found && start !== goal) return null;
+    const cells = [];
+    let cursor = goal;
+    while (cursor !== start) {
+      cells.push(cursor);
+      cursor = cameFrom[cursor];
+    }
+    cells.reverse();
+    // Every third cell keeps the polyline short; the hop loop still moves in 0.4 m steps.
+    const points = cells.filter((_, index) => index % 3 === 0 || index === cells.length - 1).map((cell) => worldOf(cell % nx, Math.floor(cell / nx)));
+    points.push([bx, bz]);
+    return [points[0] ?? [bx, bz], ...points];
+  },
+  /**
+   * Is a player-height corridor from (ax, az) to (bx, bz) clear of static geometry?
+   * Sampled every 0.25 m with a 0.45 m half-width (player capsule + margin). Boxes whose
+   * top is at or below 0.25 m are steps, not walls — the floor and plinths are walkable.
+   */
+  segmentClear: async (ax, az, bx, bz) => {
+    const list = await window.__probe.staticColliders();
+    const half = 0.45;
+    const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.25));
+    for (let i = 0; i <= steps; i += 1) {
+      const x = ax + ((bx - ax) * i) / steps;
+      const z = az + ((bz - az) * i) / steps;
+      for (const box of list) {
+        if (box.max.y <= 0.25) continue;
+        if (x + half > box.min.x && x - half < box.max.x && z + half > box.min.z && z - half < box.max.z) return false;
+      }
+    }
+    return true;
+  },
+  /**
    * Carry-safe relocation. EC-MAN-07 soft-detaches a held part that ends a step more
    * than maxHoldRange (2.6 m) from the player, and the part can only close
    * maxLinearSpeed (8 m/s ≈ 0.27 m per fixed step) — so one long teleport leaves the
    * part metres behind and drops it (what killed the valve's first dock attempt).
-   * Hopping ≤0.8 m at a time with a settle between hops keeps the part in range, and
-   * aiming at the target while hopping points the 1.35 m carry lead toward it.
+   *
+   * Three things make the hop survivable: 0.4 m steps, a wait after each step until the
+   * part has come abreast again, and a **route around the level's colliders** — the
+   * straight line is used when it is clear, otherwise an L-route through one of the two
+   * corners. A hop that still lands the player inside geometry (y below the floor) is
+   * rolled back to the last good spot and reported as a false return, so the caller can
+   * try another vantage instead of carrying on from inside a wall.
    */
   hopTo: async (x, z, yaw) => {
-    const start = window.__gearwrightDev.player.snapshot().position;
-    const dx = x - start.x;
-    const dz = z - start.z;
-    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.8));
-    for (let i = 1; i <= steps; i += 1) {
-      window.__gearwrightDev.player.teleport({ x: start.x + (dx * i) / steps, y: 0.01, z: start.z + (dz * i) / steps });
-      if (yaw !== undefined) await window.__probe.aimYaw(yaw);
-      await new Promise((resolve) => setTimeout(resolve, 90));
+    const dev = window.__gearwrightDev;
+    const start = dev.player.snapshot().position;
+    const trace = [];
+    window.__probe.hopTrace = trace;
+    const sample = (hop) => {
+      const pose = dev.manipulation.currentPose;
+      const player = dev.player.snapshot().position;
+      trace.push({
+        hop,
+        held: dev.manipulation.heldId ?? null,
+        dist:
+          pose === null || pose === undefined
+            ? null
+            : Number(
+                Math.hypot(pose.center.x - player.x, pose.center.y - player.y, pose.center.z - player.z).toFixed(2)
+              ),
+        player: { x: Number(player.x.toFixed(2)), y: Number(player.y.toFixed(2)), z: Number(player.z.toFixed(2)) }
+      });
+    };
+    // Route through the level's own free space. The straight line is the fallback when no
+    // grid route exists at all (a start or goal boxed in), and the rollback below is the
+    // last line of defence for that case.
+    const planned = await window.__probe.findPath(start.x, start.z, x, z);
+    const waypoints = [[start.x, start.z], ...(planned ?? [[x, z]])];
+    let lastGood = { x: start.x, z: start.z };
+    for (let leg = 1; leg < waypoints.length; leg += 1) {
+      const [ax, az] = waypoints[leg - 1];
+      const [bx, bz] = waypoints[leg];
+      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.4));
+      for (let i = 1; i <= steps; i += 1) {
+        dev.player.teleport({ x: ax + ((bx - ax) * i) / steps, y: 0.01, z: az + ((bz - az) * i) / steps });
+        if (yaw !== undefined) await window.__probe.aimYaw(yaw);
+        for (let frame = 0; frame < 30 && dev.manipulation.heldId !== null; frame += 1) {
+          const pose = dev.manipulation.currentPose;
+          if (pose === null || pose === undefined) break;
+          const player = dev.player.snapshot().position;
+          if (Math.hypot(pose.center.x - player.x, pose.center.z - player.z) <= 2.1) break;
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        sample(leg + ':' + i);
+        const now = dev.player.snapshot().position;
+        if (now.y < -0.2) {
+          // The teleport landed inside geometry and the physics resolved the capsule
+          // downwards, out through the floor (a trace once caught the player at y = -1.9).
+          // Roll back to the last good spot and let the caller choose another vantage.
+          dev.player.teleport({ x: lastGood.x, y: 0.01, z: lastGood.z });
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          trace.push({
+            hop: 'rollback',
+            at: { x: Number(now.x.toFixed(2)), y: Number(now.y.toFixed(2)), z: Number(now.z.toFixed(2)) }
+          });
+          return false;
+        }
+        lastGood = { x: now.x, z: now.z };
+        if (dev.manipulation.heldId === null || dev.manipulation.heldId === undefined) break;
+      }
     }
+    return true;
   },
   /**
    * 'pitch' here is a *view* angle — positive looks DOWN, the sign the aim math computes
@@ -323,6 +534,26 @@ window.__probe = {
   character: () => {
     const dev = window.__gearwrightDev;
     return typeof dev.character === 'function' ? dev.character() : null;
+  },
+  /**
+   * A loose part's *live* box, from the manipulation layer's own records.
+   *
+   * The level data's spawn pose is where a part starts, not where it is: after a dropped
+   * hold it lies wherever it fell, and focusing the spawn box then reports NOT FOCUSABLE
+   * while the part sits two metres away. Re-grabbing a part therefore has to ask the game
+   * where it actually is (the same records the renderer draws from).
+   */
+  partBox: (id) => {
+    const snapshots = window.__gearwrightDev.manipulation.snapshots
+      ? window.__gearwrightDev.manipulation.snapshots()
+      : [];
+    const found = snapshots.find((entry) => entry.id === id);
+    if (found === undefined) return null;
+    const h = found.halfExtents;
+    return {
+      min: { x: found.center.x - h.x, y: found.center.y - h.y, z: found.center.z - h.z },
+      max: { x: found.center.x + h.x, y: found.center.y + h.y, z: found.center.z + h.z }
+    };
   },
   /**
    * A second, independent InteractionSystem over a fresh physics world built from the
@@ -434,6 +665,9 @@ window.__probe = {
     const progression = window.__gearwrightDev.progression;
     return {
       branchA: progression.branchState('branch-a'),
+      // Branch B ships too, so the full curve's own end state is readable (the branch
+      // scenario plays A → B1 → B2 → BM-2 and asserts B completes, not A alone).
+      branchB: progression.branchState('branch-b'),
       hubStage: progression.hubStageIndex,
       clues: [...progression.discoveredClueIds]
     };
@@ -474,6 +708,8 @@ window.__probe = {
       b1Sockets: branchB ? sockets(branchB.B1_SOCKETS) : [],
       b2Parts: branchB ? parts(branchB.B2_CARRYABLES) : [],
       b2Sockets: branchB ? sockets(branchB.B2_SOCKETS) : [],
+      b3Parts: branchB ? parts(branchB.B3_CARRYABLES) : [],
+      b3Sockets: branchB ? sockets(branchB.B3_SOCKETS) : [],
       bm2Parts: branchB ? parts(branchB.BM2_CARRYABLES) : [],
       bm2Sockets: branchB ? sockets(branchB.BM2_SOCKETS) : [],
       bm2Props: branchB ? branchB.BM2_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })) : [],
@@ -718,6 +954,8 @@ async function scenarioFocus(cdp) {
     ...(level.b1Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.b2Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.b2Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
+    ...(level.b3Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
+    ...(level.b3Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.bm2Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.bm2Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...level.p1.map((entry) => ({ id: entry.id, box: boxOf(entry) }))
@@ -748,9 +986,17 @@ async function scenarioFocus(cdp) {
   drainConsole(cdp);
 }
 
-/** Focus + grab a loose part through the real composition (a KeyE edge). */
+/**
+ * Focus + grab a loose part through the real composition (a KeyE edge).
+ *
+ * The box is read live (the manipulation layer's own records) rather than taken from the
+ * level's spawn pose, so a part that was dropped mid-carry is still grabbable — which is
+ * what makes the caller's retry able to recover instead of reporting NOT FOCUSABLE for a
+ * part that is lying in plain sight.
+ */
 async function grabPart(cdp, part) {
-  const found = await focusTarget(cdp, part.id, boxOf(part));
+  const live = await evaluate(cdp, `window.__probe.partBox('${part.id}')`).catch(() => null);
+  const found = await focusTarget(cdp, part.id, live ?? boxOf(part));
   if (found === null) return { id: part.id, focus: 'NOT FOCUSABLE' };
   await tapKey(cdp, 'KeyE');
   await sleep(600);
@@ -768,27 +1014,51 @@ async function grabPart(cdp, part) {
  * bench), then confirm like a human holding the button. A frame-accurate click can land
  * in the step before `SnapPreview` (§14's order), so the confirm retries.
  */
-async function dockInto(cdp, socket) {
+async function dockInto(cdp, socket, part = null) {
   const attempts = [];
+  /** One recovery attempt: re-grab the part the caller named, wherever it now lies. */
+  const regrab = async () => {
+    if (part === null) return false;
+    const again = await grabPart(cdp, part);
+    attempts.push(`re-grab ${part.id}: ${again.focus}${again.held === undefined ? '' : ` (held ${again.held})`}`);
+    return again.held === part.id;
+  };
   for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
     const length = Math.hypot(dx, dz);
     for (const back of [1.5, 1.2, 1.9, 2.3]) {
       const px = socket.center.x + (dx / length) * back;
       const pz = socket.center.z + (dz / length) * back;
       const yaw = Math.atan2(-(socket.center.x - px), -(socket.center.z - pz));
-      await evaluate(
+      // hopTo returns false when the teleport landed inside geometry (it rolls the player
+      // back). All that is left to do with that vantage is skip it.
+      const hopped = await evaluate(
         cdp,
-        `(async () => { await window.__probe.hopTo(${px}, ${pz}, ${yaw}); await window.__probe.pitchHome(); await window.__probe.pitchTo(0.0); await window.__probe.aimYaw(${yaw}); return true; })()`
+        `(async () => {
+          const ok = await window.__probe.hopTo(${px}, ${pz}, ${yaw});
+          await window.__probe.pitchHome();
+          await window.__probe.pitchTo(0.0);
+          await window.__probe.aimYaw(${yaw});
+          const dev = window.__gearwrightDev;
+          window.__probe.hopTrace.push({ hop: 'aim', held: dev.manipulation.heldId ?? null });
+          return ok;
+        })()`
       );
       await sleep(500);
       let hud = await evaluate(cdp, 'window.__probe.hud()');
-      attempts.push(`dir ${dx},${dz} back ${back}: ${hud.socket?.text ?? '?'}`);
+      // The hop trace is what turns "hold lost" into a diagnosis: it shows the step the
+      // part was left behind on, the gap at that moment, and where the player stood.
+      const trace = await evaluate(cdp, 'window.__probe.hopTrace ?? []').catch(() => []);
+      attempts.push(
+        `dir ${dx},${dz} back ${back}: ${hud.socket?.text ?? '?'}${hopped === false ? ' | route blocked (rolled back)' : ''}${trace.length > 0 ? ` | trace ${JSON.stringify(trace)}` : ''}`
+      );
       // A hold can be soft-detached mid-hop (EC-MAN-07: >2.6 m from the player) — the
       // teleport-driven hopping is faster than a player, so the part can be left behind
-      // and dropped. Clicking on is pointless; report it so the caller re-grabs.
+      // and dropped. Recover it if the caller named it, then try the next vantage; the
+      // run only gives up once the part cannot be picked up again at all.
       if (/empty-handed/i.test(hud.held?.text ?? '')) {
-        attempts.push('hold lost — re-grab required');
-        return { attempts, hud, dropped: true };
+        attempts.push('hold lost');
+        if (!(await regrab())) return { attempts, hud, dropped: true };
+        continue;
       }
       if (!/incompatible/i.test(hud.socket?.text ?? '') && /compatible/i.test(hud.socket?.text ?? '')) {
         for (let i = 0; i < 3; i += 1) {
@@ -804,6 +1074,40 @@ async function dockInto(cdp, socket) {
   return { attempts, hud: await evaluate(cdp, 'window.__probe.hud()') };
 }
 
+/**
+ * Press a staged machine's panel props in the given order, through the real
+ * composition (focus → KeyE), reporting each one's focus, the objective line and any
+ * failure reason. ADR-018's staged machines share this shape exactly: BM-1 and BM-2
+ * differ only in their prop ids and where their panel stands, so both walkthroughs use
+ * this one helper.
+ */
+async function pressStagedProps(cdp, props, zFrom, zTo) {
+  const steps = [];
+  for (const prop of props) {
+    const box = {
+      min: { x: prop.x - 0.25, y: 1.05, z: zFrom },
+      max: { x: prop.x + 0.25, y: 1.45, z: zTo }
+    };
+    const found = await focusTarget(cdp, prop.id, box, 3.4);
+    if (found === null) {
+      steps.push({ id: prop.id, focus: 'NOT FOCUSABLE' });
+      continue;
+    }
+    await tapKey(cdp, 'KeyE');
+    await sleep(400);
+    const hud = await evaluate(cdp, 'window.__probe.hud()');
+    steps.push({
+      id: prop.id,
+      focus: found.focus.verb,
+      objective: `${hud.objectiveTitle?.text} / ${hud.objectiveState?.text}`,
+      failure: hud.objectiveFailure?.text
+    });
+    drainConsole(cdp);
+    await sleep(700);
+  }
+  return steps;
+}
+
 async function playBm1Sequence(cdp, level) {
   const steps = { assembly: [] };
   const gear = level.bm1Parts.find((entry) => entry.id === 'gear-bm1');
@@ -816,9 +1120,9 @@ async function playBm1Sequence(cdp, level) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const before = report.logs.length;
     const grabGear = await grabPart(cdp, gear);
-    const dockGear = await dockInto(cdp, drive);
+    const dockGear = await dockInto(cdp, drive, gear);
     const grabValve = await grabPart(cdp, valve);
-    const dockValve = await dockInto(cdp, line);
+    const dockValve = await dockInto(cdp, line, valve);
     await sleep(900);
     drainConsole(cdp);
     const fresh = report.logs.slice(before).join('\n');
@@ -827,36 +1131,99 @@ async function playBm1Sequence(cdp, level) {
   }
   steps['after assembly'] = await evaluate(cdp, 'window.__probe.hud()');
 
-  // Priming: the three lines in any order, then the engage lever.
+  // Priming: the three lines in any order (the props' ids *are* the staged action
+  // ids), then the engage lever — the one ordered step.
   const props = [
     { id: 'bm1/prime-feed', x: -2.0 },
     { id: 'bm1/prime-return', x: -0.7 },
     { id: 'bm1/prime-bleed', x: 0.7 },
     { id: 'bm1/engage', x: 2.0 }
   ];
-  steps.presses = [];
-  for (const prop of props) {
-    const box = {
-      min: { x: prop.x - 0.25, y: 1.05, z: -16.8 },
-      max: { x: prop.x + 0.25, y: 1.45, z: -16.4 }
-    };
-    const found = await focusTarget(cdp, prop.id, box, 3.4);
-    if (found === null) {
-      steps.presses.push({ id: prop.id, focus: 'NOT FOCUSABLE' });
-      continue;
-    }
-    await tapKey(cdp, 'KeyE');
-    await sleep(400);
-    const hud = await evaluate(cdp, 'window.__probe.hud()');
-    steps.presses.push({ id: prop.id, focus: found.focus.verb, objective: `${hud.objectiveTitle?.text} / ${hud.objectiveState?.text}`, failure: hud.objectiveFailure?.text });
-    drainConsole(cdp);
-    await sleep(700);
-  }
+  steps.presses = await pressStagedProps(cdp, props, -16.8, -16.4);
 
   await sleep(1200);
   steps.finalHud = await evaluate(cdp, 'window.__probe.hud()');
   drainConsole(cdp);
   return steps;
+}
+
+/**
+ * BM-2 "Steam Engine" — Branch B's staged capstone, played the same way BM-1 is: the two
+ * carriers into their sockets, the three priming lines in any order, then the throttle.
+ *
+ * This is the proof STATUS.md §Next up #1 asks for: the branch completes *only* once its
+ * capstone has run, so reaching Branch B's Complete state through the real composition is
+ * the acceptance criterion — B2 alone leaves it InProgress by design.
+ */
+async function playBm2Sequence(cdp, level) {
+  const steps = { assembly: [] };
+  const gear = level.bm2Parts.find((entry) => entry.id === 'gear-bm2');
+  const valve = level.bm2Parts.find((entry) => entry.id === 'valve-bm2');
+  const drive = level.bm2Sockets.find((entry) => entry.id === 'socket-bm2-drive');
+  const steam = level.bm2Sockets.find((entry) => entry.id === 'socket-bm2-steam');
+
+  // Same bounded retry as BM-1's assembly: a hold lost mid-hop is an EC-MAN-07 harness
+  // artefact (the probe teleports faster than a player), not a game failure.
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const before = report.logs.length;
+    const grabGear = await grabPart(cdp, gear);
+    const dockGear = await dockInto(cdp, drive, gear);
+    const grabValve = await grabPart(cdp, valve);
+    const dockValve = await dockInto(cdp, steam, valve);
+    await sleep(900);
+    drainConsole(cdp);
+    const fresh = report.logs.slice(before).join('\n');
+    steps.assembly.push({ attempt, grabGear, dockGear, grabValve, dockValve });
+    if (/BM-2 structure complete/.test(fresh)) break;
+  }
+  steps['after assembly'] = await evaluate(cdp, 'window.__probe.hud()');
+
+  // The capstone's priming lines are live only now ("assembly before priming", the same
+  // world-side rule BM-1 uses), so this is also the check that the staged rig installed.
+  const props = [
+    { id: 'bm2/prime-inlet', x: -2.0 },
+    { id: 'bm2/prime-outlet', x: -0.7 },
+    { id: 'bm2/prime-drain', x: 0.7 },
+    { id: 'bm2/engage', x: 2.0 }
+  ];
+  steps.presses = await pressStagedProps(cdp, props, 30.4, 30.8);
+
+  await sleep(1500);
+  steps.finalHud = await evaluate(cdp, 'window.__probe.hud()');
+  drainConsole(cdp);
+  return steps;
+}
+
+/**
+ * A fast carry/dock check — the failure the long branch run kept hitting.
+ *
+ * The branch curve is a 20-minute scenario, so when a *dock* is what breaks, debugging it
+ * there is expensive. This plays one pair (B2's valve into its steam port, the pair that
+ * used to lose its hold three times over) and reports the mechanics: held, docked, and
+ * the socket's read-out. B2's puzzle is `Locked` at boot (Branch B is gated behind
+ * Branch A), which is deliberate — the snap seam and the socket are what this checks, not
+ * the puzzle latch.
+ */
+async function scenarioDock(cdp) {
+  const level = await evaluate(cdp, 'window.__probe.level()');
+  const valve = level.b2Parts.find((entry) => entry.id === 'valve-b2');
+  const socket = level.b2Sockets.find((entry) => entry.id === 'socket-b2-steam');
+  const grab = await grabPart(cdp, valve);
+  const dock = await dockInto(cdp, socket, valve);
+  await sleep(900);
+  drainConsole(cdp);
+  report.data.dock = {
+    grab,
+    dropped: dock.dropped === true,
+    attempts: dock.attempts,
+    socketAfter: dock.hud?.socket?.text ?? null,
+    hud: await evaluate(cdp, 'window.__probe.hud()'),
+    progress: await evaluate(cdp, 'window.__probe.progress()')
+  };
+  if (dock.dropped === true) report.problems.push('dock: the held part was soft-detached mid-carry');
+  else if (/incompatible/i.test(dock.hud?.socket?.text ?? '')) {
+    report.problems.push(`dock: the socket refused the part (${dock.hud?.socket?.text})`);
+  }
 }
 
 async function scenarioBm1(cdp) {
@@ -885,7 +1252,7 @@ async function scenarioBranch(cdp) {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const before = report.logs.length;
       const grab = await grabPart(cdp, part);
-      const dock = await dockInto(cdp, socket);
+      const dock = await dockInto(cdp, socket, part);
       await sleep(900); // three confirmed steps is the §25 stable window
       drainConsole(cdp);
       const fresh = report.logs.slice(before).join('\n');
@@ -977,15 +1344,56 @@ async function scenarioBranch(cdp) {
     progress: await evaluate(cdp, 'window.__probe.progress()')
   };
 
-  // The clue beat (§6 step 8): the plate is awake, so focusing it *is* the discovery.
-  const plate = level.hubTargets.find((entry) => entry.id === 'clue/regulator-plate');
-  const plateFocus = await focusTarget(cdp, 'clue/regulator-plate', boxOf(plate));
-  await sleep(700);
+  // B3, the branch's open-ended beat: two serviceable valves, and the second goes in the
+  // cross-run port so the pair proves the multi-solution machine in the real composition
+  // (A+B, A+C and B+C are all accepted; the harness plays A+C).
+  report.data.branchPairs.push(await playPair('B3 valve 1 -> heat', null, 'valve-b3-1', 'socket-b3-route-a', level.b3Parts, level.b3Sockets));
+  report.data.branchPairs.push(await playPair('B3 valve 2 -> cross-run', 'B3', 'valve-b3-2', 'socket-b3-route-c', level.b3Parts, level.b3Sockets));
   drainConsole(cdp);
-  const clueLogs = report.logs.join('\n');
+  report.data.branchAfterB3 = {
+    // The open-ended beat does not complete the branch either: BM-2 is still outstanding.
+    hud: await evaluate(cdp, 'window.__probe.hud()'),
+    progress: await evaluate(cdp, 'window.__probe.progress()')
+  };
+
+  // BM-2, the staged capstone — the one step that completes the Thermal Line. This is
+  // STATUS.md §Next up #1: the whole curve A → B1 → B2 → BM-2 played live in one session,
+  // on the shipped composition rather than in the logic suites.
+  report.data.branchBm2 = await playBm2Sequence(cdp, level);
+  await sleep(1500);
+  drainConsole(cdp);
+  const burst2 = report.logs.join('\n');
+  report.data.branchBurst2 = {
+    bm2Reward: /\[reward\] BM-2:milestone\/bm2-steam-engine applied/.test(burst2),
+    branchComplete: /\[progression\] branch branch-b complete \(Thermal Line\)/.test(burst2),
+    hubStage: /\[progression\] hub stage -> stage\/regulator-awake \(Regulator Awake\)/.test(burst2),
+    plateAwake: /\[clue\] plate awake: clue\/thermal-plate/.test(burst2),
+    autosave: /\[save\] autosave written \(puzzle-completed trigger\)/.test(burst2)
+  };
+  report.data.branchAfterBm2 = {
+    hud: await evaluate(cdp, 'window.__probe.hud()'),
+    progress: await evaluate(cdp, 'window.__probe.progress()')
+  };
+
+  // The clue beat (§6 step 8): each plate is awake once *its* branch is Complete, so
+  // focusing it is the discovery. Branch A's plate is read first; Branch B's is read after
+  // its capstone has run — which is itself the proof that completing B woke the second
+  // plate (a dormant plate is not focusable at all, §18).
+  const readPlate = async (clueId) => {
+    const plate = level.hubTargets.find((entry) => entry.id === clueId);
+    const before = report.logs.length;
+    const focus = await focusTarget(cdp, clueId, boxOf(plate));
+    await sleep(700);
+    drainConsole(cdp);
+    const fresh = report.logs.slice(before).join('\n');
+    return {
+      focused: focus === null ? 'NOT FOCUSABLE' : `${focus.focus.verb} @ ${focus.focus.distance.toFixed(2)} m`,
+      discovered: fresh.includes(`[clue] discovered ${clueId}`)
+    };
+  };
   report.data.branchClue = {
-    focused: plateFocus === null ? 'NOT FOCUSABLE' : `${plateFocus.focus.verb} @ ${plateFocus.focus.distance.toFixed(2)} m`,
-    discovered: /\[clue\] discovered clue\/regulator-plate/.test(clueLogs),
+    regulator: await readPlate('clue/regulator-plate'),
+    thermal: await readPlate('clue/thermal-plate'),
     hud: await evaluate(cdp, 'window.__probe.hud()'),
     progress: await evaluate(cdp, 'window.__probe.progress()')
   };
@@ -998,10 +1406,15 @@ async function scenarioBranch(cdp) {
   const reloadLogs = report.logs.slice(logsBeforeReload).join('\n');
   report.data.branchReload = {
     loaded: /\[save\] loaded autosave/.test(reloadLogs),
-    // Two clues ship now (one per branch), so the count is 1 of 2 — the id is the point.
-    cluesRestored: /\[clue\] 1\/2 clue\(s\) discovered: clue\/regulator-plate/.test(reloadLogs),
-    stagedRestored: /\[staged\] 4 staged action\(s\) restored/.test(reloadLogs),
-    hubStage: /\[hub\] stage 1 \(Pressure Line Online\); branch-a=Complete \(open\)/.test(reloadLogs),
+    // Both branches are Complete by the end of the run, so both clues carry — the ids are
+    // the point, and the count is 2 of 2 (one plate per branch).
+    cluesRestored: /\[clue\] 2\/2 clue\(s\) discovered: clue\/regulator-plate, clue\/thermal-plate/.test(reloadLogs),
+    // BM-1's four staged actions plus BM-2's four: the log is canonical, so a save that
+    // ran both capstones restores eight.
+    stagedRestored: /\[staged\] 8 staged action\(s\) restored/.test(reloadLogs),
+    // Branch B's completion moved the hub: stage 2 (Regulator Awake) with both branch doors
+    // reading Complete (open) — derived from the restored puzzle set, never stored.
+    hubStage: /\[hub\] stage 2 \(Regulator Awake\); branch-a=Complete \(open\), branch-b=Complete \(open\)/.test(reloadLogs),
     progress: await evaluate(cdp, 'window.__probe.progress()'),
     hud: await evaluate(cdp, 'window.__probe.hud()')
   };
@@ -1161,6 +1574,7 @@ async function main() {
     }
     drainConsole(cdp);
   }
+  if (SCENARIO === 'dock') await scenarioDock(cdp);
   if (SCENARIO === 'bm1') await scenarioBm1(cdp);
   if (SCENARIO === 'branch') await scenarioBranch(cdp);
   if (SCENARIO === 'press') {
@@ -1184,7 +1598,15 @@ async function main() {
         const yaw = Math.atan2(-(socket.center.x - px), -(socket.center.z - pz));
         await evaluate(
           cdp,
-          `(async () => { await window.__probe.hopTo(${px}, ${pz}, ${yaw}); await window.__probe.pitchHome(); await window.__probe.pitchTo(0.0); await window.__probe.aimYaw(${yaw}); return true; })()`
+          `(async () => {
+            await window.__probe.hopTo(${px}, ${pz}, ${yaw});
+            await window.__probe.pitchHome();
+            await window.__probe.pitchTo(0.0);
+            await window.__probe.aimYaw(${yaw});
+            const dev = window.__gearwrightDev;
+            window.__probe.hopTrace.push({ hop: 'aim', held: dev.manipulation.heldId ?? null });
+            return true;
+          })()`
         );
         await sleep(500);
         for (let i = 0; i < 3; i += 1) {

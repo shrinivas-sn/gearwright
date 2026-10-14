@@ -279,6 +279,37 @@ export const B2_STEAM_PORT_DEF: SocketDefinition = {
   snapYaw: 0
 };
 
+/**
+ * B3's route ports (Branch B's open-ended beat). Same closed shape as P3's valve ports:
+ * routing is *declared* by the machine's links, so a socket never names an owner port and
+ * the ownership-conduction step is skipped.
+ *
+ * Three ports, and the third is the lesson: A reaches the heating coil, B the drawoff, and
+ * C reaches **both**, which is what makes the machine multi-solution (A+B, A+C, B+C).
+ */
+export const B3_ROUTE_A_DEF: SocketDefinition = {
+  id: 'def/b3-route-a',
+  machineId: 'B3-bypass',
+  ownerComponentId: 'b3-header',
+  socketKind: 'pipe-port',
+  accepts: ['pipe'],
+  portDirection: 'in',
+  carrier: 'pressure',
+  snapYaw: 0
+};
+
+/** Route B: the run to the drawoff. */
+export const B3_ROUTE_B_DEF: SocketDefinition = {
+  ...B3_ROUTE_A_DEF,
+  id: 'def/b3-route-b'
+};
+
+/** Route C: the cross-run that reaches *both* consumers, so it alone is half a solution. */
+export const B3_ROUTE_C_DEF: SocketDefinition = {
+  ...B3_ROUTE_A_DEF,
+  id: 'def/b3-route-c'
+};
+
 export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   DOCK_A_DEF,
   MOUNT_A_DEF,
@@ -303,7 +334,11 @@ export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   BM2_STEAM_PORT_DEF,
   // Branch B — B2's drive mount and steam port (the combining machine).
   B2_DRIVE_MOUNT_DEF,
-  B2_STEAM_PORT_DEF
+  B2_STEAM_PORT_DEF,
+  // Branch B — B3's three route ports (the open-ended beat).
+  B3_ROUTE_A_DEF,
+  B3_ROUTE_B_DEF,
+  B3_ROUTE_C_DEF
 ];
 
 export function socketDefinitionOf(defId: string): SocketDefinition | null {

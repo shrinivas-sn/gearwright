@@ -87,6 +87,10 @@ import {
 import {
   B1_CARRYABLES,
   B1_SOCKETS,
+  B2_CARRYABLES,
+  B2_SOCKETS,
+  B3_CARRYABLES,
+  B3_SOCKETS,
   BM2_CARRYABLES,
   BM2_SOCKETS,
   BM2_PROPS,
@@ -1688,6 +1692,10 @@ function boot(): void {
           BM1_PROPS,
           B1_CARRYABLES,
           B1_SOCKETS,
+          B2_CARRYABLES,
+          B2_SOCKETS,
+          B3_CARRYABLES,
+          B3_SOCKETS,
           BM2_CARRYABLES,
           BM2_SOCKETS,
           BM2_PROPS

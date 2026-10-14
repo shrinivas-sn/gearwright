@@ -31,6 +31,8 @@ export const SCANNER_BLUEPRINT = 'blueprint/scanner';
 export const MILESTONE_B1_FEEDWATER = 'milestone/b1-feedwater';
 /** Branch B — B2 "Governor" (the thermal branch's combining machine). */
 export const MILESTONE_B2_GOVERNOR = 'milestone/b2-governor';
+/** Branch B — B3 "Bypass" (the thermal branch's open-ended problem). */
+export const MILESTONE_B3_BYPASS = 'milestone/b3-bypass';
 /** Branch B — BM-2 "Steam Engine" (the thermal branch's staged capstone). */
 export const MILESTONE_BM2_STEAM_ENGINE = 'milestone/bm2-steam-engine';
 
@@ -87,8 +89,19 @@ export const REWARD_DEFINITIONS: ReadonlyArray<RewardDefinition> = [
     blueprints: []
   },
   {
+    // The open-ended beat pays in the same vocabulary as its neighbours (§27.2 rule 5):
+    // no new resource kind, no second blueprint competing with the scanner's.
+    id: MILESTONE_B3_BYPASS,
+    title: 'Bypass',
+    materials: [
+      { kind: 'brass', amount: 2 },
+      { kind: 'scrap', amount: 1 }
+    ],
+    blueprints: []
+  },
+  {
     // The thermal branch's capstone pays in materials, exactly like BM-1 — no new
-    // resource kind, no second blueprint competing with the scanner (§27.2 rule 5).
+    // resource kind, no second blueprint competing with the scanner's (§27.2 rule 5).
     id: MILESTONE_BM2_STEAM_ENGINE,
     title: 'Steam Engine',
     materials: [

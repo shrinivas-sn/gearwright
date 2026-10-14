@@ -343,6 +343,75 @@ export const B2_GOVERNOR_MACHINE: MachineDefinition = {
   maxOutput: 1.5
 };
 
+/**
+ * B3 "Bypass" (Branch B) — the Thermal Line's **open-ended problem** (§7 template beat 4),
+ * the beat Branch A ships as P3 "Three Valves".
+ *
+ * One boiler feeds two consumers through a three-port header:
+ *
+ *   - `link-b3-route-a`  boiler → heating coil   (a pipe in `socket-b3-route-a`)
+ *   - `link-b3-route-b`  boiler → drawoff        (a pipe in `socket-b3-route-b`)
+ *   - `link-b3-route-c-heat` / `-drain`  boiler → **both** (a pipe in `socket-b3-route-c`)
+ *
+ * The cross-run is the whole design: because route C declares two links, A+B, A+C and B+C
+ * all satisfy the machine, and no socket is "the answer". That is what §7 means by an
+ * open-ended problem — the requirements are output conditions, and the arrangement is the
+ * player's.
+ *
+ * `maxOutput` sits above the largest reachable value (route A and route C can both reach
+ * the heating coil, i.e. 2), so a correctly built bypass never reports `overpressure`; the
+ * shut-off valve's declared block is what jams a run.
+ */
+export const B3_BYPASS_MACHINE: MachineDefinition = {
+  id: 'B3-bypass',
+  title: 'Bypass',
+  rootNodes: [
+    { kind: 'component', id: 'b3-boiler' },
+    { kind: 'component', id: 'b3-header' },
+    { kind: 'component', id: 'b3-out-heat' },
+    { kind: 'component', id: 'b3-out-drain' }
+  ],
+  links: [
+    {
+      id: 'link-b3-route-a',
+      viaSocketId: 'socket-b3-route-a',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'b3-boiler' },
+      to: { kind: 'component', id: 'b3-out-heat' }
+    },
+    {
+      id: 'link-b3-route-b',
+      viaSocketId: 'socket-b3-route-b',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'b3-boiler' },
+      to: { kind: 'component', id: 'b3-out-drain' }
+    },
+    {
+      id: 'link-b3-route-c-heat',
+      viaSocketId: 'socket-b3-route-c',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'b3-boiler' },
+      to: { kind: 'component', id: 'b3-out-heat' }
+    },
+    {
+      id: 'link-b3-route-c-drain',
+      viaSocketId: 'socket-b3-route-c',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'b3-boiler' },
+      to: { kind: 'component', id: 'b3-out-drain' }
+    }
+  ],
+  outputs: [
+    { node: { kind: 'component', id: 'b3-out-heat' }, kind: 'pressure' },
+    { node: { kind: 'component', id: 'b3-out-drain' }, kind: 'pressure' }
+  ],
+  maxOutput: 2.5
+};
+
 export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   P1_MESH_MACHINE,
   // M8 — Branch A's second and third machines.
@@ -353,8 +422,9 @@ export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   // Branch B — B1's feedwater circuit and BM-2's staged steam engine.
   B1_FEEDWATER_MACHINE,
   BM2_STEAM_ENGINE,
-  // Branch B — B2's governor (the combining machine).
-  B2_GOVERNOR_MACHINE
+  // Branch B — B2's governor (the combining machine) and B3's bypass (the open-ended one).
+  B2_GOVERNOR_MACHINE,
+  B3_BYPASS_MACHINE
 ];
 
 export function machineDefinitionOf(machineId: string): MachineDefinition | null {

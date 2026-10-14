@@ -199,7 +199,7 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
     // sealed and its puzzles are `Locked`.
     expect(progression.branchState(BRANCH_B_ID)).toBe('Locked');
     expect(progression.initialPuzzleState('B1')).toBe('Locked');
-    for (const puzzleId of ['B1', 'B2', 'BM-2']) {
+    for (const puzzleId of ['B1', 'B2', 'B3', 'BM-2']) {
       expect(progression.initialPuzzleState(puzzleId), `${puzzleId} at boot`).toBe('Locked');
     }
 
@@ -208,15 +208,19 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
     expect(progression.initialPuzzleState('B1')).not.toBe('Locked');
     expect(progression.hubStage.id).toBe('stage/pressure-online');
 
-    // Its entry machine alone is not completion: the combining machine (B2) and the
-    // staged capstone (BM-2) must run first, exactly as BM-1 closes Branch A.
+    // Its entry machine alone is not completion: the combining machine (B2), the
+    // open-ended problem (B3) and the staged capstone (BM-2) must all run first, exactly
+    // as BM-1 closes Branch A.
     progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1']);
     expect(progression.branchState(BRANCH_B_ID)).toBe('InProgress');
 
     progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2']);
     expect(progression.branchState(BRANCH_B_ID)).toBe('InProgress');
 
-    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'BM-2']);
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3']);
+    expect(progression.branchState(BRANCH_B_ID)).toBe('InProgress');
+
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2']);
     expect(progression.branchState(BRANCH_B_ID)).toBe('Complete');
     expect(progression.hubStage.id).toBe('stage/regulator-awake');
   });

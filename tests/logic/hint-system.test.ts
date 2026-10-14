@@ -468,7 +468,15 @@ describe('hint data — §29.1 naming and the §33.1 vocabulary', () => {
   });
 
   it('ships one conceptual nudge per shipped puzzle, naming the idea and no part', () => {
-    expect(Object.keys(CONCEPTUAL_HINTS).sort()).toEqual(['b2', 'bm1', 'p1', 'p2', 'p3']);
+    expect(Object.keys(CONCEPTUAL_HINTS).sort()).toEqual([
+      'b2',
+      'b3',
+      'bm1',
+      'bm2',
+      'p1',
+      'p2',
+      'p3'
+    ]);
 
     const authoredIds = [
       ...BRANCH_A_COMPONENTS.map((component) => component.id),
@@ -489,6 +497,8 @@ describe('hint data — §29.1 naming and the §33.1 vocabulary', () => {
     expect(conceptualHintFor('BM-1')).toBe(CONCEPTUAL_HINTS['bm1']);
     expect(conceptualHintFor('BM1')).toBe(CONCEPTUAL_HINTS['bm1']);
     expect(conceptualHintFor('B2')).toBe(CONCEPTUAL_HINTS['b2']);
+    expect(conceptualHintFor('B3')).toBe(CONCEPTUAL_HINTS['b3']);
+    expect(conceptualHintFor('BM-2')).toBe(CONCEPTUAL_HINTS['bm2']);
     expect(conceptualHintFor('')).toBeNull();
     expect(conceptualHintFor('not-a-puzzle')).toBeNull();
   });

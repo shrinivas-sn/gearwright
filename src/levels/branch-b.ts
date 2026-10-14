@@ -41,6 +41,9 @@ import {
   B1_FLOW_B_DEF,
   B2_DRIVE_MOUNT_DEF,
   B2_STEAM_PORT_DEF,
+  B3_ROUTE_A_DEF,
+  B3_ROUTE_B_DEF,
+  B3_ROUTE_C_DEF,
   BM2_DRIVE_MOUNT_DEF,
   BM2_STEAM_PORT_DEF
 } from '../data/sockets.ts';
@@ -478,23 +481,119 @@ export const B2_INTERACTABLES: ReadonlyArray<Interactable> = interactablesOf(B2_
 /** B2 starts unassembled, like every other machine in the branch. */
 export const B2_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [];
 
+/* --- B3 "Bypass" ----------------------------------------------------------- */
+
+/**
+ * B3 stands in the Steam Works' **west bay** (x ≈ -7…-2, z ≈ 21…25), the mirror of B2's
+ * east bay, so the room reads as a workshop with two machine lines either side of the
+ * walk in from the doorway.
+ *
+ * One boiler feeds two consumers through a three-port header:
+ *
+ *   - the heating coil and the drawoff are the two fixed consumers (each on its own post);
+ *   - `socket-b3-route-a` reaches the coil, `-b` the drawoff, and `-c` reaches **both** —
+ *     the cross-run the machine declares two links for, which is what makes A+B, A+C and
+ *     B+C all correct (§7's open-ended beat).
+ *
+ * The three serviceable parts wait on the floor south of the header, off the entry walk.
+ */
+const B3_HEADER_Z = 23.2;
+const B3_MACHINE_Y = 0.8;
+
+export const B3_ANCHORS: ReadonlyArray<Anchor> = [
+  { id: 'anchor/b3-boiler', pose: poseAt(-6.2, 1.1, 22.6) },
+  { id: 'anchor/b3-header', pose: poseAt(-4.0, 0.3, B3_HEADER_Z) },
+  { id: 'anchor/b3-out-heat', pose: poseAt(-2.6, B3_MACHINE_Y, 21.4) },
+  { id: 'anchor/b3-out-drain', pose: poseAt(-2.6, B3_MACHINE_Y, 24.8) },
+  // The three route ports, spread along the header's own line (x), in the valve positions.
+  { id: 'anchor/b3-route-a', pose: poseAt(-5.2, B3_MACHINE_Y, B3_HEADER_Z) },
+  { id: 'anchor/b3-route-c', pose: poseAt(-4.0, B3_MACHINE_Y, B3_HEADER_Z) },
+  { id: 'anchor/b3-route-b', pose: poseAt(-2.8, B3_MACHINE_Y, B3_HEADER_Z) },
+  // Loose parts rest on the floor in a row south of the header, clear of the walk in.
+  { id: 'anchor/b3-valve-1', pose: poseAt(-5.8, 0.12, 21.4) },
+  { id: 'anchor/b3-valve-2', pose: poseAt(-4.6, 0.12, 21.4) },
+  { id: 'anchor/b3-shutoff', pose: poseAt(-3.4, 0.12, 21.4) }
+];
+
+export const b3AnchorPose = anchorLookup(B3_ANCHORS, 'B3');
+
+/** The pressure source, the header the three ports are bolted to, and the two consumers. */
+export const B3_FIXED: ReadonlyArray<ComponentInstance> = [
+  { id: 'b3-boiler', defId: BOILER_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/b3-boiler', flags: {} },
+  { id: 'b3-header', defId: MANIFOLD_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/b3-header', flags: {} },
+  { id: 'b3-out-heat', defId: OUTLET_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/b3-out-heat', flags: {} },
+  { id: 'b3-out-drain', defId: OUTLET_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/b3-out-drain', flags: {} }
+];
+
+/**
+ * Two serviceable valves and the shut-off near-miss — **all three `required`**, the same
+ * rule P3 and B2 follow: a lesson that depends on a part being present cannot survive that
+ * part being optional.
+ */
+export const B3_LOOSE_PARTS: ReadonlyArray<ComponentInstance> = [
+  { id: 'valve-b3-1', defId: VALVE_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/b3-valve-1', flags: { required: 'B3', unique: true } },
+  { id: 'valve-b3-2', defId: VALVE_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/b3-valve-2', flags: { required: 'B3', unique: true } },
+  { id: 'shutoff-b3', defId: SHUT_OFF_VALVE_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/b3-shutoff', flags: { required: 'B3', unique: true } }
+];
+
+export const B3_COMPONENTS: ReadonlyArray<ComponentInstance> = [...B3_FIXED, ...B3_LOOSE_PARTS];
+
+export const B3_CARRYABLES: ReadonlyArray<CarryableBinding> = carryablesOf(B3_LOOSE_PARTS, b3AnchorPose);
+
+export const B3_SOCKETS: ReadonlyArray<SocketInstance> = [
+  { id: 'socket-b3-route-a', defId: B3_ROUTE_A_DEF.id, pose: b3AnchorPose('anchor/b3-route-a'), halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+  { id: 'socket-b3-route-b', defId: B3_ROUTE_B_DEF.id, pose: b3AnchorPose('anchor/b3-route-b'), halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+  { id: 'socket-b3-route-c', defId: B3_ROUTE_C_DEF.id, pose: b3AnchorPose('anchor/b3-route-c'), halfExtents: { x: 0.4, y: 0.4, z: 0.4 } }
+];
+
+const B3_IRON_COLOR = 0x6f7b86;
+const B3_BOILER_COLOR = 0xc06a4a;
+const B3_OUTLET_COLOR = 0x5fb8a6;
+const B3_MANIFOLD_COLOR = 0x7d8894;
+
+/** Boiler plinth and the two consumer posts (solid); the header sits flush on the floor. */
+const B3_BOXES: ReadonlyArray<StructureBox> = [
+  { min: [-6.9, 0, 22.0], max: [-5.7, 0.5, 23.2], color: B3_IRON_COLOR, solid: true },
+  { min: [-2.9, 0, 21.1], max: [-2.3, 0.5, 21.7], color: B3_IRON_COLOR, solid: true },
+  { min: [-2.9, 0, 24.5], max: [-2.3, 0.5, 25.1], color: B3_IRON_COLOR, solid: true }
+];
+
+export const B3_WORLD: PlacedWorld = {
+  colliders: structureColliders(B3_BOXES),
+  meshes: [
+    ...structureMeshes(B3_BOXES),
+    componentMesh(b3AnchorPose('anchor/b3-boiler'), BOILER_DEF.halfExtents, B3_BOILER_COLOR),
+    componentMesh(b3AnchorPose('anchor/b3-header'), MANIFOLD_DEF.halfExtents, B3_MANIFOLD_COLOR),
+    componentMesh(b3AnchorPose('anchor/b3-out-heat'), OUTLET_DEF.halfExtents, B3_OUTLET_COLOR),
+    componentMesh(b3AnchorPose('anchor/b3-out-drain'), OUTLET_DEF.halfExtents, B3_OUTLET_COLOR)
+  ]
+};
+
+export const B3_INTERACTABLES: ReadonlyArray<Interactable> = interactablesOf(B3_CARRYABLES);
+
+/** B3 starts unplumbed: the header empty, both consumers cold. */
+export const B3_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [];
+
 /* --- Branch B, assembled --------------------------------------------------- */
 
 export const BRANCH_B_COMPONENTS: ReadonlyArray<ComponentInstance> = [
   ...B1_COMPONENTS,
   ...B2_COMPONENTS,
+  ...B3_COMPONENTS,
   ...BM2_COMPONENTS
 ];
 
 export const BRANCH_B_SOCKETS: ReadonlyArray<SocketInstance> = [
   ...B1_SOCKETS,
   ...B2_SOCKETS,
+  ...B3_SOCKETS,
   ...BM2_SOCKETS
 ];
 
 export const BRANCH_B_CARRYABLES: ReadonlyArray<CarryableBinding> = [
   ...B1_CARRYABLES,
   ...B2_CARRYABLES,
+  ...B3_CARRYABLES,
   ...BM2_CARRYABLES
 ];
 
@@ -506,16 +605,23 @@ export const BRANCH_B_CARRYABLES: ReadonlyArray<CarryableBinding> = [
 export const BRANCH_B_INTERACTABLES: ReadonlyArray<Interactable> = [
   ...B1_INTERACTABLES,
   ...B2_INTERACTABLES,
+  ...B3_INTERACTABLES,
   ...interactablesOf(BM2_CARRYABLES)
 ];
 
 export const BRANCH_B_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [
   ...B1_INITIAL_ATTACHMENTS,
   ...B2_INITIAL_ATTACHMENTS,
+  ...B3_INITIAL_ATTACHMENTS,
   ...BM2_INITIAL_ATTACHMENTS
 ];
 
 export const BRANCH_B_WORLD: PlacedWorld = {
-  colliders: [...B1_WORLD.colliders, ...B2_WORLD.colliders, ...BM2_WORLD.colliders],
-  meshes: [...B1_WORLD.meshes, ...B2_WORLD.meshes, ...BM2_WORLD.meshes]
+  colliders: [
+    ...B1_WORLD.colliders,
+    ...B2_WORLD.colliders,
+    ...B3_WORLD.colliders,
+    ...BM2_WORLD.colliders
+  ],
+  meshes: [...B1_WORLD.meshes, ...B2_WORLD.meshes, ...B3_WORLD.meshes, ...BM2_WORLD.meshes]
 };
