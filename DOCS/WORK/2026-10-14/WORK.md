@@ -94,6 +94,9 @@ See `DOCS/STATUS.md` for the standing project status and the `## Next up` resume
 - Stage 3: mouth + re-seated ears for a face that reads at TPP distance; rear jacket
   panel for torso depth. `npm run build` green — app 242.95 kB (gzip 71.13 kB),
   `three` unchanged, lazy `rig-preview` unchanged. Still one mesh/material, 19 bones.
+- Stage 3 committed as `605ccd2`. Tree clean; `boot` harness re-run stalled on Chrome
+  startup (30 s tool timeout, no report written) — typecheck + production build are the
+  proof for this stage, live-harness re-run stays open.
 
 ## Still open after this session
 
