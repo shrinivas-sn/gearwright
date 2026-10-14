@@ -16,6 +16,10 @@
  * are canonical anchors — once a component is attached, the socket's pose is what it
  * adopts (§21.3) — so these numbers are read by presentation and physics, never by
  * validation (§24.3).
+ *
+ * The room holds the branch's whole curve: B1's feedwater header at z = 26.5, B2's
+ * governor in the east bay (z ≈ 23) and BM-2's machine line at the north end (z = 32),
+ * with the middle of the room left clear for the walk in from the doorway.
  */
 
 import {
@@ -24,13 +28,22 @@ import {
   componentDefinitionOf,
   DRIVEN_SHAFT_DEF,
   GEAR_DEF,
+  GOVERNOR_DEF,
+  IDLER_GEAR_DEF,
   MANIFOLD_DEF,
   OUTLET_DEF,
   SHAFT_DEF,
   SHUT_OFF_VALVE_DEF,
   VALVE_DEF
 } from '../data/components.ts';
-import { B1_FLOW_A_DEF, B1_FLOW_B_DEF, BM2_DRIVE_MOUNT_DEF, BM2_STEAM_PORT_DEF } from '../data/sockets.ts';
+import {
+  B1_FLOW_A_DEF,
+  B1_FLOW_B_DEF,
+  B2_DRIVE_MOUNT_DEF,
+  B2_STEAM_PORT_DEF,
+  BM2_DRIVE_MOUNT_DEF,
+  BM2_STEAM_PORT_DEF
+} from '../data/sockets.ts';
 import type { Attachment } from '../game-state/machine-graph.ts';
 import type { Pose, SocketInstance } from '../game-state/component-model.ts';
 import type { ComponentInstance } from '../game-state/component-registry.ts';
@@ -364,13 +377,126 @@ export function bm2PropMeshes(performed: (actionId: string) => boolean): Readonl
 /** BM-2 starts unassembled: neither the gear nor the pipe is mounted. */
 export const BM2_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [];
 
+/* --- B2 "Governor" --------------------------------------------------------- */
+
+/**
+ * B2 stands in the Steam Works' **east bay** (x ≈ 3–7, z ≈ 22–25), clear of B1's header
+ * line (z = 26.5) and BM-2's machine line (z = 30.6–32.5) — and clear of the middle of
+ * the room, which is the walk from the doorway to B1.
+ *
+ * The drive train runs west → east along z = 23 (crank, the drive mount, the governor);
+ * the steam line runs south → north along x = 5.6/7.0 (gauge, the steam port, the
+ * boiler). Two lines meeting at the machine is the point of the combining beat: the
+ * frame reads as one machine wanting two different things.
+ */
+const B2_DRIVE_Z = 23;
+const B2_MACHINE_Y = 1.0;
+
+export const B2_ANCHORS: ReadonlyArray<Anchor> = [
+  { id: 'anchor/b2-crank', pose: poseAt(3.2, B2_MACHINE_Y, B2_DRIVE_Z) },
+  { id: 'anchor/b2-governor', pose: poseAt(5.6, B2_MACHINE_Y, B2_DRIVE_Z) },
+  { id: 'anchor/b2-drive', pose: poseAt(4.4, B2_MACHINE_Y, B2_DRIVE_Z) },
+  { id: 'anchor/b2-gauge', pose: poseAt(5.6, 0.9, 24.7) },
+  { id: 'anchor/b2-boiler', pose: poseAt(7.0, 1.1, 24.7) },
+  { id: 'anchor/b2-steam', pose: poseAt(6.3, B2_MACHINE_Y, 24.7) },
+  // Loose parts wait on the floor in front of the bay: the gear and the idler are the
+  // directionality pair (§7's P2 lesson), the valve and the shut-off valve the pressure
+  // pair the branch's own machines already taught.
+  { id: 'anchor/b2-gear', pose: poseAt(3.4, 0.07, 21.8) },
+  { id: 'anchor/b2-idler', pose: poseAt(4.3, 0.07, 21.8) },
+  { id: 'anchor/b2-valve', pose: poseAt(5.2, 0.12, 21.8) },
+  { id: 'anchor/b2-shutoff', pose: poseAt(6.1, 0.12, 21.8) }
+];
+
+export const b2AnchorPose = anchorLookup(B2_ANCHORS, 'B2');
+
+/** The crank (rotation source), the governor, and the boiler → gauge steam line. */
+export const B2_FIXED: ReadonlyArray<ComponentInstance> = [
+  { id: 'b2-crank', defId: SHAFT_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/b2-crank', flags: {} },
+  { id: 'b2-governor', defId: GOVERNOR_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/b2-governor', flags: {} },
+  { id: 'b2-boiler', defId: BOILER_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/b2-boiler', flags: {} },
+  { id: 'b2-gauge', defId: OUTLET_DEF.id, kind: 'fixed', spawnAnchorId: 'anchor/b2-gauge', flags: {} }
+];
+
+/**
+ * Four loose parts, and **all four are `required`** — the two near-misses included.
+ * P2 ships its idler as a required part for the same reason: a lesson that depends on a
+ * part being present cannot survive that part being optional (§registry integrity).
+ */
+export const B2_LOOSE_PARTS: ReadonlyArray<ComponentInstance> = [
+  { id: 'gear-b2', defId: GEAR_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/b2-gear', flags: { required: 'B2', unique: true } },
+  { id: 'idler-b2', defId: IDLER_GEAR_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/b2-idler', flags: { required: 'B2', unique: true } },
+  { id: 'valve-b2', defId: VALVE_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/b2-valve', flags: { required: 'B2', unique: true } },
+  { id: 'shutoff-b2', defId: SHUT_OFF_VALVE_DEF.id, kind: 'carryable', spawnAnchorId: 'anchor/b2-shutoff', flags: { required: 'B2', unique: true } }
+];
+
+export const B2_COMPONENTS: ReadonlyArray<ComponentInstance> = [...B2_FIXED, ...B2_LOOSE_PARTS];
+
+export const B2_CARRYABLES: ReadonlyArray<CarryableBinding> = carryablesOf(B2_LOOSE_PARTS, b2AnchorPose);
+
+export const B2_SOCKETS: ReadonlyArray<SocketInstance> = [
+  {
+    id: 'socket-b2-drive',
+    defId: B2_DRIVE_MOUNT_DEF.id,
+    pose: b2AnchorPose('anchor/b2-drive'),
+    halfExtents: { x: 0.4, y: 0.4, z: 0.4 }
+  },
+  {
+    id: 'socket-b2-steam',
+    defId: B2_STEAM_PORT_DEF.id,
+    pose: b2AnchorPose('anchor/b2-steam'),
+    halfExtents: { x: 0.4, y: 0.4, z: 0.4 }
+  }
+];
+
+const B2_GOVERNOR_COLOR = 0xb08a4a;
+
+const B2_BOXES: ReadonlyArray<StructureBox> = [
+  // Crank pedestal (solid), clear of the drive socket's volume.
+  { min: [2.9, 0, 22.6], max: [3.5, 0.8, 23.4], color: THERMAL_IRON, solid: true },
+  // Governor plinth (solid) — also the governor's physical presence.
+  { min: [5.1, 0, 22.5], max: [6.1, 0.5, 23.5], color: THERMAL_IRON, solid: true },
+  // Gauge post (solid), clear of the steam port's volume.
+  { min: [5.3, 0, 24.4], max: [5.9, 0.5, 25.0], color: THERMAL_IRON, solid: true },
+  // Boiler plinth (solid).
+  { min: [6.5, 0, 24.2], max: [7.5, 0.5, 25.2], color: THERMAL_IRON, solid: true }
+];
+
+export const B2_WORLD: PlacedWorld = {
+  colliders: structureColliders(B2_BOXES),
+  meshes: [
+    ...structureMeshes(B2_BOXES),
+    componentMesh(b2AnchorPose('anchor/b2-crank'), SHAFT_DEF.halfExtents, 0xb8c2cc),
+    componentMesh(b2AnchorPose('anchor/b2-governor'), GOVERNOR_DEF.halfExtents, B2_GOVERNOR_COLOR),
+    componentMesh(b2AnchorPose('anchor/b2-boiler'), BOILER_DEF.halfExtents, THERMAL_BOILER),
+    componentMesh(b2AnchorPose('anchor/b2-gauge'), OUTLET_DEF.halfExtents, THERMAL_OUTLET)
+  ]
+};
+
+export const B2_INTERACTABLES: ReadonlyArray<Interactable> = interactablesOf(B2_CARRYABLES);
+
+/** B2 starts unassembled, like every other machine in the branch. */
+export const B2_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [];
+
 /* --- Branch B, assembled --------------------------------------------------- */
 
-export const BRANCH_B_COMPONENTS: ReadonlyArray<ComponentInstance> = [...B1_COMPONENTS, ...BM2_COMPONENTS];
+export const BRANCH_B_COMPONENTS: ReadonlyArray<ComponentInstance> = [
+  ...B1_COMPONENTS,
+  ...B2_COMPONENTS,
+  ...BM2_COMPONENTS
+];
 
-export const BRANCH_B_SOCKETS: ReadonlyArray<SocketInstance> = [...B1_SOCKETS, ...BM2_SOCKETS];
+export const BRANCH_B_SOCKETS: ReadonlyArray<SocketInstance> = [
+  ...B1_SOCKETS,
+  ...B2_SOCKETS,
+  ...BM2_SOCKETS
+];
 
-export const BRANCH_B_CARRYABLES: ReadonlyArray<CarryableBinding> = [...B1_CARRYABLES, ...BM2_CARRYABLES];
+export const BRANCH_B_CARRYABLES: ReadonlyArray<CarryableBinding> = [
+  ...B1_CARRYABLES,
+  ...B2_CARRYABLES,
+  ...BM2_CARRYABLES
+];
 
 /**
  * The static interaction targets. BM-2's staged props are *not* here: whether they
@@ -379,15 +505,17 @@ export const BRANCH_B_CARRYABLES: ReadonlyArray<CarryableBinding> = [...B1_CARRY
  */
 export const BRANCH_B_INTERACTABLES: ReadonlyArray<Interactable> = [
   ...B1_INTERACTABLES,
+  ...B2_INTERACTABLES,
   ...interactablesOf(BM2_CARRYABLES)
 ];
 
 export const BRANCH_B_INITIAL_ATTACHMENTS: ReadonlyArray<Attachment> = [
   ...B1_INITIAL_ATTACHMENTS,
+  ...B2_INITIAL_ATTACHMENTS,
   ...BM2_INITIAL_ATTACHMENTS
 ];
 
 export const BRANCH_B_WORLD: PlacedWorld = {
-  colliders: [...B1_WORLD.colliders, ...BM2_WORLD.colliders],
-  meshes: [...B1_WORLD.meshes, ...BM2_WORLD.meshes]
+  colliders: [...B1_WORLD.colliders, ...B2_WORLD.colliders, ...BM2_WORLD.colliders],
+  meshes: [...B1_WORLD.meshes, ...B2_WORLD.meshes, ...BM2_WORLD.meshes]
 };

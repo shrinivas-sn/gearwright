@@ -32,6 +32,7 @@ import {
   BRANCH_A_SOCKETS,
   P1_INITIAL_ATTACHMENTS
 } from '../../src/levels/branch-a.ts';
+import { BRANCH_B_COMPONENTS, BRANCH_B_SOCKETS } from '../../src/levels/branch-b.ts';
 import { p1Content } from './support/p1-mesh.ts';
 
 /**
@@ -467,11 +468,13 @@ describe('hint data — §29.1 naming and the §33.1 vocabulary', () => {
   });
 
   it('ships one conceptual nudge per shipped puzzle, naming the idea and no part', () => {
-    expect(Object.keys(CONCEPTUAL_HINTS).sort()).toEqual(['bm1', 'p1', 'p2', 'p3']);
+    expect(Object.keys(CONCEPTUAL_HINTS).sort()).toEqual(['b2', 'bm1', 'p1', 'p2', 'p3']);
 
     const authoredIds = [
       ...BRANCH_A_COMPONENTS.map((component) => component.id),
-      ...BRANCH_A_SOCKETS.map((socket) => socket.id)
+      ...BRANCH_A_SOCKETS.map((socket) => socket.id),
+      ...BRANCH_B_COMPONENTS.map((component) => component.id),
+      ...BRANCH_B_SOCKETS.map((socket) => socket.id)
     ];
     for (const nudge of Object.values(CONCEPTUAL_HINTS)) {
       expect(nudge.length).toBeGreaterThan(0);
@@ -485,6 +488,7 @@ describe('hint data — §29.1 naming and the §33.1 vocabulary', () => {
     expect(conceptualHintFor('p2')).toBe(CONCEPTUAL_HINTS['p2']);
     expect(conceptualHintFor('BM-1')).toBe(CONCEPTUAL_HINTS['bm1']);
     expect(conceptualHintFor('BM1')).toBe(CONCEPTUAL_HINTS['bm1']);
+    expect(conceptualHintFor('B2')).toBe(CONCEPTUAL_HINTS['b2']);
     expect(conceptualHintFor('')).toBeNull();
     expect(conceptualHintFor('not-a-puzzle')).toBeNull();
   });

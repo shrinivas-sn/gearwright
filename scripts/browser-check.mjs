@@ -472,6 +472,8 @@ window.__probe = {
       bm1Props: branch.BM1_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })),
       b1Parts: branchB ? parts(branchB.B1_CARRYABLES) : [],
       b1Sockets: branchB ? sockets(branchB.B1_SOCKETS) : [],
+      b2Parts: branchB ? parts(branchB.B2_CARRYABLES) : [],
+      b2Sockets: branchB ? sockets(branchB.B2_SOCKETS) : [],
       bm2Parts: branchB ? parts(branchB.BM2_CARRYABLES) : [],
       bm2Sockets: branchB ? sockets(branchB.BM2_SOCKETS) : [],
       bm2Props: branchB ? branchB.BM2_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })) : [],
@@ -714,6 +716,8 @@ async function scenarioFocus(cdp) {
     ...level.bm1Sockets.map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.b1Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.b1Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
+    ...(level.b2Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
+    ...(level.b2Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.bm2Parts ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...(level.bm2Sockets ?? []).map((entry) => ({ id: entry.id, box: boxOf(entry) })),
     ...level.p1.map((entry) => ({ id: entry.id, box: boxOf(entry) }))
@@ -953,6 +957,26 @@ async function scenarioBranch(cdp) {
     progress: await evaluate(cdp, 'window.__probe.progress()')
   };
 
+  // The thermal branch's curve, played live. Branch A's completion opened the door, so
+  // B1 is live the moment the burst above lands and B2 follows it — ordinary `playPair`
+  // runs against the shipped geometry, so the new content is proven *reachable and
+  // completable in the real composition*, not only in the logic suites.
+  report.data.branchPairs.push(await playPair('B1 valve 1 -> flow A', null, 'valve-b1-1', 'socket-b1-flow-a', level.b1Parts, level.b1Sockets));
+  report.data.branchPairs.push(await playPair('B1 valve 2 -> flow B', 'B1', 'valve-b1-2', 'socket-b1-flow-b', level.b1Parts, level.b1Sockets));
+  report.data.branchAfterB1 = {
+    hud: await evaluate(cdp, 'window.__probe.hud()'),
+    progress: await evaluate(cdp, 'window.__probe.progress()')
+  };
+  report.data.branchPairs.push(await playPair('B2 gear -> drive', null, 'gear-b2', 'socket-b2-drive', level.b2Parts, level.b2Sockets));
+  report.data.branchPairs.push(await playPair('B2 valve -> steam', 'B2', 'valve-b2', 'socket-b2-steam', level.b2Parts, level.b2Sockets));
+  drainConsole(cdp);
+  report.data.branchAfterB2 = {
+    // The combining machine alone is not the branch: BM-2 is still outstanding, so the
+    // branch is InProgress and the objective line is BM-2's.
+    hud: await evaluate(cdp, 'window.__probe.hud()'),
+    progress: await evaluate(cdp, 'window.__probe.progress()')
+  };
+
   // The clue beat (§6 step 8): the plate is awake, so focusing it *is* the discovery.
   const plate = level.hubTargets.find((entry) => entry.id === 'clue/regulator-plate');
   const plateFocus = await focusTarget(cdp, 'clue/regulator-plate', boxOf(plate));
@@ -981,6 +1005,51 @@ async function scenarioBranch(cdp) {
     progress: await evaluate(cdp, 'window.__probe.progress()'),
     hud: await evaluate(cdp, 'window.__probe.hud()')
   };
+}
+
+/** TEMPORARY diagnostic — see the B2 steam port's dock attempts with the live part pose. */
+async function scenarioB2Audit(cdp) {
+  const level = await evaluate(cdp, 'window.__probe.level()');
+  const valve = level.b2Parts.find((entry) => entry.id === 'valve-b2');
+  const socket = level.b2Sockets.find((entry) => entry.id === 'socket-b2-steam');
+  const grab = await grabPart(cdp, valve);
+  const rows = [];
+  for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+    for (const back of [1.5, 1.2, 1.9, 2.3]) {
+      const px = socket.center.x + dx * back;
+      const pz = socket.center.z + dz * back;
+      const yaw = Math.atan2(-(socket.center.x - px), -(socket.center.z - pz));
+      await evaluate(
+        cdp,
+        `(async () => { await window.__probe.hopTo(${px}, ${pz}, ${yaw}); await window.__probe.pitchHome(); await window.__probe.pitchTo(0.0); await window.__probe.aimYaw(${yaw}); return true; })()`
+      );
+      await sleep(700);
+      const sample = await evaluate(
+        cdp,
+        `(() => {
+          const dev = window.__gearwrightDev;
+          const pose = dev.manipulation.currentPose;
+          return {
+            player: dev.player.snapshot().position,
+            heldId: dev.manipulation.heldId,
+            part: { x: pose.center.x, y: pose.center.y, z: pose.center.z },
+            previewSocketId: dev.manipulation.previewSocketId,
+            socketText: window.__probe.hud().socket?.text ?? null
+          };
+        })()`
+      );
+      const dist = Math.hypot(
+        sample.part.x - socket.center.x,
+        sample.part.y - socket.center.y,
+        sample.part.z - socket.center.z
+      );
+      rows.push({ dir: `${dx},${dz}`, back, px, pz, dist: Number(dist.toFixed(3)), ...sample });
+      log(`  b2audit dir ${dx},${dz} back ${back}: ${sample.socketText} | part ${sample.part.x.toFixed(2)},${sample.part.y.toFixed(2)},${sample.part.z.toFixed(2)} | d=${dist.toFixed(2)}`);
+      if (sample.heldId === null) break;
+    }
+  }
+  report.data.b2audit = { grab, socket, rows };
+  drainConsole(cdp);
 }
 
 async function main() {
@@ -1031,6 +1100,7 @@ async function main() {
   if (SCENARIO === 'boot') await scenarioBoot(cdp);
   if (SCENARIO === 'title') await scenarioTitle(cdp);
   if (SCENARIO === 'focus') await scenarioFocus(cdp);
+  if (SCENARIO === 'b2audit') await scenarioB2Audit(cdp);
   if (SCENARIO === 'hold') {
     // PLAN T1.1 regression: a human-length E press (~160 ms ≈ 5 fixed steps) must grab
     // without rotating the part.

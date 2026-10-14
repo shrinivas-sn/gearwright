@@ -276,6 +276,27 @@ export const BM1_DYNAMO_DEF: ComponentDefinition = {
   ]
 };
 
+/**
+ * B2's governor (Branch B): the thermal branch's combining machine's output end.
+ *
+ * It declares **no ports on purpose** — both of B2's adjacencies are declared by the
+ * machine's links (`data/machines.ts`), exactly as P3's manifold does, so the governor
+ * is a real component the requirements and outputs can name without conducting anything
+ * by itself. Its two carriers are deliberately on two nodes (the governor turns, the
+ * gauge reads), the rule BM-1 records: `MachineGraph` keeps one node state per node, so
+ * hanging a rotation and a pressure output on the same component would report one
+ * carrier's value under the other's kind.
+ */
+export const GOVERNOR_DEF: ComponentDefinition = {
+  id: 'def/governor',
+  kind: 'fixed',
+  tags: [],
+  massClass: 'heavy',
+  allowedAxes: [],
+  halfExtents: { x: 0.5, y: 0.6, z: 0.5 },
+  grabbable: false
+};
+
 export const COMPONENT_DEFINITIONS: ReadonlyArray<ComponentDefinition> = [
   CRATE_DEF,
   PLATE_DEF,
@@ -293,7 +314,9 @@ export const COMPONENT_DEFINITIONS: ReadonlyArray<ComponentDefinition> = [
   SHUT_OFF_VALVE_DEF,
   MANIFOLD_DEF,
   // ADR-018 / M9 remainder — BM-1's dynamo.
-  BM1_DYNAMO_DEF
+  BM1_DYNAMO_DEF,
+  // Branch B — B2's governor (the thermal branch's combining machine).
+  GOVERNOR_DEF
 ];
 
 export function componentDefinitionOf(defId: string): ComponentDefinition | null {

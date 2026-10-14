@@ -29,6 +29,8 @@ export const SCANNER_BLUEPRINT = 'blueprint/scanner';
 
 /** Branch B — B1 "Feedwater" (the thermal branch's entry machine). */
 export const MILESTONE_B1_FEEDWATER = 'milestone/b1-feedwater';
+/** Branch B — B2 "Governor" (the thermal branch's combining machine). */
+export const MILESTONE_B2_GOVERNOR = 'milestone/b2-governor';
 /** Branch B — BM-2 "Steam Engine" (the thermal branch's staged capstone). */
 export const MILESTONE_BM2_STEAM_ENGINE = 'milestone/bm2-steam-engine';
 
@@ -69,6 +71,18 @@ export const REWARD_DEFINITIONS: ReadonlyArray<RewardDefinition> = [
     materials: [
       { kind: 'brass', amount: 2 },
       { kind: 'sealant', amount: 2 }
+    ],
+    blueprints: []
+  },
+  {
+    // The combining machine pays like its neighbours — materials the upgrade pipeline
+    // will consume (§28), no new resource kind and no second blueprint competing with
+    // the scanner's (§27.2 rule 5).
+    id: MILESTONE_B2_GOVERNOR,
+    title: 'Governor',
+    materials: [
+      { kind: 'scrap', amount: 2 },
+      { kind: 'brass', amount: 2 }
     ],
     blueprints: []
   },

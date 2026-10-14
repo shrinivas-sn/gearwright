@@ -64,8 +64,8 @@ export const HINT_LEVEL_DEFINITIONS: ReadonlyArray<HintLevelDefinition> = [
  * part, a socket, a direction or an order, because that is the placement list §29.1 refuses
  * to give ("Never given").
  *
- * Keys are the content slugs (`p1` … `bm1`). The shipped `PuzzleDefinition.id`s are `P1`,
- * `P2`, `P3` and BM-1 arrives as `BM1`, so callers should resolve through
+ * Keys are the content slugs (`p1` … `bm2`). The shipped `PuzzleDefinition.id`s are `P1`,
+ * `P2`, `P3`, `BM-1`, `B1` …; `BM-1` arrives as `BM1`, so callers should resolve through
  * `conceptualHintFor()` rather than indexing this record with an SM id — a raw lookup with
  * `P1` would silently return `undefined` and the nudge would never be seen.
  */
@@ -73,7 +73,8 @@ export const CONCEPTUAL_HINTS: Readonly<Record<string, string>> = {
   p1: 'Two shafts mounted side by side are not connected. Motion has to pass through a part that turns with the drive — fitting is not conducting.',
   p2: 'Motion does not keep its sense: the part that carries the drive decides which way the output turns.',
   p3: 'What matters is that pressure can travel from the source to each outlet — and that nothing dead-ends the flow.',
-  bm1: 'Some machines ask to be brought up in order: build it, prime it, then drive it. Order is part of the mechanism.'
+  bm1: 'Some machines ask to be brought up in order: build it, prime it, then drive it. Order is part of the mechanism.',
+  b2: 'A machine can want two different things at once — motion and flow arrive by different parts, and the part carrying the drive decides which way the output turns.'
 };
 
 /** `p1`, `bm1` … — the lookup form of a puzzle id, so `P1`, `BM1` and `BM-1` all resolve. */

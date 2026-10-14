@@ -246,6 +246,39 @@ export const BM2_STEAM_PORT_DEF: SocketDefinition = {
   snapYaw: 0
 };
 
+/**
+ * B2's drive mount (Branch B): the gear-mount the governor's train is bridged through,
+ * the same definition shape as BM-1's and BM-2's. Accepting `plate` as well as `gear` is
+ * what keeps the branch's "fits, cannot bridge" lesson (§21.4) in every machine — a
+ * blanking plate seats here and turns nothing.
+ */
+export const B2_DRIVE_MOUNT_DEF: SocketDefinition = {
+  id: 'def/b2-drive-mount',
+  machineId: 'B2-governor',
+  ownerComponentId: 'b2-governor',
+  socketKind: 'gear-mount',
+  accepts: ['gear', 'plate'],
+  portDirection: 'in',
+  carrier: 'rotation',
+  snapYaw: 0
+};
+
+/**
+ * B2's steam port: the pressure run from the boiler to the gauge. Same shape as B1's
+ * feedwater ports — routing is declared by the machine's links, so `ownerPortId` is
+ * omitted and the ownership-conduction step is skipped.
+ */
+export const B2_STEAM_PORT_DEF: SocketDefinition = {
+  id: 'def/b2-steam-port',
+  machineId: 'B2-governor',
+  ownerComponentId: 'b2-gauge',
+  socketKind: 'pipe-port',
+  accepts: ['pipe'],
+  portDirection: 'in',
+  carrier: 'pressure',
+  snapYaw: 0
+};
+
 export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   DOCK_A_DEF,
   MOUNT_A_DEF,
@@ -267,7 +300,10 @@ export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   B1_FLOW_B_DEF,
   // Branch B — BM-2's drive mount and steam port.
   BM2_DRIVE_MOUNT_DEF,
-  BM2_STEAM_PORT_DEF
+  BM2_STEAM_PORT_DEF,
+  // Branch B — B2's drive mount and steam port (the combining machine).
+  B2_DRIVE_MOUNT_DEF,
+  B2_STEAM_PORT_DEF
 ];
 
 export function socketDefinitionOf(defId: string): SocketDefinition | null {

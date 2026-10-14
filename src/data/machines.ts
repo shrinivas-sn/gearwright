@@ -286,6 +286,63 @@ export const BM2_STEAM_ENGINE: MachineDefinition = {
   primingActions: BM2_PRIMING_ACTIONS
 };
 
+/**
+ * B2 "Governor" (Branch B) — the thermal branch's **combining machine** (§6 beat 3).
+ *
+ * Branch A's combining machine (P2) teaches that a drive has a *sense*; Branch B's
+ * combines that lesson with the branch's own two-carrier machinery, on one frame:
+ *
+ *   - `link-b2-drive`  b2-crank → b2-governor  (a gear in `socket-b2-drive`)
+ *   - `link-b2-steam`  b2-boiler → b2-gauge    (a pipe in `socket-b2-steam`)
+ *
+ * Neither link declares a sense: the crank's `drive` port seeds `cw` and whichever part
+ * bridges the link flips it if it declares `reverses` — so the direction predicate
+ * (§7) stays a property of the *parts*, exactly as it is for P2, and the same content
+ * (a plain gear vs an idler) decides it here too. Nothing in code knows what a
+ * "governor" is.
+ *
+ * The two carriers are kept on separate output nodes, the rule BM-1 records:
+ * `MachineGraph` keeps one node state per node (the alphabetically-first carrier wins),
+ * so a rotation output and a pressure output on one component would report one
+ * carrier's value under the other's kind. Two nodes is also the honest reading — the
+ * governor turns, the gauge reads.
+ */
+export const B2_GOVERNOR_MACHINE: MachineDefinition = {
+  id: 'B2-governor',
+  title: 'Governor',
+  rootNodes: [
+    { kind: 'component', id: 'b2-crank' },
+    { kind: 'component', id: 'b2-governor' },
+    { kind: 'component', id: 'b2-boiler' },
+    { kind: 'component', id: 'b2-gauge' }
+  ],
+  links: [
+    {
+      id: 'link-b2-drive',
+      viaSocketId: 'socket-b2-drive',
+      viaTags: ['gear'],
+      carrier: 'rotation',
+      from: { kind: 'component', id: 'b2-crank' },
+      to: { kind: 'component', id: 'b2-governor' }
+    },
+    {
+      id: 'link-b2-steam',
+      viaSocketId: 'socket-b2-steam',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'b2-boiler' },
+      to: { kind: 'component', id: 'b2-gauge' }
+    }
+  ],
+  outputs: [
+    { node: { kind: 'component', id: 'b2-governor' }, kind: 'rotation' },
+    { node: { kind: 'component', id: 'b2-gauge' }, kind: 'pressure' }
+  ],
+  // Above every reachable value (each output is 1), so a correctly built governor never
+  // reports `overpressure`; the shut-off valve's declared block is what jams it.
+  maxOutput: 1.5
+};
+
 export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   P1_MESH_MACHINE,
   // M8 — Branch A's second and third machines.
@@ -295,7 +352,9 @@ export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   BM1_PRESSURE_DYNAMO,
   // Branch B — B1's feedwater circuit and BM-2's staged steam engine.
   B1_FEEDWATER_MACHINE,
-  BM2_STEAM_ENGINE
+  BM2_STEAM_ENGINE,
+  // Branch B — B2's governor (the combining machine).
+  B2_GOVERNOR_MACHINE
 ];
 
 export function machineDefinitionOf(machineId: string): MachineDefinition | null {

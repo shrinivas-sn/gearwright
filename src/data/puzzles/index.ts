@@ -9,13 +9,14 @@
 
 import type { PuzzleDefinition } from '../../game-state/puzzle-system.ts';
 import { B1_PUZZLE } from './b1.ts';
+import { B2_PUZZLE } from './b2.ts';
 import { BM1_PUZZLE } from './bm1.ts';
 import { BM2_PUZZLE } from './bm2.ts';
 import { P1_PUZZLE } from './p1.ts';
 import { P2_PUZZLE } from './p2.ts';
 import { P3_PUZZLE } from './p3.ts';
 
-export { B1_PUZZLE, BM1_PUZZLE, BM2_PUZZLE, P1_PUZZLE, P2_PUZZLE, P3_PUZZLE };
+export { B1_PUZZLE, B2_PUZZLE, BM1_PUZZLE, BM2_PUZZLE, P1_PUZZLE, P2_PUZZLE, P3_PUZZLE };
 
 export const PUZZLE_DEFINITIONS: ReadonlyArray<PuzzleDefinition> = [
   P1_PUZZLE,
@@ -23,7 +24,9 @@ export const PUZZLE_DEFINITIONS: ReadonlyArray<PuzzleDefinition> = [
   P3_PUZZLE,
   // ADR-018 / M9 remainder — the branch machine closes the gallery.
   BM1_PUZZLE,
-  // Branch B — the Thermal Line's entry machine and its staged capstone.
+  // Branch B — the Thermal Line's entry machine, its combining machine, and its
+  // staged capstone (the order the objective line walks them in).
   B1_PUZZLE,
+  B2_PUZZLE,
   BM2_PUZZLE
 ];
