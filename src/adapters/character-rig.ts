@@ -727,6 +727,7 @@ export class CharacterRig {
     add('spine', tapered(0.155, 0.175, 0.09, 14), JACKET_DARK_COLOR, [0, -0.15, 0.01], [1.18, 1, 0.85]);
     // Chest: broad jacket shoulders tapering to the waist, open collar with shirt beneath.
     add('chest', tapered(0.185, 0.15, 0.22, 16), JACKET_COLOR, [0, -0.1, 0], [1.22, 1, 0.8]);
+    add('chest', tapered(0.165, 0.145, 0.2, 14), JACKET_DARK_COLOR, [0, -0.1, 0.045], [1.18, 1, 0.72]);
     add('chest', tapered(0.105, 0.125, 0.17, 12), SHIRT_COLOR, [0, -0.1, -0.055], [1, 1, 0.55]);
     add('chest', box(0.055, 0.09, 0.025), SHIRT_COLOR, [0, -0.035, -0.115]);
     add('chest', tapered(0.035, 0.05, 0.1, 10), STRAP_COLOR, [0, -0.13, -0.115], [1.4, 1, 0.5]);
@@ -742,18 +743,19 @@ export class CharacterRig {
     add('spine', box(0.26, 0.035, 0.19), STRAP_COLOR, [0, -0.03, 0.01]);
     // Neck + trapezius wedge so the head never floats above the shoulders.
     add('neck', tapered(0.062, 0.085, 0.12, 12), SKIN_SHADOW_COLOR, [0, -0.09, 0.005], [1.35, 1, 0.95]);
-    // Head: cranium, tapered jaw, nose, ears, hair cap + bun, brows and eyes on -Z face.
+    // Head: cranium, tapered jaw, nose, ears, hair cap + bun, brows/eyes/mouth on -Z face.
     add('head', ball(0.105, 16, 12), SKIN_COLOR, [0, -0.075, -0.005], [0.92, 1.08, 0.98]);
     add('head', tapered(0.085, 0.055, 0.1, 12), SKIN_COLOR, [0, -0.16, -0.035], [1, 1, 0.92]);
     add('head', box(0.035, 0.055, 0.04), SKIN_SHADOW_COLOR, [0, -0.135, -0.1]);
-    add('head', ball(0.022, 8, 6), SKIN_SHADOW_COLOR, [-0.098, -0.09, 0.0], [0.55, 1, 0.8]);
-    add('head', ball(0.022, 8, 6), SKIN_SHADOW_COLOR, [0.098, -0.09, 0.0], [0.55, 1, 0.8]);
+    add('head', ball(0.022, 8, 6), SKIN_SHADOW_COLOR, [-0.098, -0.085, 0.005], [0.55, 1, 0.8]);
+    add('head', ball(0.022, 8, 6), SKIN_SHADOW_COLOR, [0.098, -0.085, 0.005], [0.55, 1, 0.8]);
     add('head', ball(0.108, 16, 10), HAIR_COLOR, [0, -0.045, 0.028], [0.96, 0.92, 1.0]);
     add('head', ball(0.045, 10, 8), HAIR_COLOR, [0, -0.02, 0.115], [1, 1, 1]);
     add('head', box(0.032, 0.012, 0.012), HAIR_COLOR, [-0.048, -0.085, -0.088]);
     add('head', box(0.032, 0.012, 0.012), HAIR_COLOR, [0.048, -0.085, -0.088]);
     add('head', ball(0.013, 8, 6), EYE_COLOR, [-0.042, -0.1, -0.093], [1, 1, 0.55]);
     add('head', ball(0.013, 8, 6), EYE_COLOR, [0.042, -0.1, -0.093], [1, 1, 0.55]);
+    add('head', box(0.028, 0.008, 0.01), SKIN_SHADOW_COLOR, [0, -0.155, -0.095]);
 
     for (const side of ['L', 'R'] as const) {
       const sign = side === 'L' ? -1 : 1;

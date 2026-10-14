@@ -91,6 +91,9 @@ See `DOCS/STATUS.md` for the standing project status and the `## Next up` resume
 - Stage 2: backpack straps/buckles/waist strap for the TPP back view; thumb returned
   to the anatomically inner side (`sign * -0.045`); typecheck clean; triangle budget
   unchanged in shape (harness floor 500, rig ceiling 20_000, bones pinned at 19).
+- Stage 3: mouth + re-seated ears for a face that reads at TPP distance; rear jacket
+  panel for torso depth. `npm run build` green — app 242.95 kB (gzip 71.13 kB),
+  `three` unchanged, lazy `rig-preview` unchanged. Still one mesh/material, 19 bones.
 
 ## Still open after this session
 
