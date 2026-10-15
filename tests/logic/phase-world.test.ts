@@ -173,12 +173,12 @@ describe('PhaseWorld — M3 grab / carry / release wiring (ARCH §14 order, §19
   }
 
   /**
-   * Pitches the camera down at the floor crate, then settles focus on it. `+lookDeltaY`
-   * is the mouse moving *down* (the DOM reports downward travel as positive), and down
-   * must look down — the rig maps it to a descending view, pitch travelling to `minPitch`.
+   * Pitches the camera down at the floor crate, then settles focus on it. The vertical
+   * axis is inverted (15/10/2026), so looking down is the mouse moving *up*: `-lookDeltaY`
+   * drives the rig's pitch toward `minPitch`.
    */
   function aimAtFloorCrate(harness: ManipHarness): void {
-    for (let i = 0; i < 4; i += 1) harness.world.step(DT, neutralSample({ lookDeltaY: 120 }));
+    for (let i = 0; i < 4; i += 1) harness.world.step(DT, neutralSample({ lookDeltaY: -120 }));
     for (let i = 0; i < 8; i += 1) harness.world.step(DT, neutralSample());
   }
 
@@ -208,7 +208,7 @@ describe('PhaseWorld — M3 grab / carry / release wiring (ARCH §14 order, §19
     for (let i = 0; i < 14; i += 1) {
       const result = harness.world.step(
         DT,
-        i < 4 ? neutralSample({ lookDeltaY: 120 }) : neutralSample()
+        i < 4 ? neutralSample({ lookDeltaY: -120 }) : neutralSample()
       );
       if (acquired) {
         steady.push(result);
@@ -404,7 +404,7 @@ describe('PhaseWorld — M4 snap / attach wiring (ARCH §14 steps 6–7, §21)',
 
   /** Aim at the crate 1 m ahead of spawn, grab it, rotate it, then carry it in. */
   function carryToDock(harness: SnapHarness): void {
-    for (let i = 0; i < 4; i += 1) harness.world.step(DT, neutralSample({ lookDeltaY: 120 }));
+    for (let i = 0; i < 4; i += 1) harness.world.step(DT, neutralSample({ lookDeltaY: -120 }));
     for (let i = 0; i < 8; i += 1) harness.world.step(DT, neutralSample());
     expect(harness.interaction.focus?.id).toBe(LAB_CARRYABLE.instanceId);
 

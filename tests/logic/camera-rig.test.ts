@@ -159,19 +159,12 @@ describe('CameraRig — look integration', () => {
     expect(Math.abs(rig.currentYaw)).toBeLessThan(Math.PI / 3);
   });
 
-  it('clamps at the look-down limit on a mouse-down flick (eye above the target)', () => {
+  // The vertical axis is inverted on purpose (player request, 15/10/2026): `+lookDeltaY`
+  // is the mouse moving DOWN and it pitches the view UP. Pitch remains the *view* angle,
+  // so the clamps below are unchanged — only which travel direction reaches them flipped.
+  it('clamps at the look-up limit on a mouse-down flick (eye below the target)', () => {
     const rig = new CameraRig(new FakePhysics());
     const pose = step(rig, { lookDeltaY: 1000 });
-
-    const expectedY = DEFAULT_CAMERA_TUNING.targetHeight -
-      Math.sin(DEFAULT_CAMERA_TUNING.minPitch) * DEFAULT_CAMERA_TUNING.maxDistance;
-    expect(pose.eye.y).toBeCloseTo(expectedY, 3);
-    expect(pose.eye.y).toBeGreaterThan(pose.target.y);
-  });
-
-  it('clamps at the look-up limit on a mouse-up flick (eye below the target)', () => {
-    const rig = new CameraRig(new FakePhysics());
-    const pose = step(rig, { lookDeltaY: -1000 });
 
     const expectedY = DEFAULT_CAMERA_TUNING.targetHeight -
       Math.sin(DEFAULT_CAMERA_TUNING.maxPitch) * DEFAULT_CAMERA_TUNING.maxDistance;
@@ -179,21 +172,33 @@ describe('CameraRig — look integration', () => {
     expect(pose.eye.y).toBeLessThan(pose.target.y);
   });
 
-  it('looks down when the mouse moves down (DOM movementY is positive downward)', () => {
+  it('clamps at the look-down limit on a mouse-up flick (eye above the target)', () => {
+    const rig = new CameraRig(new FakePhysics());
+    const pose = step(rig, { lookDeltaY: -1000 });
+
+    const expectedY = DEFAULT_CAMERA_TUNING.targetHeight -
+      Math.sin(DEFAULT_CAMERA_TUNING.minPitch) * DEFAULT_CAMERA_TUNING.maxDistance;
+    expect(pose.eye.y).toBeCloseTo(expectedY, 3);
+    expect(pose.eye.y).toBeGreaterThan(pose.target.y);
+  });
+
+  it('raises the view when the mouse moves down (DOM movementY is positive downward)', () => {
     const level = step(new CameraRig(new FakePhysics()));
     const down = step(new CameraRig(new FakePhysics()), { lookDeltaY: 40 });
 
-    // An eye raised above an unchanged target is a view aimed downward. This is the
-    // player-facing contract the inverted build broke: mouse-down used to look up.
-    expect(down.eye.y).toBeGreaterThan(level.eye.y);
+    // An eye dropped below an unchanged target is a view aimed upward: the inverted
+    // vertical contract the project owner asked for. Reverting it means flipping the
+    // sign in `CameraRig.integrateLook` / `previewPose` (and the `invertY` setting is
+    // then the manual way back to the conventional mapping).
+    expect(down.eye.y).toBeLessThan(level.eye.y);
     expect(down.target.y).toBeCloseTo(level.target.y, 9);
   });
 
-  it('looks up when the mouse moves up', () => {
+  it('lowers the view when the mouse moves up', () => {
     const level = step(new CameraRig(new FakePhysics()));
     const up = step(new CameraRig(new FakePhysics()), { lookDeltaY: -40 });
 
-    expect(up.eye.y).toBeLessThan(level.eye.y);
+    expect(up.eye.y).toBeGreaterThan(level.eye.y);
   });
 });
 

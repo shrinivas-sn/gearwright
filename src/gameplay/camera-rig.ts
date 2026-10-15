@@ -203,9 +203,10 @@ export class CameraRig {
     const lookX = Number.isFinite(input.pendingLookX) ? input.pendingLookX : 0;
     const lookY = Number.isFinite(input.pendingLookY) ? input.pendingLookY : 0;
     const yaw = wrapAngle(this.yaw - lookX * this.tuning.yawSpeed * dt);
+    // Same vertical mapping as `integrateLook`: mouse-down raises the view (inverted).
     const pitch = Math.min(
       this.tuning.maxPitch,
-      Math.max(this.tuning.minPitch, this.pitch - lookY * this.tuning.pitchSpeed * dt)
+      Math.max(this.tuning.minPitch, this.pitch + lookY * this.tuning.pitchSpeed * dt)
     );
     const cosPitch = Math.cos(pitch);
     const direction = { x: Math.sin(yaw) * cosPitch, y: -Math.sin(pitch), z: Math.cos(yaw) * cosPitch };
@@ -224,10 +225,13 @@ export class CameraRig {
   }
 
   private integrateLook(input: CameraStepInput, dt: number): void {
-    // Raw screen deltas: `+lookDeltaY` is the mouse moving *down*, and down must
-    // look down, so the pitch travels toward `minPitch` (negative = looking down).
+    // Raw screen deltas: `+lookDeltaY` is the mouse moving *down*. The vertical axis is
+    // deliberate inverted-mouse (player request, 15/10/2026): moving the mouse down pushes
+    // the pitch UP (`+`), so the view rises. Pitch is still the *view* angle (negative looks
+    // down), so the clamps are unchanged; `invertY` in `InputSystem.setLookScale` flips this
+    // one layer down for players who want the conventional mapping.
     this.yaw = wrapAngle(this.yaw - input.lookDeltaX * this.tuning.yawSpeed * dt);
-    const nextPitch = this.pitch - input.lookDeltaY * this.tuning.pitchSpeed * dt;
+    const nextPitch = this.pitch + input.lookDeltaY * this.tuning.pitchSpeed * dt;
     this.pitch = Math.min(this.tuning.maxPitch, Math.max(this.tuning.minPitch, nextPitch));
   }
 
@@ -284,9 +288,9 @@ export class CameraRig {
     //
     // The height term is `-sin(pitch)` because pitch is the *view* angle: looking
     // down (negative pitch) puts the eye ABOVE the target. The DOM reports
-    // `+movementY` for downward travel and the sample is passed through unnegated,
-    // so this sign is what makes mouse-down look down; `invertY` flips it one layer
-    // down, in `InputSystem.setLookScale`.
+    // `+movementY` for downward travel and the sample is passed through unnegated;
+    // `integrateLook` maps that onto a *rising* view (inverted vertical), so the eye
+    // drops below the anchor as the mouse travels down.
     this.direction.x = Math.sin(this.yaw) * cosPitch;
     this.direction.y = -sinPitch;
     this.direction.z = Math.cos(this.yaw) * cosPitch;
