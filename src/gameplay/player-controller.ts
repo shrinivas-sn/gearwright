@@ -79,6 +79,11 @@ export interface PlayerStepInput {
    * of the player owning a second speed table.
    */
   readonly speedScale?: number | undefined;
+  /**
+   * GOD-MODE ADR-019: Space was pressed this step. Edge, not hold — a held jump
+   * never re-fires; the hop is a single grounded-only vertical bump per press.
+   */
+  readonly jump: boolean;
 }
 
 export class PlayerController {
@@ -94,6 +99,11 @@ export class PlayerController {
   private grounded = false;
   private groundY: number;
   private spawn: Vec3;
+
+  // GOD-MODE ADR-019 hop state: grounded-only, coyote/buffer assisted, one hop per press.
+  private timeSinceGrounded = 0;
+  private jumpBuffer = 0;
+  private jumpCooldown = 0;
 
   constructor(physics: PhysicsPort, spawn: Vec3, tuning: Partial<PlayerTuning> = {}) {
     const merged: PlayerTuning = {
@@ -186,8 +196,63 @@ export class PlayerController {
     this.position.x = this.resolved.x;
     this.position.y = this.resolved.y;
     this.position.z = this.resolved.z;
+
+    // 5b. GOD-MODE ADR-019: grounded-only hop, edge-triggered with coyote + buffer.
+    // The hop reads `result` (the authoritative post-move grounding), so it lives after the
+    // port call. It is deterministic at fixed dt.
+    //
+    // Contract:
+    //   - grounded Space edge this step -> hop now.
+    //   - airborne Space edge this step while coyote still open -> hop now.
+    //   - airborne Space edge this step with nothing open -> seed the buffer for a future landing.
+    //   - on landing (was airborne, now grounded) with a live buffer -> fire once this step.
+    // The coyote window is real time since leaving the ground, not a position delta (which goes
+    // negative after falling past the spawn height). The buffer is real time and counts down every
+    // airborne step. A short post-hop cooldown keeps a fake physics that spuriously re-reports
+    // `supported` from double-firing the same press.
+    const wasGrounded = this.grounded;
     this.grounded = result.supported;
     this.groundY = result.groundY;
+
+    // Landing: was airborne, now grounded. A live buffer fires once on this step,
+    // before the grounded/airborne branches clear it.
+    if (!wasGrounded && this.grounded && this.jumpBuffer > 0 && this.jumpCooldown <= 0) {
+      this.velocity.y = this.tuning.jumpSpeed;
+      this.jumpBuffer = 0;
+      this.jumpCooldown = 1e-3;
+    }
+
+    if (this.grounded) {
+      // On the ground: refresh the coyote timer and clear any buffer that did not land in time.
+      this.timeSinceGrounded = 0;
+      this.jumpBuffer = 0;
+      this.jumpCooldown = 0;
+
+      if (input.jump && this.jumpCooldown <= 0) {
+        this.velocity.y = this.tuning.jumpSpeed;
+        this.jumpCooldown = 1e-3;
+      }
+    } else {
+      // Airborne: advance the coyote timer in real time.
+      this.timeSinceGrounded += clampedDt;
+      const coyoteOpen = this.timeSinceGrounded < this.tuning.coyoteTime;
+
+      if (input.jump && this.jumpCooldown <= 0) {
+        if (coyoteOpen) {
+          // Coyote: Space pressed shortly after leaving the ledge.
+          this.velocity.y = this.tuning.jumpSpeed;
+          this.jumpBuffer = 0;
+          this.jumpCooldown = 1e-3;
+        } else {
+          // Nothing to fire right now: seed the buffer for a future landing.
+          // The buffer lives in real time and counts down every airborne step.
+          this.jumpBuffer = this.tuning.jumpBufferTime;
+        }
+      } else if (!input.jump && this.jumpCooldown <= 0 && this.jumpBuffer > 0) {
+        // No edge this step: the buffer counts down in real time.
+        this.jumpBuffer = Math.max(0, this.jumpBuffer - clampedDt);
+      }
+    }
 
     return this.snapshot();
   }

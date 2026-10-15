@@ -65,7 +65,7 @@ class FakePhysics implements PhysicsPort {
 }
 
 const DT = 1 / 30;
-const NEUTRAL: PlayerStepInput = { moveX: 0, moveZ: 0, run: false, cameraYaw: 0 };
+const NEUTRAL: PlayerStepInput = { moveX: 0, moveZ: 0, run: false, cameraYaw: 0, jump: false };
 
 function run(controller: PlayerController, steps: number, input: PlayerStepInput) {
   let snapshot = controller.snapshot();
@@ -247,5 +247,111 @@ describe('PlayerController — state hygiene and determinism', () => {
     expect(state.speed).toBe(0);
     expect(state.grounded).toBe(false);
     expect(state.groundY).toBe(2);
+  });
+});
+
+describe('PlayerController — GOD-MODE ADR-019 hop', () => {
+  it('hops once on a grounded Space edge and then falls back under gravity', () => {
+    const physics = new FakePhysics();
+    const controller = new PlayerController(physics, vec3(0, 0, 0));
+
+    // Grounded press this step: velocity becomes jumpSpeed.
+    const press = controller.step(DT, { ...NEUTRAL, jump: true });
+    expect(press.velocity.y).toBeCloseTo(4.6, 5);
+    expect(press.grounded).toBe(true);
+
+    // The next grounded step consumes the hop velocity with the grounded stick.
+    const stick = controller.step(DT, NEUTRAL);
+    expect(stick.velocity.y).toBeCloseTo(-1, 6);
+    expect(stick.grounded).toBe(true);
+  });
+
+  it('seeds the buffer only when Space is pressed while airborne with no assist open', () => {
+    const physics = new FakePhysics();
+    physics.supported = false;
+    const controller = new PlayerController(physics, vec3(0, 10, 0));
+
+    // Fall back onto a ledge first so the test starts from a known grounded state.
+    physics.supported = true;
+    const onLedge = controller.step(DT, NEUTRAL);
+    expect(onLedge.grounded).toBe(true);
+
+    // Step off the ledge.
+    physics.supported = false;
+    const justLeft = controller.step(DT, NEUTRAL);
+    expect(justLeft.grounded).toBe(false);
+
+    // One step later, coyote is still open, so an airborne press fires once (coyote), not seeds.
+    const coyotePress = controller.step(DT, { ...NEUTRAL, jump: true });
+    expect(coyotePress.velocity.y).toBeCloseTo(4.6, 5);
+  });
+
+  it('does not hop after the coyote window has closed, and seeds the buffer instead', () => {
+    const physics = new FakePhysics();
+    physics.supported = false;
+    const controller = new PlayerController(physics, vec3(0, 10, 0));
+
+    // Leave the ledge and fall well past the coyote window (0.12 s).
+    // 120 steps at 1/30 s = 4 s of fall, far past the coyote window.
+    run(controller, 120, NEUTRAL);
+    expect(controller.snapshot().grounded).toBe(false);
+
+    // Pressing Space with no coyote/buffer open seeds the buffer, it does not hop.
+    const pressed = controller.step(DT, { ...NEUTRAL, jump: true });
+    expect(pressed.velocity.y).toBeCloseTo(-14, 4);
+    expect(pressed.grounded).toBe(false);
+  });
+
+  it('fires once when a buffered jump lands inside the buffer window', () => {
+    const physics = new FakePhysics();
+    physics.supported = false;
+    const controller = new PlayerController(physics, vec3(0, 10, 0));
+
+    // Fall long enough for the coyote window to close AND velocity to reach terminal.
+    // 30 steps at 1/30 s = 1 s: far past the 0.12 s coyote window and past the ~27 steps needed for terminal -14.
+    run(controller, 30, NEUTRAL);
+    expect(controller.snapshot().grounded).toBe(false);
+    expect(controller.snapshot().velocity.y).toBeCloseTo(-14, 4);
+
+    // Press Space while airborne with no assist open: seeds the buffer (0.15 s), no hop.
+    controller.step(DT, { ...NEUTRAL, jump: true });
+    expect(controller.snapshot().grounded).toBe(false);
+    expect(controller.snapshot().velocity.y).toBeCloseTo(-14, 4);
+
+    // Land inside the buffer window: the land step fires the buffered hop.
+    physics.supported = true;
+    const landed = controller.step(DT, NEUTRAL);
+    expect(landed.grounded).toBe(true);
+    expect(landed.velocity.y).toBeCloseTo(4.6, 5);
+  });
+
+  it('does not fire when a buffered jump lands after the buffer window', () => {
+    const physics = new FakePhysics();
+    physics.supported = false;
+    const controller = new PlayerController(physics, vec3(0, 10, 0));
+
+    // Fall long enough for the coyote window to close AND velocity to reach terminal.
+    run(controller, 30, NEUTRAL);
+    expect(controller.snapshot().grounded).toBe(false);
+    expect(controller.snapshot().velocity.y).toBeCloseTo(-14, 4);
+
+    // Press Space while airborne with no assist open: seeds the buffer (0.15 s), no hop.
+    controller.step(DT, { ...NEUTRAL, jump: true });
+    expect(controller.snapshot().grounded).toBe(false);
+    expect(controller.snapshot().velocity.y).toBeCloseTo(-14, 4);
+
+    // Fall long enough that the buffer expires before landing (0.15 s).
+    // 120 steps at 1/30 s = 4 s, far past the buffer window.
+    run(controller, 120, NEUTRAL);
+
+    // Land after the buffer window: no hop fires, velocity stays at terminal fall.
+    physics.supported = true;
+    const landed = controller.step(DT, NEUTRAL);
+    expect(landed.grounded).toBe(true);
+    expect(landed.velocity.y).toBeCloseTo(-14, 4);
+    // The step after landing: grounded stick brings velocity to -1.
+    const after = controller.step(DT, NEUTRAL);
+    expect(after.grounded).toBe(true);
+    expect(after.velocity.y).toBeCloseTo(-1, 6);
   });
 });
