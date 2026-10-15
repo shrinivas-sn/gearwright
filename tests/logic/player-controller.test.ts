@@ -142,8 +142,8 @@ describe('PlayerController — speed and acceleration', () => {
     expect(horizontal(early)).toBeLessThan(2.2);
 
     const settled = run(controller, 120, { ...NEUTRAL, moveZ: 1 });
-    expect(horizontal(settled)).toBeGreaterThan(2.19);
-    expect(horizontal(settled)).toBeLessThanOrEqual(2.2 + 1e-9);
+    expect(horizontal(settled)).toBeGreaterThan(2.9);
+    expect(horizontal(settled)).toBeLessThanOrEqual(3.0 + 1e-9);
   });
 
   it('moves faster while running', () => {
@@ -153,8 +153,8 @@ describe('PlayerController — speed and acceleration', () => {
     const state = run(controller, 120, { ...NEUTRAL, moveZ: 1, run: true });
     const horizontal = Math.sqrt(state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z);
 
-    expect(horizontal).toBeGreaterThan(4.19);
-    expect(horizontal).toBeLessThanOrEqual(4.2 + 1e-9);
+    expect(horizontal).toBeGreaterThan(5.9);
+    expect(horizontal).toBeLessThanOrEqual(6.0 + 1e-9);
   });
 });
 
@@ -198,7 +198,7 @@ describe('PlayerController — gravity and grounding', () => {
     const state = run(controller, 120, NEUTRAL);
 
     expect(state.grounded).toBe(false);
-    expect(state.velocity.y).toBeCloseTo(-12, 5);
+    expect(state.velocity.y).toBeCloseTo(-14, 5);
   });
 });
 
