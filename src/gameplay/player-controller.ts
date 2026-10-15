@@ -1,10 +1,15 @@
 /**
- * L2 — player locomotion (ARCH §16). Grounded walk/run/turn only: no jump,
- * no climb, no parkour. The controller owns player position/orientation
+ * L2 — player locomotion (ARCH §16 + GOD-MODE ADR-019: grounded walk/run/turn +
+ * a small utility hop). The controller owns player position/orientation
  * (§12.1) and speaks to the world exclusively through `PhysicsPort`.
  *
  * Deterministic at fixed dt: identical action/state sequences produce identical
  * positions, which later milestones use for replay-style tests (EC-MAN-12).
+ *
+ * GOD-MODE (ADR-019): the hop is a short, low, locomotion-grade vertical bump —
+ * enough to clear low clutter / feel responsive on the workshop floor, never a
+ * parkour system. It is edge-triggered (`jump: true` = "pressed this step"),
+ * grounded-only, coyote/buffer assisted, and fully deterministic at fixed dt.
  */
 
 import {
@@ -29,16 +34,25 @@ export interface PlayerTuning {
   readonly gravity: number;
   /** Terminal fall speed. */
   readonly maxFallSpeed: number;
+  /** GOD-MODE ADR-019: hop take-off velocity (m/s). ~4.6 clears low clutter. */
+  readonly jumpSpeed: number;
+  /** Seconds after leaving ground a buffered press still fires. */
+  readonly coyoteTime: number;
+  /** Seconds a pressed edge is remembered before landing. */
+  readonly jumpBufferTime: number;
 }
 
 export const DEFAULT_PLAYER_TUNING: PlayerTuning = {
-  walkSpeed: 2.2,
-  runSpeed: 4.2,
-  accelerationTime: 0.12,
-  decelerationTime: 0.1,
+  walkSpeed: 3,
+  runSpeed: 6,
+  accelerationTime: 0.09,
+  decelerationTime: 0.08,
   capsule: { radius: 0.32, height: 1.7, stepHeight: 0.35 },
-  gravity: 14,
-  maxFallSpeed: 12
+  gravity: 16,
+  maxFallSpeed: 14,
+  jumpSpeed: 4.6,
+  coyoteTime: 0.12,
+  jumpBufferTime: 0.15
 };
 
 export interface PlayerDynamicState {
