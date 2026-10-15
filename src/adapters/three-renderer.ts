@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { CharacterRig, type CharacterUpdate } from './character-rig.ts';
+import { CharacterRig, type CharacterUpdate, type PlayerBody } from './character-rig.ts';
 import {
   EMPTY_RENDER_STATS,
   type CameraPose,
@@ -147,6 +147,12 @@ export class ThreeRenderer implements RenderPort {
   private degraded = false;
   /** The player's body: a procedurally-built skinned humanoid (see `character-rig.ts`). */
   private readonly character = new CharacterRig();
+  /**
+   * Whichever body is on screen. The procedural rig is the default and the fallback;
+   * `upgradePlayerBody` swaps an imported humanoid in behind the same `PlayerBody` seam
+   * (CHARACTER-3D.md §5), and nothing else in this file has to know which one it got.
+   */
+  private body: PlayerBody = this.character;
   /** One mutable buffer, rewritten every frame — `syncPlayerMarker` allocates nothing. */
   private readonly characterUpdate: CharacterUpdate = {
     position: { x: 0, y: 0, z: 0 },
@@ -322,7 +328,7 @@ export class ThreeRenderer implements RenderPort {
     this.buildPlaceholderScene();
     // The player's body is scene furniture from the start: it stays hidden until the first
     // `syncPlayerMarker`, which also positions it.
-    scene.add(this.character.object);
+    scene.add(this.body.object);
     scene.add(this.labGroup);
     scene.add(this.focusMarker);
     scene.add(this.debugRay);
@@ -389,7 +395,27 @@ export class ThreeRenderer implements RenderPort {
 
   /** Player-body facts for tooling (the harness asserts the body is built, drawn and placed). */
   characterFacts(): CharacterFacts {
-    return this.character.facts();
+    return this.body.facts();
+  }
+
+  /**
+   * Swap the procedural body for an imported humanoid (ARCH §10 L4 · CHARACTER-3D.md §5). The
+   * loader is imported lazily, so its chunk and the model are only ever fetched by a player who
+   * gets this far; a refused fetch, a model without a skeleton, or a file with no idle/walk/run
+   * clip leaves the procedural rig exactly where it was and reports `false`.
+   *
+   * The procedural rig is kept (hidden, out of the scene) rather than disposed: it is the fallback,
+   * and re-mounting it costs nothing but an object swap.
+   */
+  async upgradePlayerBody(url: string): Promise<boolean> {
+    if (this.scene === null) return false;
+    const { loadGltfCharacter } = await import('./gltf-character.ts');
+    const body = await loadGltfCharacter({ url });
+    if (body === null) return false;
+    this.scene.remove(this.character.object);
+    this.scene.add(body.object);
+    this.body = body;
+    return true;
   }
 
   /**
@@ -429,7 +455,7 @@ export class ThreeRenderer implements RenderPort {
       view === null
         ? Number.POSITIVE_INFINITY
         : Math.hypot(view.eye.x - update.position.x, view.eye.y - update.position.y, view.eye.z - update.position.z);
-    this.character.update(update);
+    this.body.update(update);
   }
 
   setFocusMarker(state: FocusMarkerState | null): void {
@@ -753,6 +779,7 @@ export class ThreeRenderer implements RenderPort {
     this.disposables = [];
     this.lights = [];
     this.character.dispose();
+    if (this.body !== this.character) this.body.dispose?.();
     this.carryableVisuals.clear();
     this.markerVisuals.clear();
     this.scannerVisuals.clear();

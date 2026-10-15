@@ -1,7 +1,9 @@
 # The player's body — where it is, and the optimised route to a real 3D human
 
-**Written 10/10/2026 · Status:** §1 and §2 are *shipped and measured*; §3 onwards are proposals,
-each labelled with what it costs and what it buys. Nothing below needs a file outside this repo.
+**Written 10/10/2026 · Updated 15/10/2026 · Status:** §1, §2 and §5 are *shipped and measured* —
+and §4's Route B landed 15/10/2026, so the player's body is now an imported humanoid with the
+procedural rig as its fallback (§1a). §3's remaining steps are proposals, each labelled with what it
+costs and what it buys. Nothing below needs a file outside this repo.
 
 This is a research note, not a contract. The contract is `ARCHITECTURE.md`; where a proposal
 touches a boundary there, it says so and does not assume the boundary moved.
@@ -67,6 +69,27 @@ rotation leaves the hand a couple of centimetres off the ideal point; the body h
 when the camera arm is pulled inside it instead of fading.
 
 ---
+
+## 1a. What the player is now (shipped 15/10/2026) — an imported humanoid
+
+Route B below is no longer a proposal. `assets/characters/vanguard.glb` (2 110 kB, provenance and
+licence in `assets/characters/PROVENANCE.md`) is drawn by `src/adapters/gltf-character.ts` behind the
+same `CharacterUpdate` / `CharacterFacts` seam the procedural rig implements; the rig stays as the
+fallback (`?body=proc`, a failed fetch, or a file with no usable skeleton/clips).
+
+| Measured in a real Chrome (`npm run check:browser -- boot`, 15/10/2026) | Value |
+|---|---|
+| Body reported by the port | `{body: "gltf", bones: 49, triangles: 11 376, visible: true}` on the simulation's own position |
+| Fitted scale | 1.83 m model scaled to **1.80 m** (the procedural rig's own standing height) |
+| Facing | measured from the toe-vs-ankle bind pose ⇒ **−Z**, yaw offset 0° (the game's own convention) |
+| Clips driving it | `idle` (own clock), `walk`/`run` (time written from the **distance-based** gait phase, so feet do not slide) |
+| Carry stance | world-space two-bone IK onto the held part; harness reach-shape gate: hands dot **0.967 / 0.960** at **0.548 / 0.470 m** |
+| Cost | 2 110 kB model + a lazy 52 kB loader/adapter chunks; `three` chunk +57 kB raw (`AnimationMixer` was previously tree-shaken out) |
+| Not carried over | foot-planting (crate tops/slopes), head look-at, airborne tuck, crouch — the clips own the pose now |
+
+The measurement discipline is the same one §6 asks for: the adapter scales, offsets and orients the
+model from what it *reads* (bind-pose bounds, toe direction, bone names), and logs one line saying
+what it measured, so a swapped model cannot silently face backwards or stand 12 cm off the floor.
 
 ## 2. Optimisation rules this project now follows (verified against the local three r186)
 
@@ -153,10 +176,11 @@ tuned to the clip's stride length).
 animation state to play is presentation-only and must stay there. `AnimationMixer` time must never
 be persisted or fed back into `game-state/` (ARCH §31's "derived flag" rule).
 
-## 5. Recommended shape: the procedural body as the contract, a glTF behind it
+## 5. Recommended shape: the procedural body as the contract, a glTF behind it — *shipped 15/10/2026*
 
-Keep `CharacterRig` as the **default and the fallback**, and put an imported humanoid behind the
-same seam:
+This is what landed, with one change to the plan: the imported body is the **default** and the
+procedural rig the **fallback** (the project owner asked for the real human directly). Keep
+`CharacterRig` as the fallback, and put an imported humanoid behind the same seam:
 
 ```
 RenderPort.syncPlayerMarker(state)          ← unchanged (the port is the contract)

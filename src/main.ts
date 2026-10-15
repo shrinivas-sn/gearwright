@@ -544,6 +544,14 @@ function boot(): void {
 
   const overlay = debugFlagState.perfOverlay ? new PerfOverlay(debugRoot, { visible: true }) : null;
 
+  // `?body=proc` keeps the procedural rig (the A/B switch for the two bodies, and the escape hatch
+  // if an imported model ever reads wrong); anything else asks for the imported humanoid.
+  const PLAYER_BODY_KIND =
+    new URLSearchParams(window.location.search).get('body') === 'proc' ? 'proc' : 'gltf';
+  // `new URL(..., import.meta.url)` is how Vite fingerprints, copies and base-path-resolves the
+  // asset at build time — the file is served from `dist/assets/` without a public/ directory.
+  const PLAYER_BODY_URL = new URL('../assets/characters/vanguard.glb', import.meta.url).href;
+
   // --- Level composition (ARCH §40: this file is a composition root) ---
   const physics = new KinematicPhysics();
   physics.setStaticColliders([...SHIPPED_WORLD.colliders]);
@@ -1535,6 +1543,31 @@ function boot(): void {
     void import('./adapters/rig-preview.ts').then((module) => {
       module.mountRigPreview();
     });
+  }
+
+  // The player's body (CHARACTER-3D.md §4/§5): a real rigged human, fetched in the background
+  // while the title screen is up and swapped in behind the same seam the procedural rig
+  // implements. Both the loader chunk and the model are lazy, `?body=proc` keeps the generated
+  // rig, and a fetch that fails simply leaves it in place — the simulation never learns which
+  // body it is wearing.
+  const bodySettled = (kind: 'gltf' | 'proc'): void => {
+    // The harness waits on this: the body swap is asynchronous, so boot must not race the download
+    // (and "no model" is a legitimate end state, not a hang).
+    canvas.dataset.body = kind;
+  };
+  if (PLAYER_BODY_KIND === 'gltf') {
+    void renderPort
+      .upgradePlayerBody(PLAYER_BODY_URL)
+      .then((swapped) => {
+        bodySettled(swapped ? 'gltf' : 'proc');
+        gameLog(swapped ? '[character] imported body ready (gltf)' : '[character] procedural rig');
+      })
+      .catch(() => {
+        bodySettled('proc');
+        gameLog('[character] procedural rig (imported body failed to load)');
+      });
+  } else {
+    bodySettled('proc');
   }
 
   const unbindEvents = bindBrowserEvents(window, canvas, {

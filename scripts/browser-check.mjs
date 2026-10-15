@@ -26,8 +26,9 @@ const DEBUG_PORT = Number(process.env.HARNESS_DEBUG_PORT ?? 9333);
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const PROFILE = join(ROOT, process.env.HARNESS_PROFILE ?? '.tmp-chrome-profile');
 // Harness URL flags: shoulder camera off (aim math assumes the camera looks through the
-// player), no title screen, game logs on even in production builds.
-const QUERY = '?shoulder=0&skipTitle=1&log=1';
+// player), no title screen, game logs on even in production builds. HARNESS_BODY=proc drives the
+// body flag too, so the procedural fallback can be verified live instead of assumed.
+const QUERY = `?shoulder=0&skipTitle=1&log=1${process.env.HARNESS_BODY ? `&body=${process.env.HARNESS_BODY}` : ''}`;
 const BASE = URL_ARG !== null ? URL_ARG.replace(/\/?$/, '/') + QUERY : (PRODUCTION ? `http://127.0.0.1:${PREVIEW_PORT}/` : `http://127.0.0.1:${DEV_PORT}/`) + QUERY;
 
 const report = { scenario: SCENARIO, production: PRODUCTION, logs: [], problems: [], data: {} };
@@ -513,15 +514,17 @@ window.__probe = {
    * 'pitch' here is a *view* angle — positive looks DOWN, the sign the aim math computes
    * (atan2(1.4 - centre.y, h)) — while the rig stores the eye's elevation offset, which
    * is the opposite sign (CameraRig.placeAndCollide: direction.y = -sin(pitch)).
-   * 'pitchHome' parks the rig on its min clamp (-1.1), so driving the rig to -pitch is
-   * 1.1 - pitch of rig travel, i.e. (pitch - 1.1) / 0.006 pixels.
+   * The vertical look axis is inverted by design (15/10/2026), so a *positive*
+   * movementY pitches the view UP: 'pitchHome' parks the rig on its min clamp (-1.1)
+   * with -600 px, and driving the rig back to -pitch is 1.1 - pitch of rig travel,
+   * i.e. (1.1 - pitch) / 0.006 pixels.
    *
    * NOTE: this whole probe is one template literal in the harness. A backtick anywhere in
    * here — even inside a comment — ends the template and breaks the harness at parse time.
    */
-  pitchHome: async () => window.__probe.lookBy(0, 600),
+  pitchHome: async () => window.__probe.lookBy(0, -600),
   pitchTo: async (pitch) =>
-    window.__probe.lookBy(0, Math.max(-600, Math.min(600, (pitch - 1.1) / 0.006))),
+    window.__probe.lookBy(0, Math.max(-600, Math.min(600, (1.1 - pitch) / 0.006))),
   stats: () => {
     const overlay = document.getElementById('debug-root');
     return { overlay: overlay ? overlay.textContent : null, memory: performance.memory ? performance.memory.usedJSHeapSize : null };
@@ -868,6 +871,26 @@ async function scenarioTitle(cdp) {
   drainConsole(cdp);
 }
 
+/**
+ * Wait for the composition to settle which body it draws, then read its facts.
+ *
+ * `upgradePlayerBody` fetches the imported humanoid in the background, so the first frames of a
+ * session are legitimately the procedural rig; `canvas.dataset.body` is written when the swap has
+ * resolved either way (a failed fetch sets 'proc' — the fallback is the contract, not a failure).
+ */
+async function waitForPlayerBody(cdp) {
+  const deadline = Date.now() + 30000;
+  const settled = () =>
+    evaluate(cdp, 'document.getElementById("game-canvas").dataset.body ?? null');
+  while (Date.now() < deadline) {
+    if ((await settled()) !== null) break;
+    await sleep(250);
+  }
+  const kind = await settled();
+  if (kind === null) report.problems.push('character: the body swap never settled (no dataset.body)');
+  return evaluate(cdp, 'window.__probe.character()');
+}
+
 async function scenarioBoot(cdp) {
   const state = await evaluate(cdp, 'window.__probe.state()');
   const hud = await evaluate(cdp, 'window.__probe.hud()');
@@ -876,14 +899,23 @@ async function scenarioBoot(cdp) {
   report.data.boot = { state, hud, bootStatus, overlay: stats.overlay };
   drainConsole(cdp);
 
-  // The player's body is a procedural skinned humanoid (no glTF): this is the only place that
-  // can prove the real composition builds it, draws it, and stands it on the player's feet.
-  const character = await evaluate(cdp, 'window.__probe.character()');
+  // The player's body: whichever of the two the composition settled on — the procedural rig
+  // (19 bones, generated) or the imported humanoid (CHARACTER-3D.md §5, fetched in the background).
+  // This is the only place that can prove the real composition builds it, draws it, and stands it
+  // on the player's feet, so it waits for the swap to settle instead of racing the download.
+  const character = await waitForPlayerBody(cdp);
   report.data.character = character;
   if (character === null) {
     report.problems.push('character: the render port exposes no player body (characterFacts absent)');
+  } else if (character.body !== 'gltf' && character.body !== 'procedural') {
+    report.problems.push(`character: unknown body kind ${JSON.stringify(character.body)}`);
   } else {
-    if (character.bones !== 19) report.problems.push(`character: expected 19 bones, got ${character.bones}`);
+    const bones = character.body === 'gltf' ? character.bones >= 19 : character.bones === 19;
+    if (!bones) {
+      report.problems.push(
+        `character: ${character.body} body expected ${character.body === 'gltf' ? 'at least 19' : '19'} bones, got ${character.bones}`
+      );
+    }
     if (character.triangles < 500) report.problems.push(`character: body has only ${character.triangles} triangles`);
     if (character.visible !== true) report.problems.push('character: the player body is not visible');
     const drift = Math.hypot(character.x - state.pos.x, character.z - state.pos.z);
@@ -1516,7 +1548,9 @@ async function main() {
   if (SCENARIO === 'b2audit') await scenarioB2Audit(cdp);
   if (SCENARIO === 'hold') {
     // PLAN T1.1 regression: a human-length E press (~160 ms ≈ 5 fixed steps) must grab
-    // without rotating the part.
+    // without rotating the part. The body swap is awaited first: the grip gate is meant to cover
+    // whichever body the session ended up with, not whichever happened to be up during the grab.
+    report.data.holdBody = await waitForPlayerBody(cdp);
     const level = await evaluate(cdp, 'window.__probe.level()');
     const gear = level.p1Parts.find((entry) => entry.id === 'gear-a');
     const found = await focusTarget(cdp, 'gear-a', boxOf(gear));
@@ -1531,9 +1565,11 @@ async function main() {
         '({ state: window.__gearwrightDev.manipulation.state, held: window.__gearwrightDev.manipulation.heldId, yaw: window.__gearwrightDev.manipulation.currentPose.yaw })'
       );
       // Hands toward the held part: the carry pose floats the part 1.35 m ahead of the torso
-      // while the arms only reach 0.56 m, so the analytic IK clamps at full extension along
-      // the reach direction. The gate asserts the *reach shape* (alignment + extension),
-      // yaw-independent, not the raw distance.
+      // while the arms only reach ~0.56 m, so the IK clamps at full extension along the reach
+      // direction. The gate asserts the *reach shape* (alignment + extension), yaw-independent,
+      // not the raw distance — and it is body-agnostic on purpose: the imported humanoid solves
+      // its own two-bone IK onto the same hold target, so the same assertion covers both bodies
+      // (`grip.body` records which one was measured).
       await sleep(700);
       const grip = await evaluate(cdp, 'window.__probe.character()');
       report.data.hold.grip = grip;
@@ -1565,9 +1601,14 @@ async function main() {
         };
         const left = check(grip.handL);
         const right = check(grip.handR);
+        report.data.hold.reach = {
+          body: grip.body ?? 'unknown',
+          left: { dot: Number(left.dot.toFixed(3)), length: Number(left.handLen.toFixed(3)) },
+          right: { dot: Number(right.dot.toFixed(3)), length: Number(right.handLen.toFixed(3)) }
+        };
         if (!(left.dot > 0.9 && right.dot > 0.9 && left.handLen > 0.4 && right.handLen > 0.4)) {
           report.problems.push(
-            `hold: hands not extended toward the held part (left dot ${left.dot.toFixed(2)} @ ${left.handLen.toFixed(2)} m, right dot ${right.dot.toFixed(2)} @ ${right.handLen.toFixed(2)} m)`
+            `hold: hands (${grip.body ?? 'unknown'} body) not extended toward the held part (left dot ${left.dot.toFixed(2)} @ ${left.handLen.toFixed(2)} m, right dot ${right.dot.toFixed(2)} @ ${right.handLen.toFixed(2)} m)`
           );
         }
       }

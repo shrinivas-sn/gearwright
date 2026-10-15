@@ -104,6 +104,19 @@ const LOOK_PITCH_SHARE = 0.45;
 const LOOK_PITCH_LIMIT = 0.4;
 const LOOK_YAW_LIMIT = 0.6;
 
+/**
+ * The body seam (CHARACTER-3D.md §5): whatever L4 draws as the player. The procedural rig below is
+ * the default and the fallback; `gltf-character.ts` implements the same three members from an
+ * imported humanoid, so the port, the composition and the simulation never learn which is on screen.
+ */
+export interface PlayerBody {
+  readonly object: THREE.Object3D;
+  update(state: CharacterUpdate): void;
+  facts(): CharacterFacts;
+  /** Optional: what the body can free when the renderer is torn down. */
+  dispose?(): void;
+}
+
 /** Strips `readonly` so the rig can keep one input buffer and rewrite it every frame. */
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -174,7 +187,7 @@ function segmentGeometry(
   return geometry;
 }
 
-export class CharacterRig {
+export class CharacterRig implements PlayerBody {
   /** Root transform: position = the player's feet, rotation.y = facing yaw. */
   readonly object = new THREE.Group();
 
@@ -426,6 +439,7 @@ export class CharacterRig {
     const worldL = handL === undefined ? null : handL.getWorldPosition(this.scratchHandL);
     const worldR = handR === undefined ? null : handR.getWorldPosition(this.scratchHandR);
     return {
+      body: 'procedural',
       bones: this.skeleton.bones.length,
       triangles: this.triangleEstimate,
       visible: this.visible,

@@ -77,6 +77,11 @@ export interface PlayerMarkerState {
  * screenshot.
  */
 export interface CharacterFacts {
+  /**
+   * Which body is drawn — `'procedural'` (the generated rig) or `'gltf'` (an imported humanoid).
+   * Tooling only: the harness reads it to know which bone/triangle numbers are meaningful.
+   */
+  readonly body?: 'procedural' | 'gltf' | undefined;
   readonly bones: number;
   readonly triangles: number;
   readonly visible: boolean;
