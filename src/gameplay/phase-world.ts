@@ -151,8 +151,11 @@ export class PhaseWorld {
       moveZ: actions.moveZ,
       run: actions.run,
       cameraYaw: this.systems.camera.currentYaw,
-      speedScale: holding ? MANIPULATION_MOVE_SCALE : 1
+      speedScale: holding ? MANIPULATION_MOVE_SCALE : 1,
+      jump: actions.jump
     });
+
+    // GOD-MODE ADR-019: the Space hop edge is routed to the player controller through actions.jump.
 
     const lookActive = actions.lookDeltaX !== 0 || actions.lookDeltaY !== 0;
     this.lookIdleTime = lookActive ? 0 : this.lookIdleTime + dt;

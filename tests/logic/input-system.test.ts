@@ -256,3 +256,24 @@ describe('InputSystem — PLAN T6.4 settings', () => {
     expect(actions.lookDeltaY).toBe(-8);
   });
 });
+
+describe('InputSystem — Space hop binding (ADR-019)', () => {
+  it('maps Space pressed edge to jump in Exploration, but not in Manipulation or Paused', () => {
+    const input = new InputSystem();
+    const jumpSample = neutralSample({ pressed: new Set(['Space']) });
+
+    // Exploration: pressed Space triggers jump
+    expect(input.sample(jumpSample).jump).toBe(true);
+    // Held Space without pressed edge does not trigger jump
+    expect(input.sample(neutralSample({ held: new Set(['Space']) })).jump).toBe(false);
+
+    // Manipulation context: Space does not trigger jump
+    input.setContext('Manipulation');
+    expect(input.sample(jumpSample).jump).toBe(false);
+
+    // Paused context: Space does not trigger jump
+    input.setContext('Paused');
+    expect(input.sample(jumpSample).jump).toBe(false);
+  });
+});
+

@@ -128,6 +128,18 @@ describe('PhaseWorld — grounding integration', () => {
   });
 });
 
+describe('PhaseWorld — hop integration (ADR-019)', () => {
+  it('hops when Space is pressed while grounded', () => {
+    const { world } = buildWorld();
+    run(world, 5, neutralSample());
+    expect(world.player.snapshot().grounded).toBe(true);
+
+    const hopStep = world.step(DT, neutralSample({ pressed: new Set(['Space']) }));
+    expect(hopStep.player.velocity.y).toBeGreaterThan(4);
+    expect(hopStep.player.grounded).toBe(true);
+  });
+});
+
 describe('PhaseWorld — determinism', () => {
   it('reproduces identical snapshots for identical input sequences', () => {
     const samples: RawInputSample[] = [

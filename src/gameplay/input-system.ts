@@ -23,6 +23,8 @@ export interface ActionState {
    * manipulation context has no spare binding for it (Q/E rotate there).
    */
   readonly hint: boolean;
+  /** Space hop pressed edge this step (ADR-019). */
+  readonly jump: boolean;
   /** Camera-relative move intent, components in [-1, 1]. Zero when inapplicable. */
   readonly moveX: number;
   readonly moveZ: number;
@@ -42,6 +44,7 @@ export interface ActionState {
 
 export const EMPTY_ACTIONS: ActionState = {
   hint: false,
+  jump: false,
   moveX: 0,
   moveZ: 0,
   run: false,
@@ -69,6 +72,8 @@ export interface InputBindings {
   readonly rotateRight: string;
   /** Request a hint for the puzzle the player is standing in (M10; §29.2). */
   readonly hint: string;
+  /** Space hop / utility jump (ADR-019). */
+  readonly jump: string;
   /** Screen pixels of mouse travel mapped to one look unit. */
   readonly lookSensitivity: number;
   /** Maximum look delta applied in a single step (EC-BRN-06). */
@@ -88,6 +93,7 @@ export const DEFAULT_BINDINGS: InputBindings = {
   rotateLeft: 'KeyQ',
   rotateRight: 'KeyF',
   hint: 'KeyH',
+  jump: 'Space',
   lookSensitivity: 300,
   // Guards pointer-lock spike events only; real flicks reach ~600 px per step.
   maxLookDeltaPerStep: 1000
@@ -170,6 +176,7 @@ export class InputSystem {
       const moveZ = clampAxis((held.has(this.bindings.forward) ? 1 : 0) - (held.has(this.bindings.back) ? 1 : 0));
       this.current = {
         hint: false, // no hint request mid-carry: Q/E are the carry's keys (§15)
+        jump: false,
         moveX,
         moveZ,
         run: false,
@@ -195,11 +202,13 @@ export class InputSystem {
     // M10: the hint request is an Exploration action — the ladder is read while
     // looking at the world, not while carrying a part (Q/E belong to the carry).
     const hint = raw.pressed.has(this.bindings.hint);
+    const jump = raw.pressed.has(this.bindings.jump);
     const moveX = clampAxis((held.has(this.bindings.right) ? 1 : 0) - (held.has(this.bindings.left) ? 1 : 0));
     const moveZ = clampAxis((held.has(this.bindings.forward) ? 1 : 0) - (held.has(this.bindings.back) ? 1 : 0));
 
     this.current = {
       hint,
+      jump,
       moveX,
       moveZ,
       run: held.has(this.bindings.run),
