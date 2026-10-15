@@ -344,12 +344,13 @@ describe('PlayerController — GOD-MODE ADR-019 hop', () => {
     // 120 steps at 1/30 s = 4 s, far past the buffer window.
     run(controller, 120, NEUTRAL);
 
-    // Land after the buffer window: no hop fires, velocity stays at terminal fall.
+    // Land after the buffer window: no hop fires (buffer expired), and the landing step
+    // damps the terminal fall to the grounded-stick speed (the floor catches you),
+    // so the land step and the step after both read the grounded-stick velocity.
     physics.supported = true;
     const landed = controller.step(DT, NEUTRAL);
     expect(landed.grounded).toBe(true);
-    expect(landed.velocity.y).toBeCloseTo(-14, 4);
-    // The step after landing: grounded stick brings velocity to -1.
+    expect(landed.velocity.y).toBeCloseTo(-1, 6);
     const after = controller.step(DT, NEUTRAL);
     expect(after.grounded).toBe(true);
     expect(after.velocity.y).toBeCloseTo(-1, 6);

@@ -173,6 +173,11 @@ export class PlayerController {
     }
 
     // 4. Vertical: stick down while supported; otherwise fall with a terminal speed.
+    // NOTE: `this.grounded` here is still last step's value (the authoritative update is at 5b),
+    // so this branch is the *continuous* effect — it keeps a continuously-supported player from
+    // drifting upward and enforces the grounded-stick floor while you were already on the ground.
+    // The *landing* damping (killing a fast fall the step you touch down) is applied in the 5b
+    // grounded branch, which runs after `this.grounded` is set from `result.supported`.
     if (this.grounded) {
       this.velocity.y = Math.min(0, this.velocity.y);
       if (this.velocity.y > -GROUNDED_STICK_SPEED) this.velocity.y = -GROUNDED_STICK_SPEED;
@@ -227,6 +232,16 @@ export class PlayerController {
       this.timeSinceGrounded = 0;
       this.jumpBuffer = 0;
       this.jumpCooldown = 0;
+
+      // Landing damping: kill a fast fall the step you actually touch down. The continuous
+      // grounded-stick branch above used last step's grounding, so a terminal landing would
+      // otherwise keep its -14 m/s into the floor on the landing step (the next step is the first
+      // one that sees `this.grounded` as true from last step). God-mode ADR-019 is a *utility* hop,
+      // not a parkour system, so a hard clamp to the grounded stick on landing is the right shape —
+      // it feels like the floor catching you, not a bounce.
+      if (this.velocity.y < -GROUNDED_STICK_SPEED) {
+        this.velocity.y = -GROUNDED_STICK_SPEED;
+      }
 
       if (input.jump && this.jumpCooldown <= 0) {
         this.velocity.y = this.tuning.jumpSpeed;
