@@ -26,7 +26,14 @@ import { InputSystem } from './gameplay/input-system.ts';
 import { FootGrounding } from './gameplay/foot-grounding.ts';
 import { DEFAULT_PLAYER_TUNING, PlayerController } from './gameplay/player-controller.ts';
 import { CameraRig } from './gameplay/camera-rig.ts';
-import { PhaseWorld } from './gameplay/phase-world.ts';
+import {
+  PhaseWorld,
+  type WeaponMount,
+  type WeaponMountRequest
+} from './gameplay/phase-world.ts';
+import { WeaponSystem } from './gameplay/weapon-system.ts';
+import { LOADOUT, WEAPON_DEFINITIONS } from './data/weapons.ts';
+import { WeaponEffects } from './presentation/weapon-fx.ts';
 import { DEFAULT_INTERACTION_TUNING, InteractionSystem, type Interactable } from './gameplay/interaction-system.ts';
 import { ManipulationSystem } from './gameplay/manipulation-system.ts';
 import { SnapSystem, type ResolvedSocket } from './gameplay/snap-system.ts';
@@ -58,7 +65,7 @@ import { SOCKET_DEFINITIONS, socketDefinitionOf } from './data/sockets.ts';
 import { HintSystem, MAX_HINT_LEVEL, type HintEngagement } from './game-state/hint-system.ts';
 import { indexRequirements, scannerRevealFor, type ScannerReveal } from './game-state/scanner-reveal.ts';
 import { ScannerOverlay, type ScannerSpec, type ScannerState } from './presentation/scanner-overlay.ts';
-import { Hud, type HudSnapshot, type HudObjectiveView, type HudResourceView, type HudLogView, type HudHintView, type HudCaptureView, type HudScannerState, type HudSocketState } from './presentation/hud.ts';
+import { Hud, type HudSnapshot, type HudObjectiveView, type HudResourceView, type HudLogView, type HudHintView, type HudCaptureView, type HudScannerState, type HudSocketState, type HudWeaponView } from './presentation/hud.ts';
 import { PauseOverlay, type PauseCause } from './presentation/pause-overlay.ts';
 import { TitleScreen } from './presentation/title-screen.ts';
 import { buildControlsTable, type ControlRow } from './presentation/controls-table.ts';
@@ -277,6 +284,11 @@ function buildHudRenderer(deps: {
    * importing platform state (§33.2 rule 2).
    */
   entryPointer: () => HudCaptureView | null;
+  /**
+   * The weapon block's read model, or null when no weapon system is composed
+   * (`?guns=0`) — the composition reads the weapon system, the HUD only gets values.
+   */
+  weaponView: () => HudWeaponView | null;
 }): { render: () => void; puzzleOfComponent: (id: string) => PuzzleSystem | null } {
   const {
     hud,
@@ -295,7 +307,8 @@ function buildHudRenderer(deps: {
     scannerState,
     scannerText,
     scannerRequest,
-    entryPointer
+    entryPointer,
+    weaponView
   } = deps;
 
   /** Socket definition lookup for the compatibility verdict (§21.1 language). */
@@ -485,10 +498,10 @@ function buildHudRenderer(deps: {
       resources,
       log,
       hint: hintView,
-      // Weapons pass IN FLIGHT (16/10/2026): the L2 system, the render port and the HUD block
-      // all exist and are tested, but this composition root does not compose a `WeaponSystem`
-      // yet, so the honest read-model is "no weapon". Wiring it (and `?guns=0`) is the open task.
-      weapon: null,
+      // Weapons pass (16/10/2026): the weapon block, or null when `?guns=0` — in which case
+      // the HUD hides the block and the reticle keeps its authored size, so the pre-pass HUD
+      // is exactly what it was.
+      weapon: weaponView(),
       saveNote: null,
       // Entry guidance is sticky by design: once the player has captured the mouse it
       // never returns, so a mid-session refusal is the only thing worth naming.
@@ -514,12 +527,33 @@ function buildHudRenderer(deps: {
 
 /**
  * §29.1 L4's log-style nudge, as a toast. L1–L3 are *world* layers (affordance,
- * emphasis, scanner overlay), so they answer in the ladder indicator, not with text;
+ * emphasis, scanner overlay), so they answer in the ladder indicator, not with words;
  * L4 is the only rung whose payload is words.
  */
 function hintToastText(puzzleId: string, level: number): string | null {
   if (level < MAX_HINT_LEVEL) return null;
   return conceptualHintFor(puzzleId) ?? 'No hint available for this puzzle.';
+}
+
+/**
+ * The words for a trigger pull that did nothing (weapons pass). §33.2's rule: a control
+ * that silently does nothing is indistinguishable from a broken one, so the refusal the
+ * weapon system reports is spoken in the HUD's weapon block. `null` — a shot that fired,
+ * or no press at all — says nothing, because nothing needs saying.
+ */
+function weaponRefusalText(refused: 'empty' | 'reloading' | 'swapping' | 'cooldown'): string | null {
+  switch (refused) {
+    case 'empty':
+      return 'Empty — reload';
+    case 'reloading':
+      return 'Reloading';
+    case 'swapping':
+      return 'Weapon coming up';
+    case 'cooldown':
+      return 'Still cycling';
+    default:
+      return null;
+  }
 }
 
 function showFatalScreen(root: HTMLElement, title: string, detail: string): void {
@@ -1099,6 +1133,125 @@ function boot(): void {
     );
   };
 
+  // --- Weapons (weapons pass, 16/10/2026) ---------------------------------------
+  //
+  // Weapons are **on by default** (the project owner asked for shooting); `?guns=0` restores
+  // the pre-pass game exactly — no weapon system composed, no drawn weapon, no HUD block (the
+  // block hides itself and the reticle keeps its authored size). One flag, read once, and
+  // nothing downstream branches on it again.
+  //
+  // The weapon system is L2 *runtime* state: nothing it holds is saved, and nothing it does
+  // can reach the machine graph (SHOOTING-MECHANIC §5.1 — a shot produces an impact event and
+  // no progression).
+  const GUNS_ENABLED = new URLSearchParams(window.location.search).get('guns') !== '0';
+  const weapons = GUNS_ENABLED ? new WeaponSystem(physics, WEAPON_DEFINITIONS, [...LOADOUT]) : null;
+  const weaponEffects = weapons === null ? null : new WeaponEffects(renderPort);
+
+  /**
+   * Where the drawn weapon is and what it is aimed along. The camera owns the aim line
+   * (§12.1) and the renderer owns the hands (`characterFacts().handR`), so the mount is
+   * resolved here — the one place that knows both — and L2 imports neither.
+   *
+   * Bullets leave the *muzzle*, but they are aimed at the point the reticle covers: the
+   * direction is re-converged from the muzzle onto a point on the camera's own line, so a
+   * shot from a hand-held barrel still lands where the crosshair is pointing.
+   *
+   * Scratch object: this runs on the fixed step, so it must allocate nothing.
+   */
+  const AIM_CONVERGENCE_M = 60;
+  const MUZZLE_LEAD_M = 0.32;
+  const FALLBACK_MUZZLE_STANDING = 1.35;
+  const FALLBACK_MUZZLE_CROUCHED = 0.95;
+  const weaponMountScratch: { muzzle: Vec3; aimDirection: Vec3 } = {
+    muzzle: { x: 0, y: 0, z: 0 },
+    aimDirection: { x: 0, y: 0, z: -1 }
+  };
+  const resolveWeaponMount = (request: WeaponMountRequest): WeaponMount => {
+    const pose = request.camera;
+    const stance = request.player;
+    const mounted = weaponMountScratch;
+
+    let dx = pose.target.x - pose.eye.x;
+    let dy = pose.target.y - pose.eye.y;
+    let dz = pose.target.z - pose.eye.z;
+    const length = Math.hypot(dx, dy, dz);
+    if (!Number.isFinite(length) || length <= 1e-6) {
+      dx = 0;
+      dy = 0;
+      dz = -1;
+    } else {
+      dx /= length;
+      dy /= length;
+      dz /= length;
+    }
+    // The point the reticle covers, out along the camera's line.
+    const aimX = pose.eye.x + dx * AIM_CONVERGENCE_M;
+    const aimY = pose.eye.y + dy * AIM_CONVERGENCE_M;
+    const aimZ = pose.eye.z + dz * AIM_CONVERGENCE_M;
+
+    // The barrel sits in the drawn hand when there is one (both bodies report it), and a
+    // chest-height muzzle when there is not — headless checks, or no body drawn at all.
+    const facts = renderPort.characterFacts?.() ?? null;
+    const hand = facts?.visible === true ? facts.handR : undefined;
+    if (hand !== undefined && Number.isFinite(hand.x)) {
+      mounted.muzzle.x = hand.x + dx * MUZZLE_LEAD_M;
+      mounted.muzzle.y = hand.y + dy * MUZZLE_LEAD_M;
+      mounted.muzzle.z = hand.z + dz * MUZZLE_LEAD_M;
+    } else {
+      mounted.muzzle.x = stance.position.x;
+      mounted.muzzle.y =
+        stance.position.y + (stance.crouched ? FALLBACK_MUZZLE_CROUCHED : FALLBACK_MUZZLE_STANDING);
+      mounted.muzzle.z = stance.position.z;
+    }
+
+    let ax = aimX - mounted.muzzle.x;
+    let ay = aimY - mounted.muzzle.y;
+    let az = aimZ - mounted.muzzle.z;
+    const aimLength = Math.hypot(ax, ay, az);
+    if (!Number.isFinite(aimLength) || aimLength <= 1e-6) {
+      ax = dx;
+      ay = dy;
+      az = dz;
+    } else {
+      ax /= aimLength;
+      ay /= aimLength;
+      az /= aimLength;
+    }
+    mounted.aimDirection.x = ax;
+    mounted.aimDirection.y = ay;
+    mounted.aimDirection.z = az;
+    return mounted;
+  };
+
+  /**
+   * The weapon block's read model (§33.2 rule 2: the HUD is handed values, never systems).
+   * `notice` is the last step's *refusal*, held for a beat so a dry trigger is said rather
+   * than flashed past on the one frame it happened.
+   */
+  const weaponNotice: { text: string | null; remaining: number } = { text: null, remaining: 0 };
+  const WEAPON_NOTICE_SECONDS = 1.4;
+  const weaponReadModel = (): HudWeaponView | null => {
+    if (weapons === null) return null;
+    const view = weapons.snapshot();
+    return {
+      name: view.name,
+      classLabel: view.classLabel,
+      magazine: view.magazine,
+      magazineSize: view.magazineSize,
+      reserve: view.reserve,
+      fireModeLabel: view.fireModeLabel,
+      canCycleFireMode: view.canCycleFireMode,
+      activeSlot: view.activeSlot,
+      slotNames: view.slotNames,
+      reloading: view.reloading,
+      reloadProgress: view.reloadProgress,
+      adsBlend: view.adsBlend,
+      spread: view.spread,
+      canFire: view.canFire,
+      notice: weaponNotice.remaining > 0 ? weaponNotice.text : null
+    };
+  };
+
   const hudRendered = buildHudRenderer({
     hud,
     hints,
@@ -1121,7 +1274,8 @@ function boot(): void {
       if (lockState.captured) return null;
       // "Unavailable" wording only while the browser has never granted a capture.
       return { pointerLocked: false, pointerLockUnavailable: lockState.lastError !== null && !lockState.everCaptured };
-    }
+    },
+    weaponView: weaponReadModel
   });
 
   // The hub's static geometry is a pure function of progression (§26: hub visuals only
@@ -1204,7 +1358,11 @@ function boot(): void {
     feedback,
     // ADR-018: the world watches the log's version, so a staged action evaluates the
     // puzzle SMs in the *same fixed step* it is recorded — never a frame late.
-    stagedVersion: () => actions.version
+    stagedVersion: () => actions.version,
+    // Weapons (16/10/2026): `undefined` when `?guns=0`, which keeps the pre-pass step
+    // result (`weapon: null`) and the pre-pass camera behaviour byte for byte.
+    weapons: weapons ?? undefined,
+    weaponMount: resolveWeaponMount
   });
 
   /**
@@ -1318,6 +1476,21 @@ function boot(): void {
             if (!write.ok) console.warn('[save] autosave failed:', write.failure);
           }
         }
+        // Weapons (weapons pass): the effects presenter ages on the *fixed* step so tracers,
+        // flashes and impact marks are deterministic and replayable; the composer plays the
+        // step's own cues (a shot, a magazine, a dry trigger). Both are presentation-only.
+        weaponEffects?.step(dt, result.weapon, result.weapon?.view ?? null);
+        composer.updateWeapon(result.weapon);
+        // A press that could not fire is spoken (§33.2), held for a beat: the HUD reads
+        // `weaponNotice`, and the words are the weapon system's own refusal reason.
+        if (result.actions.fire === true && result.weapon?.refused != null) {
+          weaponNotice.text = weaponRefusalText(result.weapon.refused);
+          weaponNotice.remaining = WEAPON_NOTICE_SECONDS;
+        }
+        if (weaponNotice.remaining > 0) {
+          weaponNotice.remaining = Math.max(0, weaponNotice.remaining - dt);
+        }
+
         // L4 composition (ARCH §32.1): the model decided *what* is warranted; the
         // composer decides how it looks. Fixed-step, so feedback is deterministic.
         composer.update(dt, result.feedback ?? [], feedbackView);
@@ -1383,6 +1556,16 @@ function boot(): void {
         // The §29.3 reveal (M10): the presenter hands over the fading overlay, or clears
         // it once — the renderer never decides when a scan ends.
         scanner.present();
+
+        // Weapons (weapons pass): the drawn weapon sits at the muzzle the *simulation* fires
+        // from, resolved through the same mount function on this frame's interpolated camera
+        // pose; tracers, the muzzle flash and the impacts are the presenter's pools, aged on
+        // the fixed step above. Carrying a part holsters the weapon (the hands are full).
+        if (weaponEffects !== null) {
+          const mount = resolveWeaponMount({ camera: cameraPose, player: playerState });
+          weaponEffects.aim(mount.muzzle, mount.aimDirection, manipulation.isHolding);
+          weaponEffects.present();
+        }
 
         // Every socket the level authors gets a marker, derived from live occupancy.
         for (const marker of snapMarkerStates) {
@@ -1733,6 +1916,17 @@ function boot(): void {
       // Read live, not snapshot at boot: the harness proves the player's body is built,
       // drawn and standing on the simulated position.
       character: () => renderPort.characterFacts?.() ?? null,
+      // Weapons (16/10/2026): the `guns` scenario reads the live view + counters. `null`
+      // when `?guns=0`, which is exactly how that escape hatch is verified.
+      weapon: () =>
+        weapons === null ? null : { view: weapons.snapshot(), stats: weapons.stats() },
+      weaponEffects: () =>
+        weaponEffects === null
+          ? null
+          : { tracers: weaponEffects.drawnTracers, impacts: weaponEffects.drawnImpacts },
+      // The renderer's own budget counters (draw calls / triangles). The weapons pass claims
+      // its pools are flat, and this is how that claim is measured rather than asserted.
+      renderStats: () => renderPort.stats(),
       // The audio port reports its own state and last cue, so a browser check can tell
       // "silent because no context" from "silent because the unlock never happened".
       audio,

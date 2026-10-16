@@ -352,8 +352,233 @@ export const AUDIO_CUE_RECIPES: Readonly<Record<AudioCueId, AudioCueRecipe>> = {
         gain: 0.15
       }
     ]
+  },
+
+  // --- weapons pass (16/10/2026) --------------------------------------------------
+  //
+  // A gunshot is three authored layers, and that shape is what makes it read as a shot
+  // rather than a beep: a **crack** (fast, bright, gone in ~50 ms), a **body** (the
+  // pressure wave, low and square) and a **tail** (the room answering). The classes differ
+  // in where those three sit, so an SMG and a sniper are recognisably different events.
+  'gunshot-ar': gunshotRecipe({ crackHz: 2600, crackEndHz: 1150, bodyHz: 152, bodyEndHz: 104, tailHz: 88, tailEndHz: 58, seconds: 0.24 }),
+  'gunshot-smg': gunshotRecipe({ crackHz: 3100, crackEndHz: 1650, bodyHz: 196, bodyEndHz: 148, tailHz: 124, tailEndHz: 92, seconds: 0.17 }),
+  'gunshot-dmr': gunshotRecipe({ crackHz: 2150, crackEndHz: 900, bodyHz: 124, bodyEndHz: 82, tailHz: 72, tailEndHz: 48, seconds: 0.32 }),
+  'gunshot-sniper': gunshotRecipe({ crackHz: 1820, crackEndHz: 700, bodyHz: 96, bodyEndHz: 60, tailHz: 56, tailEndHz: 36, seconds: 0.48 }),
+  /**
+   * Pellets, not a round: the lowest crack of the six over the broadest body, so it reads as
+   * one heavy event. Three tones like every other recipe — the voice pool books three per bus
+   * (`MAX_VOICES_PER_BUS`), so a fourth layer would make a blast steal from itself.
+   */
+  'gunshot-shotgun': gunshotRecipe({ crackHz: 1450, crackEndHz: 620, bodyHz: 118, bodyEndHz: 74, tailHz: 70, tailEndHz: 44, seconds: 0.42 }),
+  'gunshot-pistol': gunshotRecipe({ crackHz: 2350, crackEndHz: 1080, bodyHz: 172, bodyEndHz: 126, tailHz: 104, tailEndHz: 76, seconds: 0.2 }),
+  /** Magazine out: a catch release, then the slide of a box leaving the well. */
+  'mag-out': {
+    bus: 'sfx',
+    seconds: 0.26,
+    tones: [
+      {
+        waveform: 'square',
+        frequency: 980,
+        endFrequency: 620,
+        startSeconds: 0,
+        attackSeconds: 0.002,
+        holdSeconds: 0.008,
+        releaseSeconds: 0.05,
+        gain: 0.13
+      },
+      {
+        waveform: 'triangle',
+        frequency: 340,
+        endFrequency: 210,
+        startSeconds: 0.03,
+        attackSeconds: 0.004,
+        holdSeconds: 0.05,
+        releaseSeconds: 0.17,
+        gain: 0.1
+      }
+    ]
+  },
+  /** Magazine in: the click of the catch, with the thunk that *is* "it is seated". */
+  'mag-in': {
+    bus: 'sfx',
+    seconds: 0.3,
+    tones: [
+      {
+        waveform: 'square',
+        frequency: 1250,
+        endFrequency: 800,
+        startSeconds: 0,
+        attackSeconds: 0.002,
+        holdSeconds: 0.006,
+        releaseSeconds: 0.04,
+        gain: 0.13
+      },
+      {
+        waveform: 'sine',
+        frequency: 196,
+        endFrequency: 132,
+        startSeconds: 0.012,
+        attackSeconds: 0.003,
+        holdSeconds: 0.06,
+        releaseSeconds: 0.2,
+        gain: 0.18
+      }
+    ]
+  },
+  /** Two clicks a beat apart: pull, then release — the audible "ready". */
+  'bolt-cycle': {
+    bus: 'sfx',
+    seconds: 0.3,
+    tones: [
+      {
+        waveform: 'square',
+        frequency: 1650,
+        endFrequency: 1180,
+        startSeconds: 0,
+        attackSeconds: 0.002,
+        holdSeconds: 0.006,
+        releaseSeconds: 0.045,
+        gain: 0.12
+      },
+      {
+        waveform: 'square',
+        frequency: 1120,
+        endFrequency: 780,
+        startSeconds: 0.14,
+        attackSeconds: 0.002,
+        holdSeconds: 0.006,
+        releaseSeconds: 0.05,
+        gain: 0.12
+      }
+    ]
+  },
+  /**
+   * An empty pull: one dull click, no body, no tail, over almost instantly. It must not be
+   * mistakable for a quiet shot — the whole point is that the weapon did nothing.
+   */
+  'dry-fire': {
+    bus: 'sfx',
+    seconds: 0.09,
+    tones: [
+      {
+        waveform: 'square',
+        frequency: 620,
+        endFrequency: 430,
+        startSeconds: 0,
+        attackSeconds: 0.002,
+        holdSeconds: 0.006,
+        releaseSeconds: 0.06,
+        gain: 0.09
+      }
+    ]
+  },
+  /** Weapon coming up: cloth and mech, short, no pitch claim of its own. */
+  'weapon-switch': {
+    bus: 'sfx',
+    seconds: 0.28,
+    tones: [
+      {
+        waveform: 'triangle',
+        frequency: 520,
+        endFrequency: 380,
+        startSeconds: 0,
+        attackSeconds: 0.008,
+        holdSeconds: 0.03,
+        releaseSeconds: 0.1,
+        gain: 0.08
+      },
+      {
+        waveform: 'square',
+        frequency: 860,
+        endFrequency: 640,
+        startSeconds: 0.08,
+        attackSeconds: 0.003,
+        holdSeconds: 0.008,
+        releaseSeconds: 0.06,
+        gain: 0.1
+      }
+    ]
+  },
+  /** A bullet stopping: a metal ring with a short thud underneath it. */
+  'bullet-impact': {
+    bus: 'sfx',
+    seconds: 0.24,
+    tones: [
+      {
+        waveform: 'triangle',
+        frequency: 2400,
+        endFrequency: 1400,
+        startSeconds: 0,
+        attackSeconds: 0.001,
+        holdSeconds: 0.01,
+        releaseSeconds: 0.11,
+        gain: 0.1
+      },
+      {
+        waveform: 'sine',
+        frequency: 150,
+        endFrequency: 96,
+        startSeconds: 0.002,
+        attackSeconds: 0.002,
+        holdSeconds: 0.02,
+        releaseSeconds: 0.09,
+        gain: 0.14
+      }
+    ]
   }
 };
+
+/**
+ * The one gunshot shape, with the class's numbers: crack → body → tail (§32.3's
+ * "recipes, not per-machine code" — six classes, one code path). Authored so every tone
+ * finishes inside `seconds`, which is what the voice pool books the voice for.
+ */
+function gunshotRecipe(spec: {
+  readonly crackHz: number;
+  readonly crackEndHz: number;
+  readonly bodyHz: number;
+  readonly bodyEndHz: number;
+  readonly tailHz: number;
+  readonly tailEndHz: number;
+  readonly seconds: number;
+}): AudioCueRecipe {
+  return {
+    bus: 'sfx',
+    seconds: spec.seconds,
+    tones: [
+      {
+        waveform: 'sawtooth',
+        frequency: spec.crackHz,
+        endFrequency: spec.crackEndHz,
+        startSeconds: 0,
+        attackSeconds: 0.001,
+        holdSeconds: 0.006,
+        releaseSeconds: 0.05,
+        gain: 0.17
+      },
+      {
+        waveform: 'square',
+        frequency: spec.bodyHz,
+        endFrequency: spec.bodyEndHz,
+        startSeconds: 0.002,
+        attackSeconds: 0.002,
+        holdSeconds: 0.02,
+        releaseSeconds: Math.min(0.12, spec.seconds - 0.03),
+        gain: 0.19
+      },
+      {
+        waveform: 'sine',
+        frequency: spec.tailHz,
+        endFrequency: spec.tailEndHz,
+        startSeconds: 0.01,
+        attackSeconds: 0.008,
+        holdSeconds: 0.04,
+        releaseSeconds: spec.seconds - 0.06,
+        gain: 0.12
+      }
+    ]
+  };
+}
 
 // --- the bus ---------------------------------------------------------------------
 

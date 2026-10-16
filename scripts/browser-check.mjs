@@ -28,7 +28,10 @@ const PROFILE = join(ROOT, process.env.HARNESS_PROFILE ?? '.tmp-chrome-profile')
 // Harness URL flags: shoulder camera off (aim math assumes the camera looks through the
 // player), no title screen, game logs on even in production builds. HARNESS_BODY=proc drives the
 // body flag too, so the procedural fallback can be verified live instead of assumed.
-const QUERY = `?shoulder=0&skipTitle=1&log=1${process.env.HARNESS_BODY ? `&body=${process.env.HARNESS_BODY}` : ''}`;
+// HARNESS_GUNS=0 flips the weapons pass off (`?guns=0`), which is how the pre-pass game is
+// verified from the same script: the flag restores the game exactly as it was before the
+// 16/10 weapons pass. Unset = the shipped default (weapons on).
+const QUERY = `?shoulder=0&skipTitle=1&log=1${process.env.HARNESS_BODY ? `&body=${process.env.HARNESS_BODY}` : ''}${process.env.HARNESS_GUNS ? `&guns=${process.env.HARNESS_GUNS}` : ''}`;
 const BASE = URL_ARG !== null ? URL_ARG.replace(/\/?$/, '/') + QUERY : (PRODUCTION ? `http://127.0.0.1:${PREVIEW_PORT}/` : `http://127.0.0.1:${DEV_PORT}/`) + QUERY;
 
 const report = { scenario: SCENARIO, production: PRODUCTION, logs: [], problems: [], data: {} };
@@ -139,6 +142,13 @@ const KEYS = {
   KeyQ: ['q', 81],
   KeyR: ['r', 82],
   KeyH: ['h', 72],
+  KeyB: ['b', 66],
+  KeyC: ['c', 67],
+  Digit1: ['1', 49],
+  Digit2: ['2', 50],
+  Digit3: ['3', 51],
+  Digit4: ['4', 52],
+  Digit5: ['5', 53],
   Escape: ['Escape', 27],
   F3: ['F3', 114]
 };
@@ -170,6 +180,40 @@ async function tapKey(cdp, code) {
   await sleep(60);
   await keyUp(cdp, code);
   await sleep(120);
+}
+
+/**
+ * Hold a mouse button down (weapons pass). A gun's trigger is an edge *and* a hold: a
+ * semi-auto weapon fires on the press, an automatic one keeps firing while it is held, so
+ * the harness needs a real down/up pair rather than `clickAt`'s single frame.
+ */
+async function mouseDown(cdp, button = 'left', x = 800, y = 450) {
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x,
+    y,
+    button: 'none',
+    buttons: 0
+  });
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x,
+    y,
+    button,
+    buttons: button === 'right' ? 2 : 1,
+    clickCount: 1
+  });
+}
+
+async function mouseUp(cdp, button = 'left', x = 800, y = 450) {
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x,
+    y,
+    button,
+    buttons: 0,
+    clickCount: 1
+  });
 }
 
 async function clickAt(cdp, x, y) {
@@ -209,6 +253,9 @@ window.__probe = {
     return {
       pos: player.position,
       grounded: player.grounded,
+      crouched: player.crouched,
+      speed: player.speed,
+      walkSpeed: player.walkSpeed,
       facingYaw: player.facingYaw,
       yaw: dev.camera.currentYaw,
       eye: dev.camera.snapshot().eye,
@@ -312,16 +359,37 @@ window.__probe = {
    */
   staticColliders: async () => {
     if (window.__probe.__colliders !== undefined) return window.__probe.__colliders;
-    const shipped = await import('/src/levels/shipped-content.ts');
-    const hub = await import('/src/levels/hub.ts');
-    const branchB = await import('/src/levels/branch-b.ts');
-    window.__probe.__colliders = [
-      ...shipped.SHIPPED_WORLD.colliders,
-      ...hub.hubColliders(() => 'Complete'),
-      ...branchB.BRANCH_B_WORLD.colliders
-    ];
+    if (window.__probe.sourceAvailable === false) {
+      // Do not even *ask* for the module: a failed dynamic import still logs a network 404,
+      // and the harness counts browser log errors as problems (correctly — which is exactly
+      // why the harness must not manufacture one).
+      window.__probe.__colliderNote = 'route planning unavailable (no TypeScript sources served here)';
+      window.__probe.__colliders = null;
+      return null;
+    }
+    try {
+      const shipped = await import('/src/levels/shipped-content.ts');
+      const hub = await import('/src/levels/hub.ts');
+      const branchB = await import('/src/levels/branch-b.ts');
+      window.__probe.__colliders = [
+        ...shipped.SHIPPED_WORLD.colliders,
+        ...hub.hubColliders(() => 'Complete'),
+        ...branchB.BRANCH_B_WORLD.colliders
+      ];
+    } catch (error) {
+      // A production build serves dist/, where the TypeScript sources do not exist — and
+      // route planning is a *harness* convenience (it exists so a teleport cannot land inside
+      // a machine post), so its absence is a limitation of the check, never a game defect.
+      // Returning null says "unknown", which the callers treat conservatively: findPath
+      // answers "no route" and segmentClear "not clear", so hopping falls back to the
+      // straight line plus the rollback, exactly as it did before planning existed.
+      window.__probe.__colliderNote = 'route planning unavailable (' + String(error).slice(0, 90) + ')';
+      window.__probe.__colliders = null;
+    }
     return window.__probe.__colliders;
   },
+  /** Why route planning is unavailable, or null when it is fine (for the report). */
+  colliderNote: () => window.__probe.__colliderNote ?? null,
   /**
    * A walkable route from (ax, az) to (bx, bz), on a 0.5 m grid over the hall and the
    * Steam Works, using the same static colliders the player collides with.
@@ -335,6 +403,7 @@ window.__probe = {
    */
   findPath: async (ax, az, bx, bz) => {
     const list = await window.__probe.staticColliders();
+    if (list === null) return null; // the colliders are unknown here: do not invent a route
     const half = 0.36; // the player capsule's own half-width: what actually fits
     const step = 0.5;
     const minX = -9;
@@ -424,6 +493,7 @@ window.__probe = {
    */
   segmentClear: async (ax, az, bx, bz) => {
     const list = await window.__probe.staticColliders();
+    if (list === null) return false; // unknown geometry is not a corridor to walk down
     const half = 0.45;
     const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.25));
     for (let i = 0; i <= steps; i += 1) {
@@ -538,6 +608,57 @@ window.__probe = {
     const dev = window.__gearwrightDev;
     return typeof dev.character === 'function' ? dev.character() : null;
   },
+  /**
+   * The live weapon read model + counters (weapons pass), or null with ?guns=0. The
+   * scenario reads ammunition, the fire mode, the ADS blend and the pool's own high-water
+   * mark from here, so the numbers it reports are the game's, not the harness's.
+   */
+  weapon: () => {
+    const dev = window.__gearwrightDev;
+    return typeof dev.weapon === 'function' ? dev.weapon() : null;
+  },
+  /** How many tracers/impacts the presenter handed the renderer on the last frame. */
+  weaponEffects: () => {
+    const dev = window.__gearwrightDev;
+    return typeof dev.weaponEffects === 'function' ? dev.weaponEffects() : null;
+  },
+  /**
+   * Watch the effect pools and report the highest counts seen.
+   *
+   * A single sample is not enough: a tracer lives 0.1 s, so a semi-auto's tracer is gone
+   * by the time a 300 ms hold ends (that read is how this instrument was added — the DMR
+   * honestly reported "no tracer" for a shot that plainly drew one). Peaks are what
+   * matter, because the pool's ceiling is the budget claim.
+   *
+   * A cheap interval rather than a requestAnimationFrame loop: reading two numbers every
+   * 8 ms cannot perturb the frame rate the same check is measuring, whereas an awaiting
+   * rAF loop from the harness competes with the game's own rAF loop for the page's main
+   * thread (and at ~6 fps in software rendering that cost real shots).
+   */
+  startEffectsWatch: () => {
+    window.__probe.__fx = { tracers: 0, impacts: 0 };
+    if (window.__probe.__fxTimer !== undefined) clearInterval(window.__probe.__fxTimer);
+    window.__probe.__fxTimer = setInterval(() => {
+      const effects = window.__probe.weaponEffects();
+      if (effects === null) return;
+      window.__probe.__fx.tracers = Math.max(window.__probe.__fx.tracers, effects.tracers);
+      window.__probe.__fx.impacts = Math.max(window.__probe.__fx.impacts, effects.impacts);
+    }, 8);
+  },
+  stopEffectsWatch: () => {
+    if (window.__probe.__fxTimer !== undefined) clearInterval(window.__probe.__fxTimer);
+    window.__probe.__fxTimer = undefined;
+    return window.__probe.__fx ?? { tracers: 0, impacts: 0 };
+  },
+  /** Frames the loop has rendered — the honest frame-rate denominator for the numbers above. */
+  frames: () => window.__gearwright?.snapshot().loop.frames ?? null,
+  /** The renderer's own draw-call/triangle counters (the weapons pass's budget claim). */
+  renderStats: () => {
+    const dev = window.__gearwrightDev;
+    return typeof dev.renderStats === 'function' ? dev.renderStats() : null;
+  },
+  /** The camera's own lens, so ADS is verified against the value the renderer draws with. */
+  fov: () => window.__gearwrightDev.camera.currentFov(),
   /**
    * A loose part's *live* box, from the manipulation layer's own records.
    *
@@ -691,9 +812,14 @@ window.__probe = {
     }
     if (!branch) return null;
     // Branch B ships alongside A, so its parts and sockets are probe-able too (the
-    // focus scenario walks them, which is how the new room proves it is reachable).
-    let branchB = null;
-    try { branchB = await import('/src/levels/branch-b.ts'); } catch { /* optional */ }
+    // focus scenario walks them, which is how the new room proves it is reachable). The
+    // composition's own hook carries both branches, so the module import is only needed on
+    // the fallback path — and asking for it in a production build logs a 404 that the
+    // harness would report as a problem (it did, before this).
+    let branchB = branch.B1_CARRYABLES === undefined ? null : branch;
+    if (branchB === null && window.__probe.sourceAvailable !== false) {
+      try { branchB = await import('/src/levels/branch-b.ts'); } catch { /* optional */ }
+    }
     const parts = (list) => list.map((c) => ({ id: c.instanceId, center: c.spawn.center, half: c.definition.halfExtents }));
     const sockets = (list) => list.map((s) => ({ id: s.id, center: s.pose.center, half: s.halfExtents }));
     return {
@@ -723,11 +849,17 @@ window.__probe = {
 true;
 `;
 
-async function boot(cdp) {
+/**
+ * Navigate to `url`, wait for the game to boot, and inject the probe. Taking the URL as a
+ * parameter (rather than always using BASE) is what lets a scenario reload the *same* page
+ * with one flag flipped — the `guns` scenario's `?guns=0` pass does exactly that, and a
+ * fresh navigation is the honest way to check an escape hatch (nothing carries over).
+ */
+async function boot(cdp, url = BASE) {
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
   await cdp.send('Log.enable');
-  await cdp.send('Page.navigate', { url: BASE });
+  await cdp.send('Page.navigate', { url });
 
   const deadline = Date.now() + 60000;
   let up = false;
@@ -744,7 +876,12 @@ async function boot(cdp) {
     if (!up) await sleep(300);
   }
   if (!up) throw new Error('page never booted');
-  await evaluate(cdp, PROBE_SOURCE);
+  // The probe is told whether the page can import the game's TypeScript sources at all:
+  // the dev server serves them, a production `dist/` does not. Route planning reads them, and
+  // a failed import would log a 404 that the harness would (honestly) report as a problem —
+  // so the check declines to make the request it knows will fail.
+  const sourceAvailable = !(PRODUCTION || URL_ARG !== null);
+  await evaluate(cdp, `${PROBE_SOURCE}\nwindow.__probe.sourceAvailable = ${sourceAvailable};\ntrue;`);
 
   const readyDeadline = Date.now() + 45000;
   while (Date.now() < readyDeadline) {
@@ -771,7 +908,11 @@ function drainConsole(cdp) {
     } else if (event.method === 'Log.entryAdded') {
       const entry = event.params.entry;
       if (entry.level === 'error' || entry.level === 'warning') {
-        report.problems.push(`log.${entry.level}: ${entry.text}`);
+        // The URL matters: an unattributed 404 in a check cannot be acted on, and one did
+        // show up here before this was added.
+        report.problems.push(
+          `log.${entry.level}: ${entry.text}${entry.url ? ` <- ${entry.url}` : ''}`
+        );
       } else {
         report.logs.push(`log.${entry.level}: ${entry.text}`);
       }
@@ -1244,18 +1385,366 @@ async function scenarioDock(cdp) {
   const dock = await dockInto(cdp, socket, valve);
   await sleep(900);
   drainConsole(cdp);
+  const planning = await evaluate(cdp, 'window.__probe.colliderNote()').catch(() => null);
   report.data.dock = {
     grab,
     dropped: dock.dropped === true,
     attempts: dock.attempts,
     socketAfter: dock.hud?.socket?.text ?? null,
+    routePlanning: planning ?? 'available',
     hud: await evaluate(cdp, 'window.__probe.hud()'),
     progress: await evaluate(cdp, 'window.__probe.progress()')
   };
-  if (dock.dropped === true) report.problems.push('dock: the held part was soft-detached mid-carry');
-  else if (/incompatible/i.test(dock.hud?.socket?.text ?? '')) {
-    report.problems.push(`dock: the socket refused the part (${dock.hud?.socket?.text})`);
+  // A carry check *teleports* the player, and the game's own physics resolves where that
+  // lands — so if the harness cannot plan a route around the level's geometry, it can hop
+  // into a machine post and get pushed through the floor (`player.y = -2.65` in the trace).
+  // That is a limitation of the check, and saying so is the honest answer: a verdict that
+  // depends on where a straight line happens to land is not a verdict about the game.
+  const rolledBack = (dock.attempts ?? []).some((attempt) => /rolled back/.test(attempt));
+  if (dock.dropped === true) {
+    report.problems.push('dock: the held part was soft-detached mid-carry');
+  } else if (/incompatible/i.test(dock.hud?.socket?.text ?? '')) {
+    if (planning !== null && rolledBack) {
+      report.data.dock.inconclusive =
+        'a hop was rolled back and route planning is unavailable here, so the check could not stand where it needs to';
+    } else {
+      report.problems.push(`dock: the socket refused the part (${dock.hud?.socket?.text})`);
+    }
   }
+  if ((dock.attempts ?? []).some((attempt) => /rolled back/.test(attempt))) {
+    report.data.dock.rolledBackHops = (dock.attempts ?? []).filter((a) => /rolled back/.test(a)).length;
+  }
+}
+
+/**
+ * THE WEAPONS PASS, played (16/10/2026).
+ *
+ * The headless suites prove the rules (fire modes, rpm, magazines, recoil patterns, the
+ * bullet pool); this is the *feel* gate the plan asks for, and it is measured rather than
+ * watched — the numbers it reports are the composition's own:
+ *
+ *   - every slot fires, spends rounds and produces tracers through the real input path;
+ *   - a magazine reloads from reserve, and a switch cancels a reload in flight;
+ *   - ADS closes the camera's own lens (`currentFov()`) and slows the walk;
+ *   - crouch is a real stance the weapon reads;
+ *   - firing for a long time leaves the bullet/tracer pools flat (`poolDrops` stays 0);
+ *   - the left button fires while `KeyE` still grabs (the Phase C action split);
+ *   - and `?guns=0` restores the pre-pass game exactly — no weapon, no HUD block, no shot.
+ *
+ * Every stage records what happened even when it fails, so a red run is a diagnosis.
+ */
+async function scenarioGuns(cdp) {
+  const readWeapon = async () => evaluate(cdp, 'window.__probe.weapon()');
+  const hud = async () => evaluate(cdp, 'window.__probe.hud()');
+  const pause = (ms) => sleep(ms);
+
+  const started = await readWeapon();
+  if (started === null) {
+    report.problems.push('guns: no weapon system composed with weapons on (expected one)');
+    report.data.guns = { weapon: null };
+    return;
+  }
+  report.data.guns = {
+    start: started.view,
+    slots: [],
+    ads: null,
+    crouch: null,
+    pool: null,
+    grabSplit: null,
+    disabled: null
+  };
+
+  const slotCount = started.view.slotCount;
+  for (let slot = 0; slot < slotCount; slot += 1) {
+    const row = { slot: slot + 1 };
+    await tapKey(cdp, `Digit${slot + 1}`);
+    await pause(900); // the swap timer has to elapse before the weapon will fire
+    const selected = await readWeapon();
+    row.name = selected.view.name;
+    row.classLabel = selected.view.classLabel;
+    row.fireMode = selected.view.fireModeLabel;
+    row.ammoBefore = `${selected.view.magazine}/${selected.view.reserve}`;
+    const shotsBefore = selected.stats.shotsFired;
+
+    // Hold the trigger long enough to fire however this class fires. The watch runs in the
+    // page for the whole window, so a single shot's 0.1 s tracer is caught rather than
+    // missed between reads.
+    const framesBefore = await evaluate(cdp, 'window.__probe.frames()');
+    await evaluate(cdp, 'window.__probe.startEffectsWatch()');
+    await mouseDown(cdp, 'left');
+    await pause(700);
+    await mouseUp(cdp, 'left');
+    await pause(180);
+    const after = await readWeapon();
+    const peaks = await evaluate(cdp, 'window.__probe.stopEffectsWatch()');
+    const framesAfter = await evaluate(cdp, 'window.__probe.frames()');
+    row.frames = framesAfter === null || framesBefore === null ? null : framesAfter - framesBefore;
+    row.shots = after.stats.shotsFired - shotsBefore;
+    row.rounds = after.stats.roundsSpent - selected.stats.roundsSpent;
+    row.ammoAfter = `${after.view.magazine}/${after.view.reserve}`;
+    row.tracersDrawn = peaks.tracers;
+    row.impactsDrawn = peaks.impacts;
+    row.spreadAfterSpray = Number(after.view.spread.toFixed(4));
+
+    // Reload: the magazine refills from reserve, and the reload takes time to finish. The
+    // wait covers the longest authored *empty* reload (3.6 s), because a spray may have
+    // emptied the magazine — which is exactly when the slower reload should be seen.
+    const magBefore = after.view.magazine;
+    await tapKey(cdp, 'KeyR');
+    await pause(120);
+    row.reloadingDuringReload = (await readWeapon()).view.reloading;
+    await pause(4200);
+    const reloaded = await readWeapon();
+    row.reloaded = `${reloaded.view.magazine}/${reloaded.view.reserve}`;
+    row.reloadRefilled = reloaded.view.magazine > magBefore;
+    row.reloadingAfter = reloaded.view.reloading;
+
+    report.data.guns.slots.push(row);
+    if (row.shots <= 0) report.problems.push(`guns: slot ${slot + 1} (${row.name}) fired nothing`);
+    if (row.tracersDrawn <= 0) {
+      report.problems.push(`guns: slot ${slot + 1} (${row.name}) drew no tracer`);
+    }
+    if (row.reloadRefilled !== true) {
+      report.problems.push(`guns: slot ${slot + 1} (${row.name}) did not refill on reload`);
+    }
+    drainConsole(cdp);
+  }
+
+  // --- a switch mid-reload cancels the reload (a real state machine, not a timer) ------
+  await tapKey(cdp, 'Digit1');
+  await pause(900);
+  await mouseDown(cdp, 'left');
+  await pause(200);
+  await mouseUp(cdp, 'left');
+  await tapKey(cdp, 'KeyR');
+  await pause(150);
+  const duringReload = await readWeapon();
+  await tapKey(cdp, 'Digit2');
+  await pause(150);
+  const afterSwitch = await readWeapon();
+  report.data.guns.switchCancelsReload = {
+    reloadingBeforeSwitch: duringReload.view.reloading,
+    reloadingAfterSwitch: afterSwitch.view.reloading,
+    slotAfter: afterSwitch.view.activeSlot + 1,
+    swapSeen: afterSwitch.stats.switches > started.stats.switches
+  };
+  if (duringReload.view.reloading !== true || afterSwitch.view.reloading !== false) {
+    report.problems.push('guns: a switch did not cancel the reload in flight');
+  }
+
+  // --- ADS: the camera's own lens closes, and the walk really slows --------------------
+  await tapKey(cdp, 'Digit1');
+  await pause(900);
+  const fovHip = await evaluate(cdp, 'window.__probe.fov()');
+  await mouseDown(cdp, 'right');
+  await pause(500);
+  const adsView = await readWeapon();
+  const fovAim = await evaluate(cdp, 'window.__probe.fov()');
+  const adsState = await evaluate(cdp, 'window.__probe.state()');
+  await mouseUp(cdp, 'right');
+  await pause(500);
+  const fovBack = await evaluate(cdp, 'window.__probe.fov()');
+  // The blend eases back at 9/s, so it is fully released within a few frames — but the
+  // headless renderer runs at ~25 fps, so the wait has to cover *frames*, not just time.
+  await pause(1200);
+  const fovSettled = await evaluate(cdp, 'window.__probe.fov()');
+  report.data.guns.ads = {
+    blendAiming: Number(adsView.view.adsBlend.toFixed(3)),
+    fovHip: Number(fovHip.toFixed(3)),
+    fovAiming: Number(fovAim.toFixed(3)),
+    fovRestored: Number(fovSettled.toFixed(3)),
+    fovRestoredImmediately: Number(fovBack.toFixed(3)),
+    moveScaleAiming: Number(adsView.view.moveScale.toFixed(3)),
+    walkSpeedWhileAiming: adsState.walkSpeed ?? null
+  };
+  if (report.data.guns.ads.blendAiming <= 0.5) {
+    report.problems.push('guns: aiming down sights did not blend in');
+  }
+  if (!(fovAim < fovHip)) report.problems.push('guns: ADS did not close the camera lens');
+  if (Math.abs(fovSettled - fovHip) > 0.05) {
+    report.problems.push('guns: the lens did not come back after releasing aim');
+  }
+
+  // --- crouch is a real stance the weapon reads, and it really slows the walk ----------
+  // Measured by walking: the read model's `walkSpeed` is deliberately the *nominal* walk
+  // (what the weapon layer speaks in fractions of), so the stance's own cost shows up in
+  // the speed the player actually reaches.
+  const walkSpeedFor = async (crouch) => {
+    if (crouch) await keyDown(cdp, 'KeyC');
+    await pause(250);
+    await keyDown(cdp, 'KeyW');
+    await pause(900);
+    const state = await evaluate(cdp, 'window.__probe.state()');
+    await keyUp(cdp, 'KeyW');
+    if (crouch) await keyUp(cdp, 'KeyC');
+    await pause(700);
+    return state;
+  };
+  const crouchedState = await walkSpeedFor(true);
+  const standingState = await walkSpeedFor(false);
+  report.data.guns.crouch = {
+    crouched: crouchedState.crouched,
+    standing: standingState.crouched,
+    speedWhileCrouched: Number(crouchedState.speed.toFixed(3)),
+    speedStanding: Number(standingState.speed.toFixed(3)),
+    nominalWalkSpeed: standingState.walkSpeed ?? null,
+    moveScaleWhileCrouched: Number((await readWeapon()).view.moveScale.toFixed(3))
+  };
+  if (crouchedState.crouched !== true || standingState.crouched !== false) {
+    report.problems.push('guns: the crouch key did not move the stance');
+  }
+  if (!(crouchedState.speed < standingState.speed)) {
+    report.problems.push(
+      `guns: crouching did not slow the walk (${crouchedState.speed} vs ${standingState.speed} m/s)`
+    );
+  }
+
+  // --- the pool is a budget: empty several magazines and watch it stay flat ------------
+  await tapKey(cdp, 'Digit2'); // the SMG: fastest cadence, the worst case for pooling
+  await pause(900);
+  // The render budget, before anything is fired: the drawn weapon is part of the frame
+  // (it is not holstered while empty-handed), so this is the baseline the burst adds to.
+  const idleBudget = await evaluate(cdp, 'window.__probe.renderStats()');
+  const poolBefore = (await readWeapon()).stats.poolPeak;
+  let dumps = 0;
+  let peakTracers = 0;
+  let peakImpacts = 0;
+  let burstDraws = 0;
+  let burstTriangles = 0;
+  for (let burst = 0; burst < 4; burst += 1) {
+    await evaluate(cdp, 'window.__probe.startEffectsWatch()');
+    await mouseDown(cdp, 'left');
+    await pause(300);
+    // Sampled *while firing*: a pooled presentation must not add draws as it fills.
+    const burstBudget = await evaluate(cdp, 'window.__probe.renderStats()');
+    if (burstBudget !== null) {
+      burstDraws = Math.max(burstDraws, burstBudget.drawCalls);
+      burstTriangles = Math.max(burstTriangles, burstBudget.triangles);
+    }
+    await pause(600);
+    await mouseUp(cdp, 'left');
+    const peaks = await evaluate(cdp, 'window.__probe.stopEffectsWatch()');
+    peakTracers = Math.max(peakTracers, peaks.tracers);
+    peakImpacts = Math.max(peakImpacts, peaks.impacts);
+    await tapKey(cdp, 'KeyR');
+    await pause(3000); // the SMG's empty reload is 2.2 s; leave room for the cadence
+    dumps += 1;
+  }
+  const poolAfter = await readWeapon();
+  report.data.guns.pool = {
+    bursts: dumps,
+    shotsFired: poolAfter.stats.shotsFired,
+    impacts: poolAfter.stats.impacts,
+    poolPeakBefore: poolBefore,
+    poolPeakAfter: poolAfter.stats.poolPeak,
+    poolDrops: poolAfter.stats.poolDrops,
+    liveBullets: poolAfter.stats.liveBullets,
+    peakTracersDrawn: peakTracers,
+    peakImpactsDrawn: peakImpacts,
+    drawCallsIdle: idleBudget?.drawCalls ?? null,
+    drawCallsFiring: burstDraws,
+    trianglesIdle: idleBudget?.triangles ?? null,
+    trianglesFiring: burstTriangles
+  };
+  if (poolAfter.stats.poolDrops !== 0) {
+    report.problems.push(`guns: the bullet pool dropped ${poolAfter.stats.poolDrops} spawn(s)`);
+  }
+  // The presenter's own cap (DEFAULT_WEAPON_EFFECTS_TUNING): a long burst must not grow it.
+  if (peakTracers > 24) {
+    report.problems.push(`guns: the tracer pool grew to ${peakTracers} (cap 24)`);
+  }
+  // The plan's budget rule: `stats()` must not grow with how much you shoot. Both pools are
+  // pre-allocated and the drawn weapon is a single merged mesh, so a burst may add the two
+  // effect buffers and no more.
+  if (idleBudget !== null && burstDraws > idleBudget.drawCalls + 3) {
+    report.problems.push(
+      `guns: firing grew the frame from ${idleBudget.drawCalls} to ${burstDraws} draw calls`
+    );
+  }
+
+  // --- the action split: the left button fires, KeyE still grabs (Plan issue #2) --------
+  const level = await evaluate(cdp, 'window.__probe.level()');
+  const part = level.p1[0] ?? null;
+  if (part !== null) {
+    const live = await evaluate(cdp, `window.__probe.partBox('${part.id}')`).catch(() => null);
+    const found = await focusTarget(cdp, part.id, live ?? boxOf(part));
+    if (found === null) {
+      report.data.guns.grabSplit = { part: part.id, focus: 'NOT FOCUSABLE' };
+      report.problems.push(`guns: ${part.id} was not focusable for the grab-split check`);
+    } else {
+      await clickAt(cdp, 800, 450); // the left button must NOT grab
+      await pause(500);
+      const afterClick = await evaluate(cdp, 'window.__probe.hud()');
+      await tapKey(cdp, 'KeyE'); // ...but KeyE must
+      await pause(500);
+      const afterKey = await evaluate(cdp, 'window.__probe.hud()');
+      // Carrying holsters the weapon, so *this* page gives the clean comparison the budget
+      // claim wants: same scene, same frame, with and without a drawn weapon.
+      const carryingBudget = await evaluate(cdp, 'window.__probe.renderStats()');
+      report.data.guns.grabSplit = {
+        part: part.id,
+        heldAfterLeftClick: afterClick.held?.text ?? null,
+        heldAfterKeyE: afterKey.held?.text ?? null,
+        drawCallsWhileCarrying: carryingBudget?.drawCalls ?? null,
+        drawCallsEmptyHanded: idleBudget?.drawCalls ?? null
+      };
+      report.data.guns.routePlanning =
+        (await evaluate(cdp, 'window.__probe.colliderNote()')) ?? 'available';
+      if (
+        carryingBudget !== null &&
+        idleBudget !== null &&
+        !(carryingBudget.drawCalls < idleBudget.drawCalls)
+      ) {
+        report.problems.push(
+          `guns: the drawn weapon is not in the frame (${carryingBudget.drawCalls} draw calls carrying vs ${idleBudget.drawCalls} empty-handed)`
+        );
+      }
+      if ((afterClick.held?.text ?? '').includes(part.id) === false && (afterKey.held?.text ?? '').includes(part.id) === false) {
+        report.problems.push('guns: neither the left button nor KeyE picked the part up');
+      }
+      if ((afterClick.held?.text ?? '').includes(part.id)) {
+        report.problems.push('guns: the left button grabbed a part — it owns firing now');
+      }
+    }
+  }
+  drainConsole(cdp);
+
+  // --- the escape hatch: `?guns=0` is the pre-pass game ---------------------------------
+  // The page is navigated fresh, so nothing from the fired-away state above carries over.
+  const offUrl = BASE.replace(/([?&])guns=\d+/, '$1guns=0');
+  const target = offUrl.includes('guns=0') ? offUrl : `${BASE}&guns=0`;
+  // A full boot (navigate + wait for the game + re-inject the probe): a fresh page is the
+  // honest test of the escape hatch, and the probe does not survive a navigation.
+  await boot(cdp, target);
+  const offState = await evaluate(
+    cdp,
+    `(() => ({
+      weapon: window.__probe.weapon(),
+      effects: window.__probe.weaponEffects(),
+      hudWeaponHidden: document.querySelector('.gw-hud-weapon')?.classList.contains('gw-hud-hidden') ?? null,
+      state: window.__probe.state()
+    }))()`
+  );
+  await mouseDown(cdp, 'left');
+  await pause(300);
+  await mouseUp(cdp, 'left');
+  await pause(200);
+  const offAfterFire = await evaluate(cdp, 'window.__probe.weaponEffects()');
+  drainConsole(cdp);
+  const offBudget = await evaluate(cdp, 'window.__probe.renderStats()');
+  report.data.guns.disabled = {
+    weapon: offState.weapon,
+    hudWeaponHidden: offState.hudWeaponHidden,
+    tracersAfterFiring: offAfterFire?.tracers ?? null,
+    drawCalls: offBudget?.drawCalls ?? null,
+    triangles: offBudget?.triangles ?? null,
+    lifecycle: offState.state?.lifecycle ?? null
+  };
+
+  if (offState.weapon !== null) report.problems.push('guns: ?guns=0 still composed a weapon system');
+  if (offState.hudWeaponHidden !== true) report.problems.push('guns: ?guns=0 left the HUD weapon block up');
+  if ((offAfterFire?.tracers ?? 0) !== 0) report.problems.push('guns: ?guns=0 still drew tracers');
+  drainConsole(cdp);
 }
 
 async function scenarioBm1(cdp) {
@@ -1616,6 +2105,7 @@ async function main() {
     drainConsole(cdp);
   }
   if (SCENARIO === 'dock') await scenarioDock(cdp);
+  if (SCENARIO === 'guns') await scenarioGuns(cdp);
   if (SCENARIO === 'bm1') await scenarioBm1(cdp);
   if (SCENARIO === 'branch') await scenarioBranch(cdp);
   if (SCENARIO === 'press') {

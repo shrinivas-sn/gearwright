@@ -106,3 +106,20 @@ fire modes, ADS, and pooled **simulated** bullets (travel time + drop, swept per
 is exactly the change this pass refuses to make blind — the impact event (`WeaponImpact`: point,
 normal, volume id) is the seam a later impulse pass plugs into. Non-negotiable §5.1 holds as
 written: nothing a bullet touches may attach, detach, validate or complete anything.
+
+### What actually shipped (16/10/2026)
+
+| Piece | Where | Notes |
+|---|---|---|
+| Weapon table, 6 classes | `src/data/weapons.ts` | rpm, magazine + two reloads, per-class recoil pattern, spread/bloom walk, ADS zoom, bullet speed + drop, cue ids |
+| L2 runtime + projectile pool | `src/gameplay/weapon-system.ts` | fire modes, slots/swaps, dry fire, ADS blend, swept simulated bullets that stop on static geometry **or** on a loose part; 36 headless tests |
+| Actions + world + camera | `input-system.ts`, `phase-world.ts`, `camera-rig.ts` | LMB fires, `E` still grabs (the action split); the rig owns the recoil accumulator and the ADS lens; ADS slows the walk through the existing speed scale |
+| Presentation | `hud.ts`, `weapon-fx.ts`, `three-renderer.ts` | weapon block + spread-shaped reticle; one drawn weapon (merged mesh), one tracer `LineSegments`, one instanced impact pool — a burst adds ≤3 draw calls and never grows the pools |
+| Audio | `audio-port.ts`, `web-audio-bus.ts`, `feedback-composer.ts` | per-class gunshot, magazine in/out, bolt cycle, dry fire, weapon switch, bullet impact — all synthesised, no assets |
+| Escape hatch + feel gate | `?guns=0`, `scripts/browser-check.mjs` `guns` | `?guns=0` restores the pre-pass game exactly; `guns` fires every slot, reloads, switches mid-reload, aims, crouches, measures the pools and the frame budget, then reloads the page with `?guns=0` to prove the hatch |
+
+Measured live (real Chrome, from `dist/`, 16/10/2026): AR 8 rounds in 700 ms at 630 rpm, SMG 11 at
+900 rpm; every slot refilled from reserve on reload; ADS closed the lens 60 → 43.4° and slowed the
+walk to 0.53×; crouch-walk 2.06 m/s vs 3.74 standing; 82 rounds fired across four dumps left
+`poolPeak 8`, `poolDrops 0`, tracers ≤ 2 drawn, and the frame at 79 draw calls idle / 82 firing.**Not** in scope, and not built: enemy AI, damage, health, death, bullet impulses on parts,
+attachments, an ammunition economy, and any change to the save schema.

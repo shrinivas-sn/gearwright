@@ -166,9 +166,9 @@ above the head) and the player stays crouched.
 one-shot HUD entry line.
 
 ### Checkpoint — Phase A
-- [ ] `npx vitest run` exit 0 with the new crouch tests.
-- [ ] `npm run typecheck` exit 0.
-- [ ] Commit; `DOCS/STATUS.md` records the speed + crouch change.
+- [x] `npx vitest run` exit 0 with the new crouch tests.
+- [x] `npm run typecheck` exit 0.
+- [x] Commit; `DOCS/STATUS.md` records the speed + crouch change (`6bc16c0`).
 
 ---
 
@@ -236,9 +236,9 @@ capability (`ARCH §20.1`) and adding force on a shared pose owner is exactly th
 plan refuses to make blind. The impact event is the seam a later pass plugs into.
 
 ### Checkpoint — Phase B
-- [ ] `npx vitest run tests/logic/weapon-system.test.ts` exit 0.
-- [ ] `npx vitest run` exit 0 (no regression).
-- [ ] `npm run typecheck` exit 0. Commit.
+- [x] `npx vitest run tests/logic/weapon-system.test.ts` exit 0.
+- [x] `npx vitest run` exit 0 (no regression).
+- [x] `npm run typecheck` exit 0. Commit (`f460f58`).
 
 ---
 
@@ -288,8 +288,8 @@ used by both `snapshot()` and `previewPose()` so the render preview cannot disag
 FOV/arm and releasing restores it; the same kick sequence reproduces the same pose.
 
 ### Checkpoint — Phase C
-- [ ] `npx vitest run` exit 0 (input, camera, phase-world suites included).
-- [ ] `npm run typecheck` exit 0. Commit.
+- [x] `npx vitest run` exit 0 (input, camera, phase-world suites included).
+- [x] `npm run typecheck` exit 0. Commit (`ebf41f1`).
 
 ---
 
@@ -318,8 +318,8 @@ plus a new `impact` kind.
 **Verify:** `node scripts/browser-check.mjs boot` still reports the body and draw calls inside budget.
 
 ### Checkpoint — Phase D
-- [ ] `tests/dom/hud.test.ts` + `tests/boundary/*` exit 0; full suite exit 0.
-- [ ] `npm run build` exit 0. Commit.
+- [x] `tests/dom/hud.test.ts` + `tests/boundary/*` exit 0; full suite exit 0.
+- [x] `npm run build` exit 0. Commit (`82d9dba` for the HUD + `weapon-fx` plumbing; the typecheck failure and the hand-off defect it left are issues #5/#6, fixed and tested this session).
 
 ---
 
@@ -332,7 +332,7 @@ metal impact) as **synthesised** recipes on the existing bus — no assets, no d
 composer map weapon events to them. Keep audio presentation-only: nothing in gameplay branches on it.
 
 ### Checkpoint — Phase E
-- [ ] `tests/logic/web-audio-bus.test.ts` + full suite exit 0. Commit.
+- [x] `tests/logic/web-audio-bus.test.ts` + full suite exit 0. Commit (the recipe-budget suite covers the 12 new cues automatically; the composer's weapon mapping has 6 new tests).
 
 ---
 
@@ -354,9 +354,9 @@ count that does not add up, a recoil that does not recover, or a draw-call count
 shots.
 
 ### Checkpoint — Phase F
-- [ ] `npm run build` exit 0 from the final code.
-- [ ] `boot` (default body) and `guns` both exit 0 from `dist/`, with the raw numbers in the log.
-- [ ] `?guns=0` verified: the pre-pass behaviour is intact.
+- [x] `npm run build` exit 0 from the final code.
+- [x] `boot` (default body) and `guns` both exit 0 from `dist/`, with the raw numbers in the log (see the Progress Log; the only problem either reports is the documented ANGLE `X4122` warning).
+- [x] `?guns=0` verified: the pre-pass behaviour is intact (the `guns` scenario re-boots the page with the flag and asserts `weapon: null`, the HUD block hidden and no tracers).
 
 ---
 
@@ -368,8 +368,8 @@ to "no enemies, damage, health or death" while admitting weapon handling and a s
 update `DOCS/CONTEXT/SHOOTING-MECHANIC.md` with what actually shipped.
 
 ### Checkpoint — Phase G
-- [ ] `DOCS/README.md` starts with the structure marker and its index row is current.
-- [ ] A new session can resume from the Progress Log alone.
+- [x] `DOCS/README.md` starts with the structure marker and its index row is current.
+- [x] A new session can resume from the Progress Log alone.
 
 ---
 
@@ -383,6 +383,11 @@ Append-only. Record every place reality differs from this plan **before** starti
 | 2 | 16/10 | C.2 | Keep `primary` = `KeyE` **or** LMB in Exploration | The left button must be free for firing (BGMI's trigger), but two existing suites grab with `primaryPressed` instead of a `KeyE` press: `phase-world.test.ts` and `p1-acceptance.test.ts`. | 2 test sites change to a real `KeyE` press. The behaviour is unchanged — only the *input path the test uses* is corrected to the one the game documents. | Tests updated in the same commit as the action split, with the reason recorded in the Progress Log. `Manipulation`-context confirm keeps both LMB and `KeyE`, so docking tests are untouched. |
 | 3 | 16/10 | B.2 | — | `PhysicsPort.castRay` deliberately ignores carryable colliders, so bullets need their own segment-vs-box test against the part boxes the caller supplies (the same live poses the renderer draws). | Contained: one pure test-math helper in the weapon system, no port change. | Implemented as described; the part list crosses as a plain read-only array, so the weapon system still owns nothing but its own state. |
 | 4 | 16/10 | B.2 | the box test and the world ray answer in the same units | They did not: `segmentBoxEntry` is parametric (a fraction of the given segment) while `PhysicsPort.castRay` answers in metres, and `stepBullets` ranked the two directly. A part 1.4 m ahead of a 165 m/s muzzle reported a hit at 0.25 m — parts could be shot through or stop a bullet short, and nothing else in the pass would have caught it. | Real defect, caught by writing the headless suite before wiring (the plan's rule paid for itself). | Fixed in the same commit: the box test is handed the unit sweep, so both answers are metres. Pinned by the “stops a bullet on a loose part” test (distance ≈ 1.4 m, impact point z ≈ −1.4, normal +Z). |
+| 5 | 16/10 | D.2 | Phase D's commit left the tree green | It did not: `npm run typecheck` failed on `weapon-fx.ts` — the presenter assigned to properties the render port declares `readonly`, having intersected the port's read-only view types with mutable ones. | Blocking: the pass could not be finished on a red typecheck. | Fixed at the cause, not by widening the port: the presenter owns private **mutable mirrors** of the port's view shapes (structurally assignable to the read-only ones). |
+| 6 | 16/10 | D.2 | the presenter hands a shot to the renderer the step it happens | It could not: `present()` computed “is there anything to draw” *before* rebuilding its pools, so it read the previous frame's arrays, concluded “nothing”, and returned early — tracers, the muzzle flash **and** the drawn weapon could never reach the renderer at all. | Real defect, found by reading the hand-off while fixing #5; nothing in the suite covered the presenter, which is why it shipped broken. | Fixed (rebuild, then decide; effects and the weapon view are cleared with `null` independently, and the “nothing to draw” shortcut now covers both halves) and pinned by the new `tests/logic/weapon-fx.test.ts` — 8 tests, the first of which fails against the old code. |
+| 7 | 16/10 | F.1 | the plan's budget rule (“`stats()` must not grow with how much you shoot”) | Impacts were one mesh per pooled mark, so the frame grew with how many marks were fading: 79 → 86 draw calls during a burst. | Real cost, and one the harness measured rather than the code review noticing. | Impacts are now a single `THREE.InstancedMesh` (the fade rides size + the strongest mark's opacity): 79 idle → 82 firing, and the `guns` scenario asserts the ceiling. |
+| 8 | 16/10 | F.1 | a production `dist/` run is equivalent to a dev run for the harness's carry scenarios | It is not: the harness's route planner reads the game's TypeScript sources, which a production build does not serve. Without planning, a hop can land the player inside a machine post and the physics resolves the capsule through the floor (`player.y = −2.65`), so `dock`/`branch` report a socket failure that is an artefact of where a straight line happened to land. | Contained to tooling, but it produced a false game-defect verdict — the opposite of what a check is for. | The probe no longer requests sources it knows are missing, the failure is attributed (`route planning unavailable`), and the carry scenarios report `inconclusive` instead of a problem. `guns` is source-independent and green in both modes. |
+| 9 | 16/10 | A (follow-ups) | the plan folded the older carry-feel tune into Phase A “if the budget allows after Phase F” | The budget did not: the weapons pass plus the defects above filled the session. | None on this pass; it stays owed. | Recorded in `DOCS/STATUS.md` `## Next up` #6 (carry tune + snap-assist/SlotJudge), which is where the next session picks it up. |
 
 ## Owner inputs
 
@@ -477,6 +482,40 @@ recovers; ADS really shortens the walk and closes the lens; no weapons composed 
 is `null`).
 
 Verified: `npm run typecheck` exit 0; `npx vitest run` exit 0 — 59 files, **736 tests**.
+
+### 16/10/2026 (second sitting) — Phases D–G: presentation, sound, live proof, docs
+
+Done: **D.1/D.2** finished and wired — `main.ts` now composes the `WeaponSystem`, the
+`WeaponEffects` presenter (stepped on the fixed step, presented per frame) and `?guns=0`; the HUD
+weapon block's read model includes the *words* for a refusal, held 1.4 s; the mount resolver takes
+the muzzle from `characterFacts().handR` when a body is drawn and aims it along a 60 m convergence
+point on the camera's line, with a chest-height fallback for headless/no-body cases. **E** — 12 new
+cue ids + synthesised recipes (per-class gunshot, magazine out/in, bolt cycle, dry fire, weapon
+switch, bullet impact) and `FeedbackComposer.updateWeapon`, with two rules recorded in code: one cue
+per *trigger pull* (never per pellet), and player-caused cues bypass the intent-level retrigger guard
+(the weapon's own rpm already bounds them; the guard would otherwise swallow rounds at high rate).
+**F** — the `guns` scenario (fire every slot, reload, switch mid-reload, ADS, crouch, four magazine
+dumps for the pools, the action-split check, then a fresh page with `?guns=0`), plus two harness
+repairs: the 404 the probe manufactured in a production build is now avoided *and* attributed, and
+the carry scenarios say `inconclusive` (with the reason) instead of inventing a socket verdict when
+the route planner has no colliders to plan with. **G** — this file, `DOCS/WORK/2026-10-16/WORK.md`,
+`DOCS/STATUS.md`, the `DOCS/README.md` index row, `SHOOTING-MECHANIC.md` §7 (what shipped) and the
+architecture note this pass owed: **ADR-019** (the hop, recorded at last — it shipped without an ADR
+row) and **ADR-020** (weapon handling + a sandbox range in scope; enemies/damage/health/death out),
+with §3's *Out of Scope* row narrowed to match.
+
+Defects fixed on the way (Plan issues #5–#8): the broken typecheck `82d9dba` left behind;
+`WeaponEffects.present` deciding "nothing to draw" before rebuilding its pools (so no tracer **and
+no drawn weapon** could ever reach the renderer); impacts costing one draw call each (now a single
+`InstancedMesh`); and the harness's route-planner 404 in production builds.
+
+Verified: `npm run typecheck` exit 0; `npx vitest run` exit 0 — 60 files, **754 tests** (736 + 8
+weapon-fx + 6 composer + 4 HUD); `npm run build` exit 0 (`app` 285.04 kB / 83.09 gzip — +35.3 kB raw
+over the pre-pass build); `boot --production` and `guns --production` exit 0 from `dist/` with the
+raw numbers recorded in `DOCS/WORK/2026-10-16/WORK.md`; `hold` and `dock` green in dev.
+
+Owed, and carried into `DOCS/STATUS.md` `## Next up` #6: the older carry-feel tune (hold blend,
+faster rotate, run-while-carrying) and the snap-assist/SlotJudge reward-punish pass (Plan issue #9).
 
 ### 16/10/2026 — session start
 Recon: worktree clean, `main` == `origin/main` (0/0 after `git fetch`); `npm run typecheck` exit 0;

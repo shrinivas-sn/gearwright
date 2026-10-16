@@ -23,6 +23,12 @@
  *      *optional*: absent (or a null object) means the game is simply silent, which is
  *      EC-BRN-08's "fully playable silent" holding by construction rather than by a
  *      branch at every call site.
+ *   4. **Weapon cues** (`updateWeapon`, weapons pass) — a shot, a magazine, a bolt, a dry
+ *      trigger and a bullet strike are the same kind of thing as an attach: an event the
+ *      player caused, which has to be audible without being looked at. They arrive as the
+ *      weapon step's own result rather than as `FeedbackIntent`s, because a gunshot is not
+ *      a *gameplay* verdict — nothing about it is a rule, so nothing about it belongs in
+ *      the feedback model.
  *
  * Timing runs in the fixed step, so the same script produces the same feedback at
  * any frame rate (EC-MAN-12) and the composer is testable headlessly. The renderer
@@ -37,6 +43,8 @@ import type { AudioCueId, AudioPort } from '../ports/audio-port.ts';
 import type { Pose, SpinDirection } from '../game-state/component-model.ts';
 import type { MachineDerivedState } from '../game-state/machine-graph.ts';
 import type { FeedbackIntent } from '../gameplay/feedback-model.ts';
+import type { WeaponStepResult } from '../gameplay/weapon-system.ts';
+import type { WeaponClass } from '../data/weapons.ts';
 import type { CarryableSnapshot } from '../gameplay/manipulation-system.ts';
 import type { Vec3 } from '../core/vec3.ts';
 import { clamp01, lerp, lerpAngle } from '../core/interp.ts';
@@ -110,6 +118,24 @@ interface MutableCarryableState {
   prevSpin: number;
   /** False until the first step wrote this state (then prev = current). */
   initialised: boolean;
+}
+
+/** §32.3's per-class gunshot: one cue id per class, so the class is audible. */
+function gunshotCue(weaponClass: WeaponClass): AudioCueId {
+  switch (weaponClass) {
+    case 'ar':
+      return 'gunshot-ar';
+    case 'smg':
+      return 'gunshot-smg';
+    case 'dmr':
+      return 'gunshot-dmr';
+    case 'sniper':
+      return 'gunshot-sniper';
+    case 'shotgun':
+      return 'gunshot-shotgun';
+    case 'pistol':
+      return 'gunshot-pistol';
+  }
 }
 
 /** Rotation sense of a machine's first output, as a sign (0 = unknown → no motion). */
@@ -226,16 +252,55 @@ export class FeedbackComposer {
   }
 
   /**
+   * One fixed step of weapon sound (weapons pass). A shot is one cue per *pull* —
+   * `result.shots` holds one entry per trigger pull, never one per pellet — so a shotgun
+   * blast is a single report rather than nine overlapping ones.
+   *
+   * Audio stays presentation-only (§32.4 rule 1): nothing here can refuse a shot, move a
+   * part or change a rule, and a silent bus changes nothing but the sound.
+   */
+  updateWeapon(result: WeaponStepResult | null): void {
+    if (result === null) return;
+
+    // Every round is a distinct event the player caused, so none of these take the
+    // cadence guard: the weapon's own rate limits them, and dropping one would make the
+    // gun sound like it jammed.
+    for (const shot of result.shots) {
+      this.playCue(gunshotCue(shot.weaponClass), shot.origin, false);
+    }
+    // A bullet only produces an impact when it struck a volume, so every one of these has
+    // a real point to sound from (and is emitted positionally, §32.2). Impacts keep the
+    // guard: a shotgun's pellets land together, and nine rings is noise, not information.
+    for (const impact of result.impacts) {
+      this.playCue('bullet-impact', impact.point);
+    }
+    if (result.reloadStarted) this.playCue('mag-out', null);
+    if (result.reloadFinished) {
+      this.playCue('mag-in', null);
+      this.playCue('bolt-cycle', null);
+    }
+    if (result.switchedTo !== null) this.playCue('weapon-switch', null);
+    // The honest answer to a dead trigger: an empty magazine clicks, a reloading weapon
+    // does not (the player is already watching it).
+    if (result.refused === 'empty') this.playCue('dry-fire', null);
+  }
+
+  /**
    * Play one cue through the §32.1 noise-suppression rule: a repeat of the *same* cue
    * inside `retriggerSeconds` is dropped rather than restarted, so holding a key or a
    * rapid attach/detach flurry cannot stack into a click storm. The clock is this
    * composer's own fixed-step elapsed time, so the guard is deterministic.
+   *
+   * `guard: false` is for *player-caused* events whose rate is already bounded by a rule
+   * upstream — a gunshot is paced by the weapon's own rpm, so a cadence guard on top of it
+   * would silently drop real rounds at high rates (and an impact at the end of a shotgun
+   * blast would drown out the shot that caused it).
    */
-  private playCue(cue: AudioCueId, point: Vec3 | null): void {
+  private playCue(cue: AudioCueId, point: Vec3 | null, guard = true): void {
     const audio = this.audio;
     if (audio === null) return;
     const last = this.lastCueAt.get(cue);
-    if (last !== undefined && this.elapsed - last <= this.tuning.retriggerSeconds) return;
+    if (guard && last !== undefined && this.elapsed - last <= this.tuning.retriggerSeconds) return;
     this.lastCueAt.set(cue, this.elapsed);
     this.lastCueValue = cue;
     // Copy the point: the request is handed to an adapter that may keep it (the pulse

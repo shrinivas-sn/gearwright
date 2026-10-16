@@ -42,7 +42,40 @@ export type AudioCueId =
   /** The same voice stopping: a spin-down, not a rewind. */
   | 'machine-stop'
   /** §32.3: completion, weighted — the only cue with a music-bus tail. */
-  | 'completion';
+  | 'completion'
+  // --- weapons pass (16/10/2026) -------------------------------------------------
+  //
+  // One gunshot per *class*, not per weapon: six weapons that read as three sound
+  // families would be wrong, and a player learns the class's voice (an SMG cracks, a
+  // DMR barks, a sniper rolls) — the same reason the definitions carry their own
+  // recoil patterns. A shot is one cue however many pellets it throws.
+  /** A crack with a short body: the all-rounder. */
+  | 'gunshot-ar'
+  /** Higher and shorter than the AR — fast, cheap, mechanical. */
+  | 'gunshot-smg'
+  /** Deeper and longer: one round, one sentence. */
+  | 'gunshot-dmr'
+  /** The loudest and lowest, with the longest tail — a shot you feel across the room. */
+  | 'gunshot-sniper'
+  /** A broad double body: pellets, not a round. */
+  | 'gunshot-shotgun'
+  /** Small and dry: the class with the least ceremony. */
+  | 'gunshot-pistol'
+  /** Magazine released and sliding free. */
+  | 'mag-out'
+  /** Magazine seated, with the thunk that says it is in. */
+  | 'mag-in'
+  /** The bolt/charging handle: the tail of a reload, and the tell that the weapon is ready. */
+  | 'bolt-cycle'
+  /**
+   * An empty trigger pull. Deliberately a dull click with no body — a player must be able
+   * to hear "nothing happened" without looking at the ammo counter.
+   */
+  | 'dry-fire'
+  /** Weapon coming up: cloth and mech, quick, no pitch claim. */
+  | 'weapon-switch'
+  /** A bullet stopping on geometry or a part: a ring with a short thud under it. */
+  | 'bullet-impact';
 
 /**
  * What the bus reports about itself. `unavailable` is the honest silent state: no

@@ -238,16 +238,25 @@ export class ThreeRenderer implements RenderPort {
   private readonly pulseMesh: THREE.Mesh<THREE.IcosahedronGeometry, THREE.MeshBasicMaterial>;
   private readonly pulseMaterial: THREE.MeshBasicMaterial;
   /**
-   * Weapons pass: the drawn weapon, a fixed tracer buffer, one muzzle flash and a pooled set
-   * of impact marks. Everything here is created once (constructor) and rewritten in place, so
-   * a shoot-out allocates nothing and the draw-call count does not grow with how much is fired.
+   * Weapons pass: the drawn weapon (one merged mesh), a fixed tracer segment buffer (one
+   * `LineSegments`, drawn as far as its draw range reaches), one muzzle flash, and the impact
+   * marks as a **single instanced mesh** — one draw call for the whole pool, so the frame cost
+   * of a shoot-out is constant rather than proportional to how many impacts are fading at once.
+   * Everything here is created once (constructor) and rewritten in place.
    */
   private readonly weaponGroup: THREE.Group;
   private readonly weaponMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
   private readonly tracerGeometry: THREE.BufferGeometry;
   private readonly tracerLine: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private readonly flashMesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
-  private readonly impactVisuals: Array<THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial>> = [];
+  private readonly impactGeometry: THREE.OctahedronGeometry;
+  private readonly impactMaterial: THREE.MeshBasicMaterial;
+  private readonly impactMesh: THREE.InstancedMesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial>;
+  /** Scratch for the per-frame instanced matrices — no allocation on the render path. */
+  private readonly impactMatrix = new THREE.Matrix4();
+  private readonly impactQuaternion = new THREE.Quaternion();
+  private readonly impactScale = new THREE.Vector3();
+  private readonly impactPosition = new THREE.Vector3();
   /** Scratch for aiming the weapon group — no allocation on the per-frame path. */
   private readonly muzzleScratch = new THREE.Vector3();
   private readonly aimScratch = new THREE.Vector3();
@@ -347,14 +356,24 @@ export class ThreeRenderer implements RenderPort {
     );
     this.flashMesh.visible = false;
 
-    for (let index = 0; index < IMPACT_CAPACITY; index += 1) {
-      const mark = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.5, 0),
-        new THREE.MeshBasicMaterial({ color: 0xffcf8a, transparent: true, opacity: 0.7 })
-      );
-      mark.visible = false;
-      this.impactVisuals.push(mark);
-    }
+    // Impacts: one instanced draw for the whole pool. (Per-mark meshes were the first cut;
+    // they cost one draw call each the moment several marks are fading, which is exactly the
+    // "stats() must not grow with how much you shoot" rule the plan sets.)
+    this.impactGeometry = new THREE.OctahedronGeometry(0.5, 0);
+    this.impactMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffcf8a,
+      transparent: true,
+      opacity: 0.7
+    });
+    this.impactMesh = new THREE.InstancedMesh(
+      this.impactGeometry,
+      this.impactMaterial,
+      IMPACT_CAPACITY
+    );
+    this.impactMesh.count = 0;
+    this.impactMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.impactMesh.frustumCulled = false;
+    this.impactMesh.visible = false;
 
     this.disposables.push(
       this.weaponMesh.geometry,
@@ -363,6 +382,9 @@ export class ThreeRenderer implements RenderPort {
       this.tracerLine.material,
       this.flashMesh.geometry,
       this.flashMesh.material,
+      this.impactGeometry,
+      this.impactMaterial,
+      this.impactMesh,
       this.focusMarker.geometry,
       this.focusMarker.material as THREE.Material,
       rayGeometry,
@@ -430,10 +452,7 @@ export class ThreeRenderer implements RenderPort {
     scene.add(this.weaponGroup);
     scene.add(this.tracerLine);
     scene.add(this.flashMesh);
-    for (const mark of this.impactVisuals) {
-      scene.add(mark);
-      this.disposables.push(mark.geometry, mark.material);
-    }
+    scene.add(this.impactMesh);
     this.applyViewport();
     return true;
   }
@@ -896,7 +915,8 @@ export class ThreeRenderer implements RenderPort {
     if (state === null) {
       this.tracerLine.visible = false;
       this.flashMesh.visible = false;
-      for (const mark of this.impactVisuals) mark.visible = false;
+      this.impactMesh.count = 0;
+      this.impactMesh.visible = false;
       return;
     }
 
@@ -930,21 +950,33 @@ export class ThreeRenderer implements RenderPort {
       this.flashMesh.material.opacity = 0.35 + 0.6 * flash;
     }
 
-    for (let index = 0; index < this.impactVisuals.length; index += 1) {
-      const mark = this.impactVisuals[index];
-      const impact = state.impacts[index];
-      if (mark === undefined) break;
-      if (impact === undefined || impact.strength <= 0) {
-        mark.visible = false;
+    // Impacts: one instanced mesh, so N marks cost one draw call. The fade rides the mark's
+    // *size* (the motion carries the signal, §33.2 rule 4) plus the strongest mark's opacity —
+    // a per-instance opacity would need a shader for a read nobody can resolve at 0.16 m.
+    let marks = 0;
+    let strongestMark = 0;
+    for (const impact of state.impacts) {
+      if (marks >= IMPACT_CAPACITY) break;
+      const strength = Math.min(Math.max(impact.strength, 0), 1);
+      if (strength <= 0) continue;
+      if (
+        !Number.isFinite(impact.point.x) ||
+        !Number.isFinite(impact.point.y) ||
+        !Number.isFinite(impact.point.z)
+      ) {
         continue;
       }
-      const strength = Math.min(Math.max(impact.strength, 0), 1);
-      mark.position.set(impact.point.x, impact.point.y, impact.point.z);
-      // The mark shrinks as it fades, so the motion carries the signal too (§33.2 rule 4).
-      mark.scale.setScalar(0.1 + 0.16 * strength);
-      mark.material.opacity = 0.25 + 0.6 * strength;
-      mark.visible = true;
+      this.impactPosition.set(impact.point.x, impact.point.y, impact.point.z);
+      this.impactScale.setScalar(0.1 + 0.16 * strength);
+      this.impactMatrix.compose(this.impactPosition, this.impactQuaternion, this.impactScale);
+      this.impactMesh.setMatrixAt(marks, this.impactMatrix);
+      marks += 1;
+      strongestMark = Math.max(strongestMark, strength);
     }
+    if (marks > 0) this.impactMesh.instanceMatrix.needsUpdate = true;
+    this.impactMesh.count = marks;
+    this.impactMesh.visible = marks > 0;
+    this.impactMaterial.opacity = 0.25 + 0.6 * strongestMark;
   }
 
   stats(): RenderStats {

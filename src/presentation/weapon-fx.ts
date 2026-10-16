@@ -21,15 +21,13 @@
  * The presenter runs in two halves, like the composer: `step` on the fixed step (so the
  * lifetimes are deterministic and replayable) and `present` once per rendered frame (so the
  * drawn frame matches the interpolation the rest of the frame is using).
+ *
+ * The port's render states are **read-only views**; these pools are the mutable half and are
+ * structurally assignable to them. That split is deliberate — the port promises the renderer
+ * cannot write back, and this file is the only writer.
  */
 
-import type {
-  ImpactRenderState,
-  RenderPort,
-  ShotEffectsRenderState,
-  TracerRenderState,
-  WeaponRenderState
-} from '../ports/render-port.ts';
+import type { RenderPort } from '../ports/render-port.ts';
 import type { Vec3 } from '../core/vec3.ts';
 import type { WeaponStepResult, WeaponView } from '../gameplay/weapon-system.ts';
 
@@ -57,15 +55,47 @@ export const DEFAULT_WEAPON_EFFECTS_TUNING: WeaponEffectsTuning = {
   maxImpacts: 16
 };
 
+/**
+ * The mutable mirror of one port view. One object per pooled entry, held for the whole
+ * session, so handing the port "this frame's tracers" allocates nothing.
+ */
+interface MutableTracerView {
+  readonly from: Vec3;
+  readonly to: Vec3;
+  strength: number;
+}
+
+interface MutableImpactView {
+  readonly point: Vec3;
+  readonly normal: Vec3;
+  strength: number;
+}
+
+interface MutableShotEffectsView {
+  readonly tracers: MutableTracerView[];
+  readonly impacts: MutableImpactView[];
+  muzzleFlash: number;
+  readonly flashPoint: Vec3;
+}
+
+interface MutableWeaponView {
+  weaponId: string;
+  weaponClass: string;
+  adsBlend: number;
+  holstered: boolean;
+  readonly muzzle: Vec3;
+  readonly aimDirection: Vec3;
+}
+
 interface TracerEntry {
   readonly from: Vec3;
   readonly to: Vec3;
-  readonly view: TracerRenderState & { from: Vec3; to: Vec3 };
+  readonly view: MutableTracerView;
   remaining: number;
 }
 
 interface ImpactEntry {
-  readonly view: ImpactRenderState & { point: Vec3; normal: Vec3 };
+  readonly view: MutableImpactView;
   remaining: number;
 }
 
@@ -74,17 +104,19 @@ export class WeaponEffects {
   private readonly tuning: WeaponEffectsTuning;
   private readonly tracers: TracerEntry[] = [];
   private readonly impacts: ImpactEntry[] = [];
-  private readonly tracerList: TracerRenderState[] = [];
-  private readonly impactList: ImpactRenderState[] = [];
-  private readonly shotEffects: ShotEffectsRenderState & {
-    tracers: TracerRenderState[];
-    impacts: ImpactRenderState[];
-    flashPoint: Vec3;
-  };
-  private readonly weaponView: WeaponRenderState & { muzzle: Vec3; aimDirection: Vec3 };
+  private readonly tracerList: MutableTracerView[] = [];
+  private readonly impactList: MutableImpactView[] = [];
+  private readonly shotEffects: MutableShotEffectsView;
+  private readonly weaponView: MutableWeaponView;
   private flashRemaining = 0;
-  /** Last hand-off, so a steady frame writes nothing (the scanner's own discipline). */
-  private lastWasEmpty: boolean | null = null;
+  /**
+   * Last hand-off, so a steady frame writes nothing (the scanner's own discipline).
+   * `null` means "nothing handed over yet", so the first frame always sends — which is what
+   * clears the port of whatever a previous session left behind. It tracks *both* halves
+   * (effects **and** the drawn weapon): a weapon that comes up with no shot fired, or is
+   * holstered with no tracer fading, is a real change the port has to hear.
+   */
+  private lastDrewNothing: boolean | null = null;
 
   constructor(port: RenderPort, tuning: WeaponEffectsTuning = DEFAULT_WEAPON_EFFECTS_TUNING) {
     this.port = port;
@@ -173,11 +205,9 @@ export class WeaponEffects {
 
   /** Once per rendered frame: hand the port this frame's picture, or clear it once. */
   present(): void {
-    const empty =
-      this.tracerList.length === 0 &&
-      this.impactList.length === 0 &&
-      this.shotEffects.muzzleFlash <= 0;
-
+    // Build this frame's lists *first*, then ask whether there is anything to draw. Asking
+    // before the rebuild reads the previous frame's arrays, which is how a shot fired this
+    // step could be judged "nothing" and never reach the port at all.
     this.tracerList.length = 0;
     for (const tracer of this.tracers) {
       if (tracer.remaining <= 0) continue;
@@ -193,10 +223,32 @@ export class WeaponEffects {
     this.shotEffects.muzzleFlash =
       this.flashRemaining > 0 ? this.flashRemaining / this.tuning.flashSeconds : 0;
 
-    if (this.lastWasEmpty === true && empty) return;
-    this.lastWasEmpty = empty;
-    this.port.setShotEffects?.(empty ? null : this.shotEffects);
-    this.port.setWeaponView?.(this.weaponView.holstered ? null : this.weaponView);
+    const holstered = this.weaponView.holstered;
+    // Two independent hand-offs, each cleared with `null` rather than handed an empty
+    // object: a tracer pool that emptied must *clear* the port, and a holstered weapon must
+    // stop being drawn. Both are cheap, but "nothing to draw" is a fact worth saying once.
+    const hasEffects =
+      this.tracerList.length > 0 ||
+      this.impactList.length > 0 ||
+      this.shotEffects.muzzleFlash > 0;
+
+    if (holstered && !hasEffects && this.lastDrewNothing === true) return;
+    this.lastDrewNothing = holstered && !hasEffects;
+    this.port.setShotEffects?.(hasEffects ? this.shotEffects : null);
+    this.port.setWeaponView?.(holstered ? null : this.weaponView);
+  }
+
+  /**
+   * What the last `present` handed over — diagnostics for the live harness. Counts only:
+   * the pools themselves are reused every frame, so handing out the entries would hand out
+   * live mutable state (and the port's states are read-only for exactly that reason).
+   */
+  get drawnTracers(): number {
+    return this.tracerList.length;
+  }
+
+  get drawnImpacts(): number {
+    return this.impactList.length;
   }
 
   /** Drop everything: a respawn or a fresh level must not draw the last fight's tracers. */
@@ -204,7 +256,9 @@ export class WeaponEffects {
     for (const tracer of this.tracers) tracer.remaining = 0;
     for (const impact of this.impacts) impact.remaining = 0;
     this.flashRemaining = 0;
-    this.lastWasEmpty = null;
+    // Force the next `present` to hand the port a clear, even if the last frame was already
+    // empty (the port may hold a picture this presenter no longer knows about).
+    this.lastDrewNothing = null;
   }
 
   private age(dt: number): void {

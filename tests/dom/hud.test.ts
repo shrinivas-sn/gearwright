@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   HUD_TOAST_LIFETIME_SECONDS,
   Hud,
-  type HudSnapshot
+  type HudSnapshot,
+  type HudWeaponView
 } from '../../src/presentation/hud.ts';
 
 /** A fully-populated snapshot; individual tests override the fields they exercise. */
@@ -545,6 +546,84 @@ describe('Hud — no injected markup (§33.2)', () => {
     expect(root.querySelector('.gw-hud-log-text')?.textContent).toBe(hostile);
     expect(root.querySelector('.gw-hud-toast-text')?.textContent).toBe(hostile);
 
+    root.remove();
+  });
+});
+
+describe('Hud — the weapon block (weapons pass)', () => {
+  const VIEW: HudWeaponView = {
+    name: 'Rivet',
+    classLabel: 'Assault rifle',
+    magazine: 12,
+    magazineSize: 30,
+    reserve: 90,
+    fireModeLabel: 'AUTO',
+    canCycleFireMode: true,
+    activeSlot: 1,
+    slotNames: ['Rivet', 'Sledge', 'Longshot'],
+    reloading: false,
+    reloadProgress: 0,
+    adsBlend: 0,
+    spread: 0.02,
+    canFire: true,
+    notice: null
+  };
+
+  it('stays hidden with no weapon composed (?guns=0), reticle at its authored size', () => {
+    const { root, hud } = mountHud();
+    hud.render(makeSnapshot({ weapon: null }));
+    expect(root.querySelector('.gw-hud-weapon')?.classList.contains('gw-hud-hidden')).toBe(true);
+    expect(root.querySelector('.gw-hud-reticle')?.getAttribute('style') ?? '').toContain('--gw-reticle-gap: 0px');
+    root.remove();
+  });
+
+  it('writes the ammo, mode, slot chips and a spread-shaped reticle', () => {
+    const { root, hud } = mountHud();
+    hud.render(makeSnapshot({ weapon: VIEW }));
+
+    expect(root.querySelector('.gw-hud-weapon')?.classList.contains('gw-hud-hidden')).toBe(false);
+    expect(root.querySelector('.gw-hud-weapon-name')?.textContent).toBe('Rivet');
+    expect(root.querySelector('.gw-hud-weapon-class')?.textContent).toBe('Assault rifle');
+    expect(root.querySelector('.gw-hud-weapon-ammo')?.textContent).toBe('12 / 90');
+    // More than one mode to cycle: the key is named, because a mode the player cannot see
+    // is a mode they cannot use.
+    expect(root.querySelector('.gw-hud-weapon-mode')?.textContent).toBe('AUTO · B');
+    expect(root.querySelector('.gw-hud-weapon-state')?.textContent).toBe('READY');
+
+    const chips = [...root.querySelectorAll('.gw-hud-weapon-slots li')];
+    expect(chips.map((chip) => chip.textContent)).toEqual(['1 Rivet', '2 Sledge', '3 Longshot']);
+    // The held slot is marked by a class (weight), never by colour alone (§33.2 rule 4).
+    expect(chips[1]?.classList.contains('gw-hud-weapon-slot--active')).toBe(true);
+    expect(chips[0]?.classList.contains('gw-hud-weapon-slot--active')).toBe(false);
+    // Spread is shape: the reticle's gap is a number, not a colour.
+    expect(root.querySelector('.gw-hud-reticle')?.getAttribute('style') ?? '').toContain('--gw-reticle-gap:');
+    root.remove();
+  });
+
+  it('says why a trigger did nothing, and shows a reload as it happens', () => {
+    const { root, hud } = mountHud();
+    hud.render(makeSnapshot({ weapon: { ...VIEW, magazine: 0, canFire: false, notice: 'Empty — reload' } }));
+    const state = root.querySelector('.gw-hud-weapon-state');
+    expect(state?.textContent).toBe('Empty — reload');
+    expect(state?.classList.contains('gw-hud-weapon-state--notice')).toBe(true);
+
+    hud.render(
+      makeSnapshot({
+        weapon: { ...VIEW, reloading: true, reloadProgress: 0.42, notice: 'Empty — reload' }
+      })
+    );
+    // A reload outranks the notice: the player is already doing the thing the notice asked for.
+    expect(state?.textContent).toBe('RELOADING 42%');
+    expect(state?.classList.contains('gw-hud-weapon-state--reloading')).toBe(true);
+    root.remove();
+  });
+
+  it('marks the sights-up stance on the reticle', () => {
+    const { root, hud } = mountHud();
+    hud.render(makeSnapshot({ weapon: { ...VIEW, adsBlend: 1 } }));
+    expect(root.querySelector('.gw-hud-reticle')?.classList.contains('gw-hud-reticle--ads')).toBe(true);
+    hud.render(makeSnapshot({ weapon: { ...VIEW, adsBlend: 0.2 } }));
+    expect(root.querySelector('.gw-hud-reticle')?.classList.contains('gw-hud-reticle--ads')).toBe(false);
     root.remove();
   });
 });

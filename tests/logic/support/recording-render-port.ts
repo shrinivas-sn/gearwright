@@ -4,7 +4,9 @@ import {
   type FeedbackPulseState,
   type RenderPort,
   type RenderStats,
-  type ScannerOverlayState
+  type ScannerOverlayState,
+  type ShotEffectsRenderState,
+  type WeaponRenderState
 } from '../../../src/ports/render-port.ts';
 
 /**
@@ -17,6 +19,8 @@ export class RecordingRenderPort implements RenderPort {
   carryables: ReadonlyArray<CarryableRenderState> = [];
   readonly pulses: Array<FeedbackPulseState | null> = [];
   readonly scannerOverlays: Array<ScannerOverlayState | null> = [];
+  readonly shotEffects: Array<ShotEffectsRenderState | null> = [];
+  readonly weaponViews: Array<WeaponRenderState | null> = [];
 
   init(): boolean {
     return true;
@@ -56,8 +60,53 @@ export class RecordingRenderPort implements RenderPort {
           }
     );
   }
+  setShotEffects(state: ShotEffectsRenderState | null): void {
+    // Snapshot the values: the L4 presenter reuses its pooled buffers between frames.
+    this.shotEffects.push(
+      state === null
+        ? null
+        : {
+            muzzleFlash: state.muzzleFlash,
+            flashPoint: { ...state.flashPoint },
+            tracers: state.tracers.map((tracer) => ({
+              from: { ...tracer.from },
+              to: { ...tracer.to },
+              strength: tracer.strength
+            })),
+            impacts: state.impacts.map((impact) => ({
+              point: { ...impact.point },
+              normal: { ...impact.normal },
+              strength: impact.strength
+            }))
+          }
+    );
+  }
+  setWeaponView(state: WeaponRenderState | null): void {
+    this.weaponViews.push(
+      state === null
+        ? null
+        : {
+            weaponId: state.weaponId,
+            weaponClass: state.weaponClass,
+            adsBlend: state.adsBlend,
+            holstered: state.holstered,
+            muzzle: { ...state.muzzle },
+            aimDirection: { ...state.aimDirection }
+          }
+    );
+  }
   stats(): RenderStats {
     return EMPTY_RENDER_STATS;
+  }
+
+  /** The shot effects currently handed to the renderer, or null. */
+  get shotEffect(): ShotEffectsRenderState | null {
+    return this.shotEffects.at(-1) ?? null;
+  }
+
+  /** The drawn weapon currently handed to the renderer, or null. */
+  get weaponView(): WeaponRenderState | null {
+    return this.weaponViews.at(-1) ?? null;
   }
   dispose(): void {}
 

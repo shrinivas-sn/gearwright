@@ -8,6 +8,12 @@ import type { Vec3 } from '../../src/core/vec3.ts';
 import type { CarryableRenderState } from '../../src/ports/render-port.ts';
 import type { AudioCueId } from '../../src/ports/audio-port.ts';
 import type { FeedbackIntent } from '../../src/gameplay/feedback-model.ts';
+import type {
+  WeaponImpact,
+  WeaponShot,
+  WeaponStepResult
+} from '../../src/gameplay/weapon-system.ts';
+import type { WeaponClass } from '../../src/data/weapons.ts';
 import { SilentAudioBus } from '../../src/adapters/web-audio-bus.ts';
 import { RecordingAudioPort } from './support/recording-audio-port.ts';
 import { RecordingRenderPort } from './support/recording-render-port.ts';
@@ -378,5 +384,115 @@ describe('FeedbackComposer — visual shapes (PLAN T5.2)', () => {
     plain.update(DT, [], viewOf(world));
     plain.present();
     expect(stateOf(plainRender, 'gear-a').visual).toBe('box');
+  });
+});
+
+describe('FeedbackComposer — weapon cues (weapons pass)', () => {
+  /** A weapon step result with only the fields a cue depends on. */
+  function weaponResult(overrides: Partial<WeaponStepResult> = {}): WeaponStepResult {
+    return {
+      shots: [],
+      impacts: [],
+      reloadStarted: false,
+      reloadFinished: false,
+      switchedTo: null,
+      fireModeChanged: null,
+      refused: null,
+      recoilKick: { pitch: 0, yaw: 0 },
+      view: null as unknown as WeaponStepResult['view'],
+      ...overrides
+    };
+  }
+
+  function shotOf(weaponClass: WeaponClass, index = 1): WeaponShot {
+    return {
+      weaponId: `weapon/${weaponClass}`,
+      weaponClass,
+      index,
+      origin: { x: 1, y: 1.5, z: 2 },
+      direction: { x: 0, y: 0, z: -1 },
+      spread: 0.01
+    };
+  }
+
+  function impactOf(point: Vec3): WeaponImpact {
+    return {
+      weaponId: 'weapon/ar',
+      weaponClass: 'ar',
+      origin: { x: 1, y: 1.5, z: 2 },
+      point,
+      normal: { x: 0, y: 0, z: 1 },
+      hitId: null,
+      hitKind: 'world',
+      distance: 5
+    };
+  }
+
+  it('plays the class’s own gunshot, once per trigger pull and from the muzzle', () => {
+    const audio = new RecordingAudioPort();
+    const composer = new FeedbackComposer(new RecordingRenderPort(), {}, audio);
+
+    composer.updateWeapon(weaponResult({ shots: [shotOf('smg'), shotOf('smg', 2)] }));
+
+    expect(audio.cues).toEqual(['gunshot-smg', 'gunshot-smg']);
+    // Positional: the emitter is the muzzle the round actually left (§32.2).
+    expect(audio.requests[0]?.emitter).toEqual({ x: 1, y: 1.5, z: 2 });
+  });
+
+  it('gives every class its own voice', () => {
+    const expected: ReadonlyArray<[WeaponClass, AudioCueId]> = [
+      ['ar', 'gunshot-ar'],
+      ['smg', 'gunshot-smg'],
+      ['dmr', 'gunshot-dmr'],
+      ['sniper', 'gunshot-sniper'],
+      ['shotgun', 'gunshot-shotgun'],
+      ['pistol', 'gunshot-pistol']
+    ];
+    for (const [weaponClass, cue] of expected) {
+      const audio = new RecordingAudioPort();
+      const composer = new FeedbackComposer(new RecordingRenderPort(), {}, audio);
+      composer.updateWeapon(weaponResult({ shots: [shotOf(weaponClass)] }));
+      expect(audio.cues, weaponClass).toEqual([cue]);
+    }
+  });
+
+  it('sounds a bullet strike where it landed', () => {
+    const audio = new RecordingAudioPort();
+    const composer = new FeedbackComposer(new RecordingRenderPort(), {}, audio);
+    composer.updateWeapon(
+      weaponResult({ shots: [shotOf('ar')], impacts: [impactOf({ x: 3, y: 0.2, z: -4 })] })
+    );
+    expect(audio.cues).toEqual(['gunshot-ar', 'bullet-impact']);
+    expect(audio.requests.at(-1)?.emitter).toEqual({ x: 3, y: 0.2, z: -4 });
+  });
+
+  it('tells a reload apart from a dry trigger, and a switch apart from both', () => {
+    const audio = new RecordingAudioPort();
+    const composer = new FeedbackComposer(new RecordingRenderPort(), {}, audio);
+
+    composer.updateWeapon(weaponResult({ reloadStarted: true }));
+    composer.updateWeapon(weaponResult({ reloadFinished: true }));
+    composer.updateWeapon(weaponResult({ switchedTo: 2 }));
+    composer.updateWeapon(weaponResult({ refused: 'empty' }));
+
+    // The dry trigger is its own sound, not a quiet gunshot: the player must be able to
+    // hear "nothing happened" without reading the ammo counter.
+    expect(audio.cues).toEqual(['mag-out', 'mag-in', 'bolt-cycle', 'weapon-switch', 'dry-fire']);
+  });
+
+  it('stays silent for a reloading or cooling refusal (the HUD says those in words)', () => {
+    const audio = new RecordingAudioPort();
+    const composer = new FeedbackComposer(new RecordingRenderPort(), {}, audio);
+    composer.updateWeapon(weaponResult({ refused: 'reloading' }));
+    composer.updateWeapon(weaponResult({ refused: 'cooldown' }));
+    composer.updateWeapon(weaponResult({ refused: 'swapping' }));
+    expect(audio.cues).toEqual([]);
+  });
+
+  it('is silent and harmless with no weapon composed at all', () => {
+    const audio = new RecordingAudioPort();
+    const composer = new FeedbackComposer(new RecordingRenderPort(), {}, audio);
+    composer.updateWeapon(null);
+    expect(audio.cues).toEqual([]);
   });
 });
