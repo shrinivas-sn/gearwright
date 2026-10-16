@@ -160,9 +160,43 @@ export interface HudLogView {
  * One frame's worth of HUD state. Read-only by construction: the HUD stores the
  * reference it was handed, so producers must treat it as immutable.
  */
+/**
+ * The weapon surface (weapons pass, 16/10/2026). Absent = no weapon system composed (the
+ * `?guns=0` escape hatch), and the whole block is hidden so the pre-pass HUD is untouched.
+ * Numbers come from `WeaponSystem`'s own read model — the HUD never derives an ammo count.
+ */
+export interface HudWeaponView {
+  readonly name: string;
+  readonly classLabel: string;
+  readonly magazine: number;
+  readonly magazineSize: number;
+  readonly reserve: number;
+  /** `AUTO` / `SINGLE` / `BURST`, from the weapon's own vocabulary (`FIRE_MODE_LABEL`). */
+  readonly fireModeLabel: string;
+  /** True when the held weapon has more than one mode to cycle to (`B`). */
+  readonly canCycleFireMode: boolean;
+  readonly activeSlot: number;
+  readonly slotNames: ReadonlyArray<string>;
+  readonly reloading: boolean;
+  /** 0…1 while reloading, 0 otherwise. */
+  readonly reloadProgress: number;
+  /** 0…1 aim blend: the sights are up. */
+  readonly adsBlend: number;
+  /** Cone radius in radians right now — the crosshair's own gap. */
+  readonly spread: number;
+  readonly canFire: boolean;
+  /**
+   * Why the trigger did nothing this step, in words, or null when it worked. A trigger that
+   * silently does nothing is indistinguishable from a broken one, so this is spoken (§33.2).
+   */
+  readonly notice: string | null;
+}
+
 export interface HudSnapshot {
   readonly focus: HudFocusView;
   readonly manipulation: HudManipulationView;
+  /** Weapon block (weapons pass); null hides it entirely. */
+  readonly weapon: HudWeaponView | null;
   readonly objective: HudObjectiveView;
   readonly resources: HudResourceView;
   /** §12.2's canonical seen-id set, resolved to words by the composition root. */
@@ -279,6 +313,14 @@ const HUD_MARKUP = `
   <span class="gw-hud-resources-label">Blueprints</span>
   <ul class="gw-hud-blueprints"></ul>
 </div>
+<div class="gw-hud-surface gw-hud-weapon">
+  <span class="gw-hud-weapon-name"></span>
+  <span class="gw-hud-weapon-class"></span>
+  <span class="gw-hud-weapon-ammo"></span>
+  <span class="gw-hud-weapon-mode"></span>
+  <span class="gw-hud-weapon-state"></span>
+  <ul class="gw-hud-weapon-slots"></ul>
+</div>
 <div class="gw-hud-surface gw-hud-manipulation">
   <span class="gw-hud-held"></span>
   <span class="gw-hud-socket">
@@ -308,6 +350,13 @@ const HUD_MARKUP = `
 </div>
 <p class="gw-hud-save-note" role="status"></p>
 `;
+/**
+ * How many screen pixels one radian of cone becomes in the drawn crosshair. 0.004 rad (the
+ * rifle's first-shot cone) is about 7 px of gap, and the widest authored ceiling (0.12 rad)
+ * lands near 210 px — the crosshair is genuinely open, never a decorative wobble.
+ */
+const RETICLE_PIXELS_PER_RADIAN = 1750;
+
 /**
  * Change-only text write (§33.2 rule 5). `textContent` is *not* a layout-flushing
  * property, so the read is cheap; the write is what must be avoided.
@@ -405,6 +454,18 @@ export class Hud {
   private readonly logRows: LogRow[] = [];
   private logSignature = '\u0000';
 
+  // Weapon block (weapons pass)
+  private readonly weaponSurface: HTMLElement;
+  private readonly weaponName: HTMLElement;
+  private readonly weaponClass: HTMLElement;
+  private readonly weaponAmmo: HTMLElement;
+  private readonly weaponMode: HTMLElement;
+  private readonly weaponState: HTMLElement;
+  private readonly weaponSlots: HTMLUListElement;
+  private readonly weaponSlotRows: HTMLLIElement[] = [];
+  private weaponSlotSignature = '\u0000';
+  private readonly reticle: HTMLElement;
+
   // Manipulation strip
   private readonly held: HTMLElement;
   private readonly bindings: HTMLElement;
@@ -463,6 +524,15 @@ export class Hud {
     this.materialsList = requireChild<HTMLUListElement>(this.host, '.gw-hud-materials');
     this.blueprintsList = requireChild<HTMLUListElement>(this.host, '.gw-hud-blueprints');
 
+    this.reticle = requireChild(this.host, '.gw-hud-reticle');
+    this.weaponSurface = requireChild(this.host, '.gw-hud-weapon');
+    this.weaponName = requireChild(this.host, '.gw-hud-weapon-name');
+    this.weaponClass = requireChild(this.host, '.gw-hud-weapon-class');
+    this.weaponAmmo = requireChild(this.host, '.gw-hud-weapon-ammo');
+    this.weaponMode = requireChild(this.host, '.gw-hud-weapon-mode');
+    this.weaponState = requireChild(this.host, '.gw-hud-weapon-state');
+    this.weaponSlots = requireChild<HTMLUListElement>(this.host, '.gw-hud-weapon-slots');
+
     this.held = requireChild(this.host, '.gw-hud-held');
     this.bindings = requireChild(this.host, '.gw-hud-bindings');
     this.socket = requireChild(this.host, '.gw-hud-socket');
@@ -507,6 +577,9 @@ export class Hud {
     setHidden(this.hintText, true);
     setHidden(this.scannerText, true);
     setHidden(this.saveNote, true);
+    // No weapon system composed (`?guns=0`): the block stays hidden and the reticle keeps
+    // its authored size, so the pre-pass HUD is exactly what it was.
+    setHidden(this.weaponSurface, true);
   }
 
   /**
@@ -521,6 +594,7 @@ export class Hud {
     this.renderResources(snapshot.resources);
     this.renderLog(snapshot.log);
     this.renderHint(snapshot.hint);
+    this.renderWeapon(snapshot.weapon);
     this.renderSaveNote(snapshot.saveNote);
     this.renderEntry(snapshot.entry);
   }
@@ -760,6 +834,74 @@ export class Hud {
     // words (§33.1 row 3's "plain language"), never a second vocabulary.
     setHidden(this.scannerText, view.scannerText === null);
     setText(this.scannerText, view.scannerText ?? '');
+  }
+
+  /**
+   * The weapon surface (weapons pass). Every number is the weapon system's own; the HUD
+   * adds words and shapes. The crosshair is driven by *shape and size* — its gap is the
+   * cone radius, in steps — never by colour alone (§33.2 rule 4), and a reload or a dead
+   * trigger is written out, because a trigger that silently does nothing reads as broken.
+   */
+  private renderWeapon(view: HudWeaponView | null): void {
+    setHidden(this.weaponSurface, view === null);
+    if (view === null) {
+      // No weapon: the reticle returns to its authored size rather than freezing at the
+      // last spread it was drawn with.
+      this.setReticleSpread(0);
+      this.reticle.classList.remove('gw-hud-reticle--ads');
+      return;
+    }
+
+    setText(this.weaponName, view.name);
+    setText(this.weaponClass, view.classLabel);
+    setText(this.weaponAmmo, `${view.magazine} / ${view.reserve}`);
+    setText(
+      this.weaponMode,
+      view.canCycleFireMode ? `${view.fireModeLabel} · B` : view.fireModeLabel
+    );
+
+    // One written state line: RELOADING (with the bar's own number), the refusal that just
+    // happened, or the ready state. The player never has to guess which one is true.
+    const stateText = view.reloading
+      ? `RELOADING ${Math.round(view.reloadProgress * 100)}%`
+      : view.notice !== null
+        ? view.notice
+        : 'READY';
+    setText(this.weaponState, stateText);
+    setClass(this.weaponState, 'gw-hud-weapon-state--notice', view.notice !== null);
+    setClass(this.weaponState, 'gw-hud-weapon-state--reloading', view.reloading);
+
+    // Slot chips: the held one is marked by *weight*, not colour alone.
+    const signature = `${view.activeSlot}:${view.slotNames.length}`;
+    if (signature !== this.weaponSlotSignature) {
+      this.weaponSlotSignature = signature;
+      while (this.weaponSlotRows.length < view.slotNames.length) {
+        const row = this.root.ownerDocument.createElement('li');
+        this.weaponSlotRows.push(row);
+        this.weaponSlots.appendChild(row);
+      }
+      this.weaponSlotRows.forEach((row, index) => {
+        const name = view.slotNames[index];
+        setHidden(row, name === undefined);
+        setText(row, name === undefined ? '' : `${index + 1} ${name}`);
+        setClass(row, 'gw-hud-weapon-slot--active', index === view.activeSlot);
+      });
+    }
+
+    this.setReticleSpread(view.spread);
+    setClass(this.reticle, 'gw-hud-reticle--ads', view.adsBlend > 0.5);
+  }
+
+  /**
+   * The crosshair's gap is a CSS length the reticle reads, so the cone shape is data rather
+   * than a charm; the write is change-only like every other value in this file.
+   */
+  private setReticleSpread(spread: number): void {
+    const gap = Math.round(Math.min(Math.max(spread, 0), 0.12) * RETICLE_PIXELS_PER_RADIAN);
+    const value = `${gap}px`;
+    if (this.reticle.style.getPropertyValue('--gw-reticle-gap') !== value) {
+      this.reticle.style.setProperty('--gw-reticle-gap', value);
+    }
   }
 
   private renderSaveNote(note: string | null): void {

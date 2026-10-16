@@ -197,6 +197,52 @@ export interface ScannerOverlayState {
   readonly strength: number;
 }
 
+/**
+ * The drawn weapon (weapons pass, 16/10/2026). Presentation only: the renderer draws a
+ * procedural gun whose barrel tip sits on `muzzle` and which points along `aimDirection` —
+ * the same point and direction the simulation fires from, so what the player sees and what
+ * the bullet does cannot drift apart. The renderer never writes either back.
+ */
+export interface WeaponRenderState {
+  readonly weaponId: string;
+  readonly weaponClass: string;
+  /** 0…1 aim blend: the weapon rises from the hip to the sights. */
+  readonly adsBlend: number;
+  /** True while the hands are full (carrying a part): no weapon is drawn at all. */
+  readonly holstered: boolean;
+  readonly muzzle: { readonly x: number; readonly y: number; readonly z: number };
+  readonly aimDirection: { readonly x: number; readonly y: number; readonly z: number };
+}
+
+/** One tracer segment, already pooled and aged by the L4 presenter. */
+export interface TracerRenderState {
+  readonly from: { readonly x: number; readonly y: number; readonly z: number };
+  readonly to: { readonly x: number; readonly y: number; readonly z: number };
+  /** 1 at the shot fading to 0. */
+  readonly strength: number;
+}
+
+/** A bullet strike, drawn as a short-lived pulse where it landed. */
+export interface ImpactRenderState {
+  readonly point: { readonly x: number; readonly y: number; readonly z: number };
+  readonly normal: { readonly x: number; readonly y: number; readonly z: number };
+  /** 1 at the strike fading to 0. */
+  readonly strength: number;
+}
+
+/**
+ * This frame's shot effects: pooled tracers, the muzzle flash, and the impacts still fading.
+ * The L4 presenter owns every lifetime, so the renderer draws exactly what it is handed —
+ * the same contract `setFeedbackPulse` and `setScannerOverlay` already use.
+ */
+export interface ShotEffectsRenderState {
+  readonly tracers: ReadonlyArray<TracerRenderState>;
+  /** 0…1 flash strength; ≤ 0 draws nothing. */
+  readonly muzzleFlash: number;
+  readonly flashPoint: { readonly x: number; readonly y: number; readonly z: number };
+  readonly impacts: ReadonlyArray<ImpactRenderState>;
+}
+
 export interface RenderPort {
   /** Stable identifier for diagnostics/debug panels (e.g. `three`). */
   readonly kind: string;
@@ -271,6 +317,15 @@ export interface RenderPort {
    * fade), so the renderer only draws what it is handed, exactly like the pulse above.
    */
   setScannerOverlay(state: ScannerOverlayState | null): void;
+
+  /**
+   * Draw the held weapon, or clear it (`null`). Optional: a port that draws no weapon (the
+   * test doubles) simply omits it, and callers use `renderPort.setWeaponView?.(...)`.
+   */
+  setWeaponView?(state: WeaponRenderState | null): void;
+
+  /** Draw this frame's tracers, muzzle flash and impacts, or clear them (`null`). Optional. */
+  setShotEffects?(state: ShotEffectsRenderState | null): void;
 
   stats(): RenderStats;
 

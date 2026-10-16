@@ -28,7 +28,9 @@ import {
   type RenderPort,
   type RenderStats,
   type ScannerOverlayState,
-  type SnapMarkerState
+  type ShotEffectsRenderState,
+  type SnapMarkerState,
+  type WeaponRenderState
 } from '../ports/render-port.ts';
 
 /** Pulse colours per feedback kind (ARCH §33.2 rule 4: always paired with shape/motion). */
@@ -51,6 +53,37 @@ const SCANNER_COLORS: Record<'named' | 'candidate', number> = {
 
 /** Flow-path capacity: a machine's chain is a handful of nodes, never a crowd. */
 const SCANNER_ROUTE_CAPACITY = 64;
+
+/**
+ * Weapons pass (16/10/2026). The drawn weapon is built once along −Z from a tip at the local
+ * origin, so placing the group at the muzzle and aiming its +Z along the shot direction puts the
+ * barrel tip exactly where the bullet leaves — the picture and the simulation share one point by
+ * construction, not by a tuned offset.
+ */
+const WEAPON_BODY_LENGTH = 0.34;
+const WEAPON_BARREL_LENGTH = 0.3;
+const WEAPON_STOCK_LENGTH = 0.24;
+/** Pools, not growth: a sustained fight costs what a single shot costs (the plan's budget rule). */
+const TRACER_CAPACITY = 24;
+const IMPACT_CAPACITY = 16;
+
+/** One procedural weapon: receiver + barrel + stock + magazine, merged into one draw call. */
+function buildWeaponGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const push = (x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const box = new THREE.BoxGeometry(sx, sy, sz);
+    box.translate(x, y, z);
+    parts.push(box);
+  };
+  // Local −Z is *backwards* from the muzzle (the tip sits at the local origin).
+  push(0, 0, -0.06, 0.07, 0.16, WEAPON_BODY_LENGTH);
+  push(0, 0.015, -0.06 - WEAPON_BODY_LENGTH / 2 - WEAPON_BARREL_LENGTH / 2, 0.035, 0.035, WEAPON_BARREL_LENGTH);
+  push(0, -0.02, -0.06 - WEAPON_BODY_LENGTH / 2 - WEAPON_STOCK_LENGTH / 2, 0.05, 0.1, WEAPON_STOCK_LENGTH);
+  push(0, -0.13, -0.1, 0.05, 0.16, 0.1);
+  const merged = mergeGeometries(parts, false) ?? parts[0] ?? new THREE.BoxGeometry(1, 1, 1);
+  for (const part of parts) part.dispose();
+  return merged;
+}
 
 /** Unit gear (fits a 1×1×1 box, centred, axis = Y) — scaled per part like the box. */
 function buildGearGeometry(teeth: number): THREE.BufferGeometry {
@@ -204,6 +237,20 @@ export class ThreeRenderer implements RenderPort {
   private readonly scannerRouteMaterial: THREE.LineBasicMaterial;
   private readonly pulseMesh: THREE.Mesh<THREE.IcosahedronGeometry, THREE.MeshBasicMaterial>;
   private readonly pulseMaterial: THREE.MeshBasicMaterial;
+  /**
+   * Weapons pass: the drawn weapon, a fixed tracer buffer, one muzzle flash and a pooled set
+   * of impact marks. Everything here is created once (constructor) and rewritten in place, so
+   * a shoot-out allocates nothing and the draw-call count does not grow with how much is fired.
+   */
+  private readonly weaponGroup: THREE.Group;
+  private readonly weaponMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
+  private readonly tracerGeometry: THREE.BufferGeometry;
+  private readonly tracerLine: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  private readonly flashMesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
+  private readonly impactVisuals: Array<THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial>> = [];
+  /** Scratch for aiming the weapon group — no allocation on the per-frame path. */
+  private readonly muzzleScratch = new THREE.Vector3();
+  private readonly aimScratch = new THREE.Vector3();
   private view: CameraPose | null = null;
 
   constructor(options: RendererOptions = {}) {
@@ -269,7 +316,53 @@ export class ThreeRenderer implements RenderPort {
     this.scannerRoute.visible = false;
     this.scannerRoute.frustumCulled = false;
 
+    // Weapons pass: one merged procedural weapon, a fixed-capacity tracer segment buffer (two
+    // vertices per tracer, drawn as far as `drawRange` reaches), one flash and a pooled set of
+    // impact marks. Nothing is added or removed at runtime.
+    this.weaponGroup = new THREE.Group();
+    this.weaponGroup.visible = false;
+    this.weaponMesh = new THREE.Mesh(
+      buildWeaponGeometry(),
+      new THREE.MeshStandardMaterial({ color: 0x2f3338, roughness: 0.55, metalness: 0.45 })
+    );
+    this.weaponMesh.castShadow = true;
+    this.weaponGroup.add(this.weaponMesh);
+
+    this.tracerGeometry = new THREE.BufferGeometry();
+    this.tracerGeometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array(TRACER_CAPACITY * 2 * 3), 3)
+    );
+    this.tracerGeometry.setDrawRange(0, 0);
+    this.tracerLine = new THREE.LineSegments(
+      this.tracerGeometry,
+      new THREE.LineBasicMaterial({ color: 0xffd79a, transparent: true, opacity: 0.85 })
+    );
+    this.tracerLine.visible = false;
+    this.tracerLine.frustumCulled = false;
+
+    this.flashMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.09, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffe9b0, transparent: true, opacity: 0.9 })
+    );
+    this.flashMesh.visible = false;
+
+    for (let index = 0; index < IMPACT_CAPACITY; index += 1) {
+      const mark = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.5, 0),
+        new THREE.MeshBasicMaterial({ color: 0xffcf8a, transparent: true, opacity: 0.7 })
+      );
+      mark.visible = false;
+      this.impactVisuals.push(mark);
+    }
+
     this.disposables.push(
+      this.weaponMesh.geometry,
+      this.weaponMesh.material,
+      this.tracerGeometry,
+      this.tracerLine.material,
+      this.flashMesh.geometry,
+      this.flashMesh.material,
       this.focusMarker.geometry,
       this.focusMarker.material as THREE.Material,
       rayGeometry,
@@ -334,6 +427,13 @@ export class ThreeRenderer implements RenderPort {
     scene.add(this.debugRay);
     scene.add(this.pulseMesh);
     scene.add(this.scannerRoute);
+    scene.add(this.weaponGroup);
+    scene.add(this.tracerLine);
+    scene.add(this.flashMesh);
+    for (const mark of this.impactVisuals) {
+      scene.add(mark);
+      this.disposables.push(mark.geometry, mark.material);
+    }
     this.applyViewport();
     return true;
   }
@@ -754,6 +854,97 @@ export class ThreeRenderer implements RenderPort {
       }
     }
     renderer.render(scene, camera);
+  }
+
+  /**
+   * Weapons pass: draw the held weapon, or hide it (`null`/holstered). The group is placed at
+   * the muzzle the simulation fires from and aimed along the shot direction, so the drawn barrel
+   * tip and the bullet's origin are the same point — no tuned offset to drift.
+   */
+  setWeaponView(state: WeaponRenderState | null): void {
+    if (state === null || state.holstered) {
+      this.weaponGroup.visible = false;
+      return;
+    }
+    const muzzle = this.muzzleScratch.set(state.muzzle.x, state.muzzle.y, state.muzzle.z);
+    this.aimScratch.set(state.aimDirection.x, state.aimDirection.y, state.aimDirection.z);
+    if (
+      !Number.isFinite(muzzle.x) || !Number.isFinite(muzzle.y) || !Number.isFinite(muzzle.z) ||
+      this.aimScratch.lengthSq() < 1e-9
+    ) {
+      this.weaponGroup.visible = false;
+      return;
+    }
+    this.aimScratch.normalize();
+    this.weaponGroup.position.copy(muzzle);
+    this.weaponGroup.lookAt(
+      muzzle.x + this.aimScratch.x,
+      muzzle.y + this.aimScratch.y,
+      muzzle.z + this.aimScratch.z
+    );
+    // Aiming brings the weapon up to the sights: a small, readable shift rather than a rig.
+    this.weaponGroup.position.y += 0.05 * Math.min(Math.max(state.adsBlend, 0), 1);
+    this.weaponGroup.visible = true;
+  }
+
+  /**
+   * Weapons pass: this frame's tracers, muzzle flash and impact marks. All three are fixed
+   * pools — the tracer buffer's `drawRange` is the live count and the impact meshes are shown
+   * and hidden in place — so the frame cost does not grow with how much was fired.
+   */
+  setShotEffects(state: ShotEffectsRenderState | null): void {
+    if (state === null) {
+      this.tracerLine.visible = false;
+      this.flashMesh.visible = false;
+      for (const mark of this.impactVisuals) mark.visible = false;
+      return;
+    }
+
+    const attribute = this.tracerGeometry.getAttribute('position') as THREE.BufferAttribute;
+    let drawn = 0;
+    let strongest = 0;
+    for (const tracer of state.tracers) {
+      if (drawn >= TRACER_CAPACITY) break;
+      const { from, to } = tracer;
+      if (
+        !Number.isFinite(from.x) || !Number.isFinite(from.y) || !Number.isFinite(from.z) ||
+        !Number.isFinite(to.x) || !Number.isFinite(to.y) || !Number.isFinite(to.z)
+      ) {
+        continue;
+      }
+      attribute.setXYZ(drawn * 2, from.x, from.y, from.z);
+      attribute.setXYZ(drawn * 2 + 1, to.x, to.y, to.z);
+      drawn += 1;
+      strongest = Math.max(strongest, tracer.strength);
+    }
+    if (drawn > 0) attribute.needsUpdate = true;
+    this.tracerGeometry.setDrawRange(0, drawn * 2);
+    this.tracerLine.visible = drawn > 0;
+    this.tracerLine.material.opacity = 0.25 + 0.7 * Math.min(Math.max(strongest, 0), 1);
+
+    const flash = Math.min(Math.max(state.muzzleFlash, 0), 1);
+    this.flashMesh.visible = flash > 0;
+    if (this.flashMesh.visible) {
+      this.flashMesh.position.set(state.flashPoint.x, state.flashPoint.y, state.flashPoint.z);
+      this.flashMesh.scale.setScalar(0.7 + 0.8 * flash);
+      this.flashMesh.material.opacity = 0.35 + 0.6 * flash;
+    }
+
+    for (let index = 0; index < this.impactVisuals.length; index += 1) {
+      const mark = this.impactVisuals[index];
+      const impact = state.impacts[index];
+      if (mark === undefined) break;
+      if (impact === undefined || impact.strength <= 0) {
+        mark.visible = false;
+        continue;
+      }
+      const strength = Math.min(Math.max(impact.strength, 0), 1);
+      mark.position.set(impact.point.x, impact.point.y, impact.point.z);
+      // The mark shrinks as it fades, so the motion carries the signal too (§33.2 rule 4).
+      mark.scale.setScalar(0.1 + 0.16 * strength);
+      mark.material.opacity = 0.25 + 0.6 * strength;
+      mark.visible = true;
+    }
   }
 
   stats(): RenderStats {

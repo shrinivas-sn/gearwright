@@ -485,6 +485,10 @@ function buildHudRenderer(deps: {
       resources,
       log,
       hint: hintView,
+      // Weapons pass IN FLIGHT (16/10/2026): the L2 system, the render port and the HUD block
+      // all exist and are tested, but this composition root does not compose a `WeaponSystem`
+      // yet, so the honest read-model is "no weapon". Wiring it (and `?guns=0`) is the open task.
+      weapon: null,
       saveNote: null,
       // Entry guidance is sticky by design: once the player has captured the mouse it
       // never returns, so a mid-session refusal is the only thing worth naming.

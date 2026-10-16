@@ -52,6 +52,8 @@ function makeSnapshot(overrides: Partial<HudSnapshot> = {}): HudSnapshot {
     },
     saveNote: null,
     entry: null,
+    // No weapon system composed by default, so every other test exercises the pre-pass HUD.
+    weapon: null,
     ...overrides
   };
 }
