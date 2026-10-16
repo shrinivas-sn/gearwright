@@ -382,6 +382,7 @@ Append-only. Record every place reality differs from this plan **before** starti
 | 1 | 16/10 | all | "the character feels slow" implied a speed bump only | The hop (jump) was already fully implemented and tested in the 15/10 session; the real gap is that neither jump nor crouch appeared in the controls table, so the owner believed jump was missing. | None on scope — it corrects the framing. | Phase A covers the real gaps: speed, crouch, and the controls table. Jump itself is unchanged (verified by the existing 20 hop tests). |
 | 2 | 16/10 | C.2 | Keep `primary` = `KeyE` **or** LMB in Exploration | The left button must be free for firing (BGMI's trigger), but two existing suites grab with `primaryPressed` instead of a `KeyE` press: `phase-world.test.ts` and `p1-acceptance.test.ts`. | 2 test sites change to a real `KeyE` press. The behaviour is unchanged — only the *input path the test uses* is corrected to the one the game documents. | Tests updated in the same commit as the action split, with the reason recorded in the Progress Log. `Manipulation`-context confirm keeps both LMB and `KeyE`, so docking tests are untouched. |
 | 3 | 16/10 | B.2 | — | `PhysicsPort.castRay` deliberately ignores carryable colliders, so bullets need their own segment-vs-box test against the part boxes the caller supplies (the same live poses the renderer draws). | Contained: one pure test-math helper in the weapon system, no port change. | Implemented as described; the part list crosses as a plain read-only array, so the weapon system still owns nothing but its own state. |
+| 4 | 16/10 | B.2 | the box test and the world ray answer in the same units | They did not: `segmentBoxEntry` is parametric (a fraction of the given segment) while `PhysicsPort.castRay` answers in metres, and `stepBullets` ranked the two directly. A part 1.4 m ahead of a 165 m/s muzzle reported a hit at 0.25 m — parts could be shot through or stop a bullet short, and nothing else in the pass would have caught it. | Real defect, caught by writing the headless suite before wiring (the plan's rule paid for itself). | Fixed in the same commit: the box test is handed the unit sweep, so both answers are metres. Pinned by the “stops a bullet on a loose part” test (distance ≈ 1.4 m, impact point z ≈ −1.4, normal +Z). |
 
 ## Owner inputs
 
@@ -415,6 +416,40 @@ Done: Phase 1 (controller hop state + grounded Space edge + coyote/buffer timing
 `npm run build` exit 0; `node scripts/browser-check.mjs boot --production` exit 0 from `dist/`.
 Owed from that plan and folded into this one: carry feel tuning (hold blend / carry lift /
 run-while-carrying) — see Phase A's follow-ups if the budget allows after Phase F.
+
+### 16/10/2026 — Phase B (weapon data + `WeaponSystem`) done
+Done: **B.1** `src/data/weapons.ts` — six weapons, one per class (`ar`, `smg`, `dmr`, `sniper`,
+`shotgun`, `pistol`), each number commented with the behaviour it buys; the shared `SPREAD_PATTERN`
+walk; `LOADOUT` in slot order. **B.2** `src/gameplay/weapon-system.ts` — the L2 runtime owner: slots
++ swap timer, fire modes (auto/single/burst) gated by `rpm`, magazines + reserve + two reload
+durations, ADS blend, authored recoil patterns reported as one-step camera impulses, authored spread
+walk with bloom, and a fixed pool of swept bullets that stop on static geometry *or* on the caller's
+part/target boxes. **B.3** part impulses recorded in the file header and in
+`DOCS/CONTEXT/SHOOTING-MECHANIC.md` §7 (a shot reports a hit; moving a part stays the manipulation
+owner's job).
+
+The `B` fire-mode edge (`InputBindings.fireMode`, `ActionState.fireModeNext`) was left uncommitted
+by the stopped session; it is part of this commit.
+
+Tests: `tests/logic/weapon-system.test.ts` — **36 headless tests**, fake physics port with a world
+plane perpendicular to the aim, no engine: rpm cadence (630 rpm → one round every 3rd step, and the
+step between rounds reports `refused: 'cooldown'`), single/burst/auto, the mode cycle, dry fire,
+both reload durations (the dry one counted in steps and asserted longer), switch-cancels-reload,
+recoil pattern order + ADS/crouch scaling, bloom growth and full recovery, movement/airborne/ADS/
+crouch cones, determinism (two systems, one input sequence, identical shot directions), wall vs part
+hits, one impact per bullet, pool budget and drops, range expiry, ADS blend, swap time, slot keys,
+reset.
+
+**Real bug found and fixed by the tests (Plan issue #4):** `segmentBoxEntry` is a *parametric* slab
+test — its answer is a fraction of the segment it is given — but `stepBullets` compared that answer
+against `castRay`'s metres. A part 1.4 m ahead of a 165 m/s muzzle reported a hit 0.25 m away (1.4 m
+÷ the step's 5.5 m), so a part hit and a wall hit would have been ranked against each other on
+different scales: parts could be shot through, or stop a bullet metres early. The box test is now
+handed the **unit** sweep (`scratchUnitSegment`) so both answers are metres, and the distance, the
+impact point and the normal are asserted in metres.
+
+Verified: `npm run typecheck` exit 0; `npx vitest run` exit 0 — 59 files, **723 tests** (687 +
+36).
 
 ### 16/10/2026 — session start
 Recon: worktree clean, `main` == `origin/main` (0/0 after `git fetch`); `npm run typecheck` exit 0;

@@ -45,6 +45,8 @@ export interface ActionState {
   readonly reload: boolean;
   /** `Q` edge: cycle to the next weapon in the loadout. */
   readonly weaponNext: boolean;
+  /** `B` edge: cycle the current weapon's fire mode (single ⇄ auto ⇄ burst). */
+  readonly fireModeNext: boolean;
   /** Digit key this step as a 0-based slot, or null when none was pressed. */
   readonly weaponSlot: number | null;
   /** Camera-relative move intent, components in [-1, 1]. Zero when inapplicable. */
@@ -73,6 +75,7 @@ export const EMPTY_ACTIONS: ActionState = {
   ads: false,
   reload: false,
   weaponNext: false,
+  fireModeNext: false,
   weaponSlot: null,
   moveX: 0,
   moveZ: 0,
@@ -115,6 +118,8 @@ export interface InputBindings {
   readonly reload: string;
   /** Cycle to the next weapon. `Q` — free in Exploration for the same reason. */
   readonly weaponNext: string;
+  /** Cycle the held weapon's fire mode. `B`, the key the class of game uses for it. */
+  readonly fireMode: string;
   /** Slot keys, index 0 first. Authored data, so the HUD can print them (§15 rule). */
   readonly weaponSlots: ReadonlyArray<string>;
   /** Screen pixels of mouse travel mapped to one look unit. */
@@ -140,6 +145,7 @@ export const DEFAULT_BINDINGS: InputBindings = {
   crouch: 'KeyC',
   reload: 'KeyR',
   weaponNext: 'KeyQ',
+  fireMode: 'KeyB',
   weaponSlots: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'],
   lookSensitivity: 300,
   // Guards pointer-lock spike events only; real flicks reach ~600 px per step.
@@ -234,6 +240,7 @@ export class InputSystem {
         ads: false,
         reload: false,
         weaponNext: false,
+        fireModeNext: false,
         weaponSlot: null,
         moveX,
         moveZ,
@@ -277,6 +284,7 @@ export class InputSystem {
       ads: raw.secondaryHeld,
       reload: raw.pressed.has(this.bindings.reload),
       weaponNext: raw.pressed.has(this.bindings.weaponNext),
+      fireModeNext: raw.pressed.has(this.bindings.fireMode),
       weaponSlot: this.slotFrom(raw),
       moveX,
       moveZ,

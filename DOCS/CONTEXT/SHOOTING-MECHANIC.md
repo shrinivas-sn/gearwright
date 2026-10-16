@@ -91,3 +91,18 @@ the launcher becomes a real ability once it feels right. Estimated shape of the 
 charge/aim readout, and one harness scenario. No new dependency, no assets, no loading cost — the
 only real price is an ADR entry updating §3's "Combat out of scope" line to say exactly what is in
 scope (a sandbox launcher) and what is not (enemies, damage, death).
+
+## 7. What is being built (16/10/2026, owner-requested)
+
+The owner asked for shooting with weapon switching, BGMI-style handling. §4 option **A** is what is
+being built, on top of §4 option **B**'s mechanics: a **sandbox weapon range** over the level's own
+carryables and targets — one `WeaponSystem` (L2 runtime), a `src/data/weapons.ts` table (six
+weapons, one per class), deterministic spread/recoil *patterns*, magazines, two reload durations,
+fire modes, ADS, and pooled **simulated** bullets (travel time + drop, swept per step). This narrows
+§3's "Combat out of scope" to *no enemies, damage, health or death*; it does not admit them.
+
+**A bullet reports a hit on a loose part but does not move it.** Pushing parts is a
+`ManipulationSystem` capability (§20.1), and adding force to a pose already owned by another system
+is exactly the change this pass refuses to make blind — the impact event (`WeaponImpact`: point,
+normal, volume id) is the seam a later impulse pass plugs into. Non-negotiable §5.1 holds as
+written: nothing a bullet touches may attach, detach, validate or complete anything.
