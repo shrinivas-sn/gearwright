@@ -152,10 +152,14 @@ export class PhaseWorld {
       run: actions.run,
       cameraYaw: this.systems.camera.currentYaw,
       speedScale: holding ? MANIPULATION_MOVE_SCALE : 1,
-      jump: actions.jump
+      jump: actions.jump,
+      // Stance pass: crouch is locomotion state, so it goes to the player owner with the
+      // rest of the stance — the weapon layer only *reads* the resulting stance.
+      crouch: actions.crouch
     });
 
     // GOD-MODE ADR-019: the Space hop edge is routed to the player controller through actions.jump.
+    // Stance pass: crouch rides the same path (actions.crouch -> PlayerStepInput.crouch).
 
     const lookActive = actions.lookDeltaX !== 0 || actions.lookDeltaY !== 0;
     this.lookIdleTime = lookActive ? 0 : this.lookIdleTime + dt;

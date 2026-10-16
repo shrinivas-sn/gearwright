@@ -159,3 +159,74 @@ describe('DomInputSource — pointer-lock handshake', () => {
     canvas.remove();
   });
 });
+
+/**
+ * The two mouse buttons (weapons pass, 16/10/2026): button 0 is the trigger and button 2
+ * aims down sights, so the adapter has to track the right button with the same edge
+ * discipline as the left one — held / pressed-this-step / released-this-step — and jsdom
+ * supplies the real `MouseEvent.button` values, which is exactly the part that could be
+ * wrong.
+ */
+describe('DomInputSource — mouse buttons', () => {
+  function press(source: DomInputSource, canvas: HTMLCanvasElement, button: number): void {
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button }));
+    source.sample();
+  }
+
+  it('tracks the right button as held/edges without leaking into the left button', () => {
+    const { canvas } = makeCanvas();
+    const source = new DomInputSource({ keyTarget: window, mouseTarget: canvas });
+
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 2 }));
+    const down = source.sample();
+    expect(down.secondaryHeld).toBe(true);
+    expect(down.secondaryPressed).toBe(true);
+    expect(down.primaryHeld).toBe(false);
+    expect(down.primaryPressed).toBe(false);
+
+    // The edge is a one-shot: the next sample still reports the hold but no new press.
+    const held = source.sample();
+    expect(held.secondaryHeld).toBe(true);
+    expect(held.secondaryPressed).toBe(false);
+
+    // Mouse-up is bound on the key target (the window), exactly as the left button is.
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 2 }));
+    const up = source.sample();
+    expect(up.secondaryHeld).toBe(false);
+    expect(up.secondaryReleased).toBe(true);
+
+    source.dispose();
+    canvas.remove();
+  });
+
+  it('releases the right button on clearAll (blur keeps no stale aim)', () => {
+    const { canvas } = makeCanvas();
+    const source = new DomInputSource({ keyTarget: window, mouseTarget: canvas });
+
+    press(source, canvas, 2);
+    source.clearAll();
+    const cleared = source.sample();
+    expect(cleared.secondaryHeld).toBe(false);
+    expect(cleared.secondaryPressed).toBe(false);
+
+    // Re-pressing after a clear is a real press again (no latch left behind).
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 2 }));
+    expect(source.sample().secondaryPressed).toBe(true);
+
+    source.dispose();
+    canvas.remove();
+  });
+
+  it('ignores buttons the game does not use', () => {
+    const { canvas } = makeCanvas();
+    const source = new DomInputSource({ keyTarget: window, mouseTarget: canvas });
+
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 1 }));
+    const middle = source.sample();
+    expect(middle.primaryHeld).toBe(false);
+    expect(middle.secondaryHeld).toBe(false);
+
+    source.dispose();
+    canvas.remove();
+  });
+});

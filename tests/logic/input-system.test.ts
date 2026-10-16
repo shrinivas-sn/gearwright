@@ -73,10 +73,36 @@ describe('InputSystem — Exploration actions', () => {
     expect(actions.hint).toBe(true);
   });
 
-  it('accepts the primary mouse button as a primary action', () => {
+  it('routes the left mouse button to the trigger, not to the interact action (weapons pass)', () => {
     const input = new InputSystem();
-    expect(input.sample(neutralSample({ primaryPressed: true })).primary).toBe(true);
-    expect(input.sample(neutralSample({ primaryHeld: true })).primary).toBe(false);
+
+    // Holding the trigger must never also mean "grab whatever is under the reticle", and
+    // the HUD's focus prompt has always read `[E] Grab` — so in Exploration the left button
+    // is the weapon and `E` is the interact action.
+    const pressed = input.sample(neutralSample({ primaryPressed: true }));
+    expect(pressed.fire).toBe(true);
+    expect(pressed.primary).toBe(false);
+
+    const held = input.sample(neutralSample({ primaryHeld: true }));
+    expect(held.fireHeld).toBe(true);
+    expect(held.fire).toBe(false);
+    expect(held.primary).toBe(false);
+
+    // …while the manipulation context keeps the mouse button as its confirm key, so
+    // docking still works with the click that grabbed the part.
+    const carrying = new InputSystem({ context: 'Manipulation' });
+    expect(carrying.sample(neutralSample({ primaryPressed: true })).primary).toBe(true);
+  });
+
+  it('routes the right mouse button to aim down sights, and only in Exploration', () => {
+    const input = new InputSystem();
+    expect(input.sample(neutralSample({ secondaryHeld: true })).ads).toBe(true);
+
+    const carrying = new InputSystem({ context: 'Manipulation' });
+    const actions = carrying.sample(neutralSample({ secondaryHeld: true }));
+    expect(actions.ads).toBe(false);
+    // …and the same right-button edge is *not* what drops the part: the drop key is R.
+    expect(carrying.sample(neutralSample({ secondaryPressed: true })).secondary).toBe(false);
   });
 
   it('does not synthesise edges from held state', () => {

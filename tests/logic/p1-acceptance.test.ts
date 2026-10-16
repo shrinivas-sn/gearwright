@@ -449,7 +449,8 @@ describe('P1 acceptance — the shipped first puzzle, end to end (ARCH §41 M6)'
     );
     expect(reachable).toBe(true);
     expect(harness.interaction.focus?.kind).toBe('attached');
-    step(harness, neutralSample({ primaryPressed: true }));
+    // The interact key opens the detach prompt (the left mouse button is the trigger now).
+    step(harness, neutralSample({ pressed: new Set(['KeyE']) }));
     const detached = step(harness, neutralSample({ pressed: new Set(['KeyR']) }));
 
     expect(intentsOf(detached)).toContain('detach-confirmed');

@@ -573,10 +573,20 @@ function boot(): void {
       ['Move', `${k(b.forward)} ${k(b.left)} ${k(b.back)} ${k(b.right)}`],
       ['Run', k(b.run)],
       ['Look', 'Mouse'],
-      ['Grab · use · confirm', `${k(b.primary)} / Left click`],
+      // The 16/10 stance pass: jump and crouch were both real and both invisible — the
+      // hop has existed since ADR-019 and was simply never listed, which is why the
+      // project owner reported "no controls for jump". Listed from the binding map like
+      // every other row, so this cannot drift again.
+      ['Jump', k(b.jump)],
+      ['Crouch (hold)', k(b.crouch)],
+      ['Grab · use · confirm', k(b.primary)],
       ['Rotate held part', `${k(b.rotateLeft)} / ${k(b.rotateRight)}`],
       ['Drop held part', k(b.secondary)],
       ['Remove a mounted part', `${k(b.primary)}, then ${k(b.primary)} again`],
+      ['Fire weapon', 'Left click'],
+      ['Aim down sights', 'Right click (hold)'],
+      ['Reload', k(b.reload)],
+      ['Switch weapon', `${k(b.weaponNext)} · 1–5`],
       ['Hint', k(b.hint)],
       ['Pause · release mouse', 'Esc']
     ];
@@ -1642,6 +1652,16 @@ function boot(): void {
   };
   canvas.addEventListener('pointerdown', handleCanvasPointer);
 
+  // The right mouse button is aim-down-sights now, so the game view must stop the browser's
+  // context menu from opening on top of it — otherwise every ADS press would interrupt play
+  // with a menu (and the pointer capture with it). Scoped to the canvas: the pause panel,
+  // the title screen and the settings panel are ordinary DOM and keep their native menu.
+  const handleCanvasContextMenu = (event: Event): void => {
+    if (titleScreen?.visible === true) return;
+    event.preventDefault();
+  };
+  canvas.addEventListener('contextmenu', handleCanvasContextMenu);
+
   let rafId = 0;
   let firstFrameSeen = false;
   const bootEl = document.getElementById('boot-status');
@@ -1676,6 +1696,7 @@ function boot(): void {
     window.clearTimeout(watchdogId);
     window.cancelAnimationFrame(rafId);
     window.removeEventListener('keydown', handlePauseKey);
+    canvas.removeEventListener('contextmenu', handleCanvasContextMenu);
     inputSource.dispose();
     unbindEvents();
     releaseAudioGesture();

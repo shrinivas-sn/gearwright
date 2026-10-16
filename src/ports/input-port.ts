@@ -21,6 +21,15 @@ export interface RawInputSample {
   readonly primaryHeld: boolean;
   readonly primaryPressed: boolean;
   readonly primaryReleased: boolean;
+  /**
+   * Secondary (right) mouse button, same three shapes as the primary one. Added for the
+   * weapons pass (16/10/2026): aim-down-sights has no keyboard equivalent that does not
+   * fight the existing map, and the raw sample is the only place a button can enter the
+   * game (ARCH §15 — devices live at L4, gameplay reads this contract).
+   */
+  readonly secondaryHeld: boolean;
+  readonly secondaryPressed: boolean;
+  readonly secondaryReleased: boolean;
 }
 
 /** Neutral sample factory shared by adapters and tests. */
@@ -33,6 +42,9 @@ export function emptyRawSample(): RawInputSample {
     lookDeltaY: 0,
     primaryHeld: false,
     primaryPressed: false,
-    primaryReleased: false
+    primaryReleased: false,
+    secondaryHeld: false,
+    secondaryPressed: false,
+    secondaryReleased: false
   };
 }

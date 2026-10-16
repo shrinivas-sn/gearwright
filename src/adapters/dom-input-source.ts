@@ -54,6 +54,11 @@ export class DomInputSource {
   private primaryPressed = false;
   private primaryReleased = false;
   private previousPrimary = false;
+  /** Right button (aim). Tracked exactly like the left one, so the edges cannot drift. */
+  private secondaryHeld = false;
+  private secondaryPressed = false;
+  private secondaryReleased = false;
+  private previousSecondary = false;
   private pointerLocked = false;
   private lockErrored = false;
   private readonly isBrowser: boolean;
@@ -101,7 +106,10 @@ export class DomInputSource {
       lookDeltaY: this.lookDeltaY,
       primaryHeld: this.primaryHeld,
       primaryPressed: this.primaryPressed,
-      primaryReleased: this.primaryReleased
+      primaryReleased: this.primaryReleased,
+      secondaryHeld: this.secondaryHeld,
+      secondaryPressed: this.secondaryPressed,
+      secondaryReleased: this.secondaryReleased
     };
     this.pressed.clear();
     this.released.clear();
@@ -109,6 +117,8 @@ export class DomInputSource {
     this.lookDeltaY = 0;
     this.primaryPressed = false;
     this.primaryReleased = false;
+    this.secondaryPressed = false;
+    this.secondaryReleased = false;
     return sample;
   }
 
@@ -123,6 +133,10 @@ export class DomInputSource {
     this.primaryPressed = false;
     this.primaryReleased = false;
     this.previousPrimary = false;
+    this.secondaryHeld = false;
+    this.secondaryPressed = false;
+    this.secondaryReleased = false;
+    this.previousSecondary = false;
   }
 
   /** True while the browser holds the pointer on the lock target. */
@@ -195,11 +209,19 @@ export class DomInputSource {
   };
 
   private readonly handleMouseDown = (event: Event): void => {
-    if (eventButton(event) !== 0) return;
-    if (!this.previousPrimary) {
+    const button = eventButton(event);
+    if (button === 0) {
+      if (this.previousPrimary) return;
       this.previousPrimary = true;
       this.primaryHeld = true;
       this.primaryPressed = true;
+      return;
+    }
+    if (button === 2) {
+      if (this.previousSecondary) return;
+      this.previousSecondary = true;
+      this.secondaryHeld = true;
+      this.secondaryPressed = true;
     }
   };
 
@@ -223,11 +245,20 @@ export class DomInputSource {
   }
 
   private readonly handleMouseUp = (event: Event): void => {
-    if (eventButton(event) !== 0 && eventButton(event) !== -1) return;
-    if (this.previousPrimary) {
-      this.previousPrimary = false;
-      this.primaryHeld = false;
-      this.primaryReleased = true;
+    const button = eventButton(event);
+    if (button === 0 || button === -1) {
+      if (this.previousPrimary) {
+        this.previousPrimary = false;
+        this.primaryHeld = false;
+        this.primaryReleased = true;
+      }
+    }
+    if (button === 2 || button === -1) {
+      if (this.previousSecondary) {
+        this.previousSecondary = false;
+        this.secondaryHeld = false;
+        this.secondaryReleased = true;
+      }
     }
   };
 }

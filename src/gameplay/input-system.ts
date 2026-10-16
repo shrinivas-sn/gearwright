@@ -25,6 +25,28 @@ export interface ActionState {
   readonly hint: boolean;
   /** Space hop pressed edge this step (ADR-019). */
   readonly jump: boolean;
+  /**
+   * Crouch held (stance pass, 16/10/2026). Exploration-only, and deliberately a *hold*:
+   * there is no latch to desynchronise from the physical key, and the controller decides
+   * whether releasing it may actually stand the player up.
+   */
+  readonly crouch: boolean;
+  /**
+   * Weapons pass: the left mouse button. `fire` is the *edge* (one shot per press for
+   * semi-auto weapons) and `fireHeld` the level (an automatic weapon keeps cycling while
+   * it stays down) — the weapon system needs both and deriving one from the other would
+   * make the first frame of a hold ambiguous.
+   */
+  readonly fire: boolean;
+  readonly fireHeld: boolean;
+  /** Right mouse button held: aim down sights. */
+  readonly ads: boolean;
+  /** `R` edge: start a reload. */
+  readonly reload: boolean;
+  /** `Q` edge: cycle to the next weapon in the loadout. */
+  readonly weaponNext: boolean;
+  /** Digit key this step as a 0-based slot, or null when none was pressed. */
+  readonly weaponSlot: number | null;
   /** Camera-relative move intent, components in [-1, 1]. Zero when inapplicable. */
   readonly moveX: number;
   readonly moveZ: number;
@@ -45,6 +67,13 @@ export interface ActionState {
 export const EMPTY_ACTIONS: ActionState = {
   hint: false,
   jump: false,
+  crouch: false,
+  fire: false,
+  fireHeld: false,
+  ads: false,
+  reload: false,
+  weaponNext: false,
+  weaponSlot: null,
   moveX: 0,
   moveZ: 0,
   run: false,
@@ -74,6 +103,20 @@ export interface InputBindings {
   readonly hint: string;
   /** Space hop / utility jump (ADR-019). */
   readonly jump: string;
+  /** Crouch hold (stance pass). `KeyC`, the convention PC shooters use. */
+  readonly crouch: string;
+  /**
+   * Weapons pass (16/10/2026). The trigger and the sights are the two mouse buttons, so
+   * they have no entry here — they arrive through `RawInputSample`'s button fields. These
+   * three are the keyboard side, and `R` is free in Exploration because the secondary
+   * binding it shares is only *read* in the Manipulation context (contexts are exclusive,
+   * ARCH §15) where the same key means "drop the held part".
+   */
+  readonly reload: string;
+  /** Cycle to the next weapon. `Q` — free in Exploration for the same reason. */
+  readonly weaponNext: string;
+  /** Slot keys, index 0 first. Authored data, so the HUD can print them (§15 rule). */
+  readonly weaponSlots: ReadonlyArray<string>;
   /** Screen pixels of mouse travel mapped to one look unit. */
   readonly lookSensitivity: number;
   /** Maximum look delta applied in a single step (EC-BRN-06). */
@@ -94,6 +137,10 @@ export const DEFAULT_BINDINGS: InputBindings = {
   rotateRight: 'KeyF',
   hint: 'KeyH',
   jump: 'Space',
+  crouch: 'KeyC',
+  reload: 'KeyR',
+  weaponNext: 'KeyQ',
+  weaponSlots: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'],
   lookSensitivity: 300,
   // Guards pointer-lock spike events only; real flicks reach ~600 px per step.
   maxLookDeltaPerStep: 1000
@@ -177,6 +224,17 @@ export class InputSystem {
       this.current = {
         hint: false, // no hint request mid-carry: Q/E are the carry's keys (§15)
         jump: false,
+        // Both hands are on the part: the carry owns the stance, so there is no crouch
+        // to leak into it (and the hop is off for the same reason).
+        crouch: false,
+        // …and you cannot shoot with your hands full. The weapon layer is deliberately
+        // blind here: a held part is a two-handed job, so the trigger is not routed.
+        fire: false,
+        fireHeld: false,
+        ads: false,
+        reload: false,
+        weaponNext: false,
+        weaponSlot: null,
         moveX,
         moveZ,
         run: false,
@@ -209,18 +267,39 @@ export class InputSystem {
     this.current = {
       hint,
       jump,
+      crouch: held.has(this.bindings.crouch),
+      // The trigger is the left mouse button alone. `primary` used to accept it as a
+      // second grab key; it no longer does (weapons pass, Plan issue #2): holding the
+      // trigger must never also mean "grab whatever is under the reticle", and the HUD's
+      // focus prompt has always read `[E] Grab`, so nothing the player reads is wrong.
+      fire: raw.primaryPressed,
+      fireHeld: raw.primaryHeld,
+      ads: raw.secondaryHeld,
+      reload: raw.pressed.has(this.bindings.reload),
+      weaponNext: raw.pressed.has(this.bindings.weaponNext),
+      weaponSlot: this.slotFrom(raw),
       moveX,
       moveZ,
       run: held.has(this.bindings.run),
       lookDeltaX: look.x,
       lookDeltaY: look.y,
-      primary: raw.pressed.has(this.bindings.primary) || raw.primaryPressed,
+      primary: raw.pressed.has(this.bindings.primary),
       secondary: raw.pressed.has(this.bindings.secondary),
       cancel: raw.pressed.has(this.bindings.cancel),
       pause: raw.pressed.has(this.bindings.pause),
       rotate: 0
     };
     return this.current;
+  }
+
+  /** Digit key -> 0-based weapon slot for this step, or null (last slot key wins). */
+  private slotFrom(raw: RawInputSample): number | null {
+    let slot: number | null = null;
+    for (let index = 0; index < this.bindings.weaponSlots.length; index += 1) {
+      const code = this.bindings.weaponSlots[index];
+      if (code !== undefined && raw.pressed.has(code)) slot = index;
+    }
+    return slot;
   }
 
   /** Clear the visible snapshot (blur / visibilitychange — EC-BRN-05). */
@@ -250,6 +329,9 @@ export function neutralSample(overrides: Partial<RawInputSample> = {}): RawInput
     primaryHeld: false,
     primaryPressed: false,
     primaryReleased: false,
+    secondaryHeld: false,
+    secondaryPressed: false,
+    secondaryReleased: false,
     ...overrides
   };
 }

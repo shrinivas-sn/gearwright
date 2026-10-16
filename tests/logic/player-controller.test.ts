@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { vec3, type Vec3 } from '../../src/core/vec3.ts';
-import { PlayerController, type PlayerStepInput } from '../../src/gameplay/player-controller.ts';
+import {
+  DEFAULT_PLAYER_TUNING,
+  PlayerController,
+  type PlayerStepInput
+} from '../../src/gameplay/player-controller.ts';
 import type {
   CapsuleSpec,
   InteractionHit,
@@ -19,9 +23,14 @@ class FakePhysics implements PhysicsPort {
   supported = true;
   calls = 0;
   lastDisplacement: Vec3 = vec3();
+  /** The capsule the controller actually simulated this step (stance assertions). */
+  lastCapsule: CapsuleSpec | null = null;
+  /** Stance tests: pretend a low beam is over the player's head. */
+  blockingHeight = 0;
 
-  moveAndSlide(feet: Vec3, displacement: Vec3, _spec: CapsuleSpec, out: Vec3): MoveResult {
+  moveAndSlide(feet: Vec3, displacement: Vec3, spec: CapsuleSpec, out: Vec3): MoveResult {
     this.calls += 1;
+    this.lastCapsule = { ...spec };
     this.lastDisplacement = vec3(displacement.x, displacement.y, displacement.z);
     out.x = feet.x + displacement.x;
     out.y = feet.y + displacement.y;
@@ -37,8 +46,8 @@ class FakePhysics implements PhysicsPort {
     return null;
   }
 
-  isPoseValid(_feet: Vec3, _spec: CapsuleSpec): boolean {
-    return true;
+  isPoseValid(_feet: Vec3, spec: CapsuleSpec): boolean {
+    return !this.blockingHeight || spec.height <= this.blockingHeight;
   }
 
   setStaticColliders(_colliders: ReadonlyArray<StaticCollider>): void {}
@@ -65,7 +74,14 @@ class FakePhysics implements PhysicsPort {
 }
 
 const DT = 1 / 30;
-const NEUTRAL: PlayerStepInput = { moveX: 0, moveZ: 0, run: false, cameraYaw: 0, jump: false };
+const NEUTRAL: PlayerStepInput = {
+  moveX: 0,
+  moveZ: 0,
+  run: false,
+  cameraYaw: 0,
+  jump: false,
+  crouch: false
+};
 
 function run(controller: PlayerController, steps: number, input: PlayerStepInput) {
   let snapshot = controller.snapshot();
@@ -142,8 +158,7 @@ describe('PlayerController — speed and acceleration', () => {
     expect(horizontal(early)).toBeLessThan(2.2);
 
     const settled = run(controller, 120, { ...NEUTRAL, moveZ: 1 });
-    expect(horizontal(settled)).toBeGreaterThan(2.9);
-    expect(horizontal(settled)).toBeLessThanOrEqual(3.0 + 1e-9);
+    expect(horizontal(settled)).toBeCloseTo(DEFAULT_PLAYER_TUNING.walkSpeed, 5);
   });
 
   it('moves faster while running', () => {
@@ -153,19 +168,34 @@ describe('PlayerController — speed and acceleration', () => {
     const state = run(controller, 120, { ...NEUTRAL, moveZ: 1, run: true });
     const horizontal = Math.sqrt(state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z);
 
-    expect(horizontal).toBeGreaterThan(5.9);
-    expect(horizontal).toBeLessThanOrEqual(6.0 + 1e-9);
+    expect(horizontal).toBeGreaterThan(DEFAULT_PLAYER_TUNING.walkSpeed);
+    expect(horizontal).toBeCloseTo(DEFAULT_PLAYER_TUNING.runSpeed, 5);
+  });
+
+  it('is tuned brisker than the pre-16/10 workshop speeds, without being a shooter sprint', () => {
+    // The speed pass is a *feel* change, so pin the intent rather than one magic number:
+    // clearly faster than the 3.0/6.0 the owner called slow, and still inside ARCH §16's
+    // traversal-safety ceiling where a hazard telegraph stays readable at walk pace.
+    expect(DEFAULT_PLAYER_TUNING.walkSpeed).toBeGreaterThan(3.0);
+    expect(DEFAULT_PLAYER_TUNING.runSpeed).toBeGreaterThan(6.0);
+    expect(DEFAULT_PLAYER_TUNING.walkSpeed).toBeLessThanOrEqual(4.0);
+    expect(DEFAULT_PLAYER_TUNING.runSpeed).toBeLessThanOrEqual(8.0);
+    expect(DEFAULT_PLAYER_TUNING.runSpeed / DEFAULT_PLAYER_TUNING.walkSpeed).toBeGreaterThan(1.8);
   });
 });
 
 describe('PlayerController — rotation', () => {
-  it('caps the turn rate at 12 rad/s (faces travel without snapping)', () => {
+  it('caps the turn rate (faces travel without snapping)', () => {
     const physics = new FakePhysics();
     const controller = new PlayerController(physics, vec3(0, 0, 0));
 
     const state = controller.step(DT, { ...NEUTRAL, moveX: 1 });
 
-    expect(state.facingYaw).toBeCloseTo(-12 * DT, 6);
+    // Turn rate is a feel number (14 rad/s since the 16/10 speed pass), pinned here as
+    // "a full turn takes a few tenths of a second": a snap would be an instant ±90°.
+    const turned = Math.abs(state.facingYaw);
+    expect(turned).toBeGreaterThan(0.3);
+    expect(turned).toBeLessThan(Math.PI / 4);
   });
 
   it('converges toward the direction of travel', () => {
@@ -199,6 +229,77 @@ describe('PlayerController — gravity and grounding', () => {
 
     expect(state.grounded).toBe(false);
     expect(state.velocity.y).toBeCloseTo(-14, 5);
+  });
+});
+
+describe('PlayerController — stance pass: crouch', () => {
+  it('simulates the crouched capsule while crouched, and the standing one otherwise', () => {
+    const physics = new FakePhysics();
+    const controller = new PlayerController(physics, vec3(0, 0, 0));
+
+    controller.step(DT, { ...NEUTRAL, crouch: true });
+    expect(physics.lastCapsule?.height).toBe(DEFAULT_PLAYER_TUNING.crouchCapsule.height);
+    expect(controller.snapshot().crouched).toBe(true);
+
+    controller.step(DT, NEUTRAL);
+    expect(physics.lastCapsule?.height).toBe(DEFAULT_PLAYER_TUNING.capsule.height);
+    expect(controller.snapshot().crouched).toBe(false);
+  });
+
+  it('crouch-walks at the crouch scale and ignores the sprint modifier', () => {
+    const horizontal = (state: { velocity: Vec3 }): number =>
+      Math.sqrt(state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z);
+
+    const crouched = run(new PlayerController(new FakePhysics(), vec3(0, 0, 0)), 120, {
+      ...NEUTRAL,
+      moveZ: 1,
+      crouch: true
+    });
+    expect(horizontal(crouched)).toBeCloseTo(
+      DEFAULT_PLAYER_TUNING.walkSpeed * DEFAULT_PLAYER_TUNING.crouchSpeedScale,
+      5
+    );
+
+    // Sprinting is a standing stance: crouched + run must not beat crouch-walking.
+    const crouchedSprint = run(new PlayerController(new FakePhysics(), vec3(0, 0, 0)), 120, {
+      ...NEUTRAL,
+      moveZ: 1,
+      crouch: true,
+      run: true
+    });
+    expect(horizontal(crouchedSprint)).toBeCloseTo(horizontal(crouched), 6);
+  });
+
+  it('refuses to stand up under low geometry and stays crouched', () => {
+    const physics = new FakePhysics();
+    // 1.4 m of headroom: the 1.15 m crouch fits, the 1.7 m stand does not.
+    physics.blockingHeight = 1.4;
+    const controller = new PlayerController(physics, vec3(0, 0, 0));
+
+    controller.step(DT, { ...NEUTRAL, crouch: true });
+    expect(controller.snapshot().crouched).toBe(true);
+
+    // Key released, but standing is not legal here: the player stays low.
+    const held = run(controller, 30, NEUTRAL);
+    expect(held.crouched).toBe(true);
+    expect(physics.lastCapsule?.height).toBe(DEFAULT_PLAYER_TUNING.crouchCapsule.height);
+
+    // Out from under the beam: the next step stands the player up again.
+    physics.blockingHeight = 0;
+    const stood = controller.step(DT, NEUTRAL);
+    expect(stood.crouched).toBe(false);
+    expect(physics.lastCapsule?.height).toBe(DEFAULT_PLAYER_TUNING.capsule.height);
+  });
+
+  it('still hops while crouched, and a teleport clears the stance', () => {
+    const physics = new FakePhysics();
+    const controller = new PlayerController(physics, vec3(0, 0, 0));
+
+    const hop = controller.step(DT, { ...NEUTRAL, crouch: true, jump: true });
+    expect(hop.velocity.y).toBeCloseTo(DEFAULT_PLAYER_TUNING.jumpSpeed, 5);
+
+    controller.teleport(vec3(3, 0, 3));
+    expect(controller.snapshot().crouched).toBe(false);
   });
 });
 

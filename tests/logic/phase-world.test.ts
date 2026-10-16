@@ -108,7 +108,10 @@ describe('PhaseWorld — camera-relative movement integration', () => {
     const { world } = buildWorld();
     world.player.teleport(vec3(2.2, LAB_WORLD.spawn.y, 0));
 
-    const result = run(world, 30, held('KeyD'));
+    // 20 steps (0.67 s) instead of 30 since the 16/10 speed pass: the assert is "ends up
+    // standing on the step", and the step spans x in [3, 5] — at the faster walk a full
+    // second now carries the player off its far edge.
+    const result = run(world, 20, held('KeyD'));
 
     expect(result.player.position.x).toBeGreaterThan(3);
     expect(result.player.position.x).toBeLessThan(5);
@@ -536,8 +539,10 @@ describe('PhaseWorld — M4 snap / attach wiring (ARCH §14 steps 6–7, §21)',
     expect(harness.interaction.focus?.kind).toBe('attached');
     expect(harness.interaction.focus?.verb).toBe('Remove');
 
-    // Primary on an attached component opens the prompt; it never grabs.
-    const prompted = harness.world.step(DT, neutralSample({ primaryPressed: true }));
+    // The interact key on an attached component opens the prompt; it never grabs.
+    // (This is `KeyE`, not the left mouse button, since the weapons pass gave the left
+    // button to the trigger — the HUD prompt reads `[E] Remove`, so the game agrees.)
+    const prompted = harness.world.step(DT, neutralSample({ pressed: new Set(['KeyE']) }));
     expect(prompted.manipulation?.state).toBe('DetachPrompt');
     expect(harness.manipulation.heldId).toBeNull();
 
@@ -562,7 +567,7 @@ describe('PhaseWorld — M4 snap / attach wiring (ARCH §14 steps 6–7, §21)',
     standAtDock(harness);
     for (let i = 0; i < 8; i += 1) harness.world.step(DT, neutralSample());
     expect(harness.interaction.focus?.kind).toBe('attached');
-    harness.world.step(DT, neutralSample({ primaryPressed: true }));
+    harness.world.step(DT, neutralSample({ pressed: new Set(['KeyE']) }));
     const detached = harness.world.step(DT, neutralSample({ pressed: new Set(['KeyR']) }));
 
     expect(harness.graph.attachmentCount).toBe(0);

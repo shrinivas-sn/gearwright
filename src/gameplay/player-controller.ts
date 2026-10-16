@@ -31,6 +31,13 @@ export interface PlayerTuning {
   readonly decelerationTime: number;
   /** Capsule spec (feet position, height from feet). */
   readonly capsule: CapsuleSpec;
+  /**
+   * Stance pass (16/10/2026): the capsule used while crouched. Same feet, a lower
+   * top — which is what lets a crouched player pass under low geometry.
+   */
+  readonly crouchCapsule: CapsuleSpec;
+  /** Multiplier on walk speed while crouched (sprinting is unavailable crouched). */
+  readonly crouchSpeedScale: number;
   readonly gravity: number;
   /** Terminal fall speed. */
   readonly maxFallSpeed: number;
@@ -43,11 +50,20 @@ export interface PlayerTuning {
 }
 
 export const DEFAULT_PLAYER_TUNING: PlayerTuning = {
-  walkSpeed: 3,
-  runSpeed: 6,
-  accelerationTime: 0.09,
-  decelerationTime: 0.08,
+  // Speed pass (16/10/2026, owner request: "the character feels a little bit slow").
+  // Values are deliberately still *workshop* speeds, not shooter speeds: ARCH §16's
+  // traversal-safety rule (a hazard telegraph must remain readable at walk pace) is
+  // the ceiling, and 7.4 m/s of sprint is the top of it.
+  walkSpeed: 3.6,
+  runSpeed: 7.4,
+  accelerationTime: 0.07,
+  decelerationTime: 0.06,
   capsule: { radius: 0.32, height: 1.7, stepHeight: 0.35 },
+  // Crouch: head roughly a metre lower, half pace. The radius is unchanged on purpose —
+  // a crouched player is shorter, never thinner, so a crouch cannot squeeze through a gap
+  // that a stand-up check would then refuse to let them leave.
+  crouchCapsule: { radius: 0.32, height: 1.15, stepHeight: 0.35 },
+  crouchSpeedScale: 0.5,
   gravity: 16,
   maxFallSpeed: 14,
   jumpSpeed: 4.6,
@@ -62,6 +78,8 @@ export interface PlayerDynamicState {
   readonly grounded: boolean;
   readonly groundY: number;
   readonly speed: number;
+  /** Stance pass: true while the crouched capsule is the one being simulated. */
+  readonly crouched: boolean;
 }
 
 /**
@@ -84,6 +102,13 @@ export interface PlayerStepInput {
    * never re-fires; the hop is a single grounded-only vertical bump per press.
    */
   readonly jump: boolean;
+  /**
+   * Stance pass: crouch is *held*, not toggled (BGMI's PC crouch), so it is plain
+   * state with no latch to get out of step with the key. While crouched the player
+   * uses `crouchCapsule`, cannot sprint, and walks at `crouchSpeedScale`. Releasing
+   * the key only stands the player up where standing is legal.
+   */
+  readonly crouch: boolean;
 }
 
 export class PlayerController {
@@ -99,6 +124,8 @@ export class PlayerController {
   private grounded = false;
   private groundY: number;
   private spawn: Vec3;
+  /** Stance pass: true while the crouched capsule is the one being simulated. */
+  private crouched = false;
 
   // GOD-MODE ADR-019 hop state: grounded-only, coyote/buffer assisted, one hop per press.
   private timeSinceGrounded = 0;
@@ -133,6 +160,15 @@ export class PlayerController {
     vec3Sanitize(this.position, this.position, this.spawn);
     vec3Sanitize(this.velocity, this.velocity, vec3());
 
+    // 0. Stance (16/10/2026): resolve the capsule *before* any motion, so the step is
+    //    simulated in exactly one shape. Crouch is held; releasing it stands the player
+    //    up only where standing is legal, which is checked against the port's own
+    //    `isPoseValid` rather than a second collision implementation.
+    const wantsCrouch = input.crouch === true;
+    if (wantsCrouch) this.crouched = true;
+    else if (this.crouched && this.canStand()) this.crouched = false;
+    const capsule = this.crouched ? this.tuning.crouchCapsule : this.tuning.capsule;
+
     // 1. Intent -> camera-relative horizontal direction.
     const sin = Math.sin(input.cameraYaw);
     const cos = Math.cos(input.cameraYaw);
@@ -144,7 +180,14 @@ export class PlayerController {
     const intentLength = Math.sqrt(intentX * intentX + intentZ * intentZ);
     const hasIntent = intentLength > 1e-6;
 
-    const maxSpeed = (input.run ? this.tuning.runSpeed : this.tuning.walkSpeed) * clampSpeedScale(input.speedScale);
+    // Sprinting is a standing stance: crouched, the run modifier is simply ignored
+    // rather than scaled, so "crouch-walk" is one unambiguous speed.
+    const sprinting = input.run && !this.crouched;
+    const stanceScale = this.crouched ? this.tuning.crouchSpeedScale : 1;
+    const maxSpeed =
+      (sprinting ? this.tuning.runSpeed : this.tuning.walkSpeed) *
+      stanceScale *
+      clampSpeedScale(input.speedScale);
     if (hasIntent) {
       const inverse = 1 / intentLength;
       vec3Set(this.horizontal, intentX * inverse * maxSpeed, 0, intentZ * inverse * maxSpeed);
@@ -193,7 +236,7 @@ export class PlayerController {
     const result = this.physics.moveAndSlide(
       this.position,
       this.displacement,
-      this.tuning.capsule,
+      capsule,
       this.resolved
     );
 
@@ -280,6 +323,17 @@ export class PlayerController {
     vec3Set(this.velocity, 0, 0, 0);
     this.grounded = false;
     this.groundY = position.y;
+    // A respawn is a fresh stance: keeping a crouch across a teleport could strand the
+    // player crouched in a tight spot they never crouched into.
+    this.crouched = false;
+  }
+
+  /**
+   * Can the player stand up *here*? Asked of the port, never re-implemented: standing is
+   * legal exactly when the tall capsule has a valid pose at the current feet position.
+   */
+  private canStand(): boolean {
+    return this.physics.isPoseValid(this.position, this.tuning.capsule);
   }
 
   setSpawn(position: Vec3): void {
@@ -293,7 +347,8 @@ export class PlayerController {
       facingYaw: this.facingYaw,
       grounded: this.grounded,
       groundY: this.groundY,
-      speed: vec3Length(this.velocity)
+      speed: vec3Length(this.velocity),
+      crouched: this.crouched
     };
   }
 }
@@ -305,6 +360,8 @@ function clampSpeedScale(scale: number | undefined): number {
 }
 
 // Radians per second the character may rotate (ARCH §16: face travel, no snapping).
-const PLAYER_TURN_RATE = 12;
+// Raised 12 -> 14 in the 16/10 speed pass: at the faster walk/run the old rate read as the
+// character turning *after* the input, which is half of what "feels slow" meant.
+const PLAYER_TURN_RATE = 14;
 // Downward stick speed applied while grounded so contact is never marginal.
 const GROUNDED_STICK_SPEED = 1;
