@@ -228,6 +228,7 @@ function runLoop(
       carrying: state.carrying,
       dt,
       holdTarget: state.carrying ? { x: 0, y: 1.25, z: -0.42 } : null,
+      weaponGrip: null,
       footGroundY: null,
       lookTarget: { x: 0, y: 1.4, z: -3 },
       cameraDistance: 4.2

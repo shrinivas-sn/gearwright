@@ -146,6 +146,8 @@ export interface CharacterPoseInput {
   readonly runSpeed: number;
   readonly grounded: boolean;
   readonly carrying: boolean;
+  /** A drawn weapon steadies the arms like a carry, without pulling them onto a part. */
+  readonly aiming: boolean;
   /** Gait cycle in radians, produced by `GaitDriver` from distance travelled. */
   readonly gaitPhase: number;
   readonly breathPhase: number;
@@ -212,12 +214,14 @@ export function sampleCharacterPose(input: CharacterPoseInput, out: CharacterPos
   const gaitWeight = clamp01(speed / walkSpeed);
   const runBlend = clamp01((speed - walkSpeed) / Math.max(runSpeed - walkSpeed, 1e-3));
   const carrying = input.carrying;
+  const aiming = input.aiming && !carrying;
   const phase = sanitise(input.gaitPhase, 0);
   const breath = sanitise(input.breathPhase, 0);
 
-  // Gait swing grows past walk speed, and the arms stop swinging while a part is held.
+  // Gait swing grows past walk speed, and the arms stop swinging while a part is held
+  // or a weapon is drawn (the stance steadies them instead).
   const swing = gaitWeight * (1 + 0.22 * runBlend);
-  const armSwing = swing * (carrying ? 0.15 : 1);
+  const armSwing = swing * (carrying || aiming ? 0.15 : 1);
   const lean = 0.07 * swing + 0.17 * runBlend;
 
   const breathChest = 0.012 * Math.sin(breath);
@@ -238,8 +242,8 @@ export function sampleCharacterPose(input: CharacterPoseInput, out: CharacterPos
   const foreArmL = -0.22 - FOREARM_SWING * swing * Math.max(0, Math.sin(phase));
   const foreArmR = -0.22 - FOREARM_SWING * swing * Math.max(0, Math.sin(phase + Math.PI));
 
-  const spineX = 0.02 + lean - (carrying ? 0.03 : 0);
-  const chestX = -0.5 * lean + 0.02 * swing + breathChest + (carrying ? 0.02 : 0);
+  const spineX = 0.02 + lean - (carrying ? 0.03 : 0) + (aiming ? 0.04 : 0);
+  const chestX = -0.5 * lean + 0.02 * swing + breathChest + (carrying ? 0.02 : 0) - (aiming ? 0.03 : 0);
   const neckX = -(spineX + chestX) * 0.7;
   const hipsRise = 0.03 * swing * Math.cos(2 * phase + Math.PI) + breathRise;
 
@@ -251,12 +255,14 @@ export function sampleCharacterPose(input: CharacterPoseInput, out: CharacterPos
   setJoint(out.joints.shoulderL, 0.05 * swing * Math.sin(phase), 0, 0);
   setJoint(out.joints.shoulderR, 0.05 * swing * Math.sin(phase + Math.PI), 0, 0);
   // Carrying: both arms up and angled inward (local +Z moves the left arm tip toward +X).
-  setJoint(out.joints.upperArmL, upperArmL - (carrying ? 0.62 : 0), 0, carrying ? 0.06 : upperArmLZ);
-  setJoint(out.joints.upperArmR, upperArmR - (carrying ? 0.62 : 0), 0, carrying ? -0.06 : upperArmRZ);
-  setJoint(out.joints.foreArmL, foreArmL - (carrying ? 0.55 : 0), 0, 0);
-  setJoint(out.joints.foreArmR, foreArmR - (carrying ? 0.55 : 0), 0, 0);
-  setJoint(out.joints.handL, -0.08 - (carrying ? 0.15 : 0), 0, 0);
-  setJoint(out.joints.handR, -0.08 - (carrying ? 0.15 : 0), 0, 0);
+  // Aiming: the same ready shape — the grip IK then pulls the hands apart onto the weapon.
+  const readyStance = carrying || aiming;
+  setJoint(out.joints.upperArmL, upperArmL - (carrying ? 0.62 : aiming ? 0.52 : 0), 0, readyStance ? 0.06 : upperArmLZ);
+  setJoint(out.joints.upperArmR, upperArmR - (carrying ? 0.62 : aiming ? 0.52 : 0), 0, readyStance ? -0.06 : upperArmRZ);
+  setJoint(out.joints.foreArmL, foreArmL - (carrying ? 0.55 : aiming ? 0.28 : 0), 0, 0);
+  setJoint(out.joints.foreArmR, foreArmR - (carrying ? 0.55 : aiming ? 0.28 : 0), 0, 0);
+  setJoint(out.joints.handL, -0.08 - (carrying ? 0.15 : aiming ? 0.1 : 0), 0, 0);
+  setJoint(out.joints.handR, -0.08 - (carrying ? 0.15 : aiming ? 0.1 : 0), 0, 0);
   setJoint(out.joints.thighL, thighL, 0, 0);
   setJoint(out.joints.thighR, thighR, 0, 0);
   setJoint(out.joints.shinL, shinL, 0, 0);

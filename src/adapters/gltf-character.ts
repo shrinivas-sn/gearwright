@@ -141,6 +141,7 @@ export class GltfCharacterBody implements PlayerBody {
   private hasLastHold = false;
   private lastHolding = false;
   private carryBlend = 0;
+  private weaponBlend = 0;
 
   // Scratch: the hot path allocates nothing (ARCH §14).
   private readonly vShoulder = new THREE.Vector3();
@@ -334,6 +335,17 @@ export class GltfCharacterBody implements PlayerBody {
       this.object.updateMatrixWorld(true);
       this.aimArm(this.arms.left, state.holdTarget, this.carryBlend);
       this.aimArm(this.arms.right, state.holdTarget, this.carryBlend);
+    }
+    // A drawn weapon aims each hand at its own end of the gun (rear + front) — the same
+    // IK, one target per arm. Carrying wins: a held part keeps both hands.
+    const gripping = !holding && state.weaponGrip !== null;
+    this.weaponBlend = gripping
+      ? Math.min(1, this.weaponBlend + blendStep)
+      : Math.max(0, this.weaponBlend - blendStep);
+    if (this.weaponBlend > 0 && state.weaponGrip !== null && this.arms !== null) {
+      this.object.updateMatrixWorld(true);
+      this.aimArm(this.arms.left, state.weaponGrip.front, this.weaponBlend);
+      this.aimArm(this.arms.right, state.weaponGrip.rear, this.weaponBlend);
     }
     // Facts-only snapshot of the grip (never read back into the pose).
     this.lastHolding = holding;

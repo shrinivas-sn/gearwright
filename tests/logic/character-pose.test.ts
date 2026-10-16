@@ -54,6 +54,7 @@ function input(overrides: Partial<CharacterPoseInput> = {}): CharacterPoseInput 
     runSpeed: RUN,
     grounded: true,
     carrying: false,
+    aiming: false,
     gaitPhase: 0,
     breathPhase: 0,
     ...overrides
@@ -181,6 +182,19 @@ describe('character pose — idle, gait, air and carry', () => {
     expect(loaded.joints.foreArmL.x).toBeLessThan(free.joints.foreArmL.x - 0.4);
     expect(loaded.joints.upperArmL.z).toBeGreaterThan(free.joints.upperArmL.z);
     expect(loaded.joints.upperArmR.z).toBeLessThan(free.joints.upperArmR.z);
+  });
+
+  it('steadies the arms for a drawn weapon, and never lets it win over a held part', () => {
+    const free = pose({ speed: WALK, gaitPhase: 0 });
+    const aiming = pose({ speed: WALK, gaitPhase: 0, aiming: true });
+    expect(aiming.joints.upperArmL.x).toBeLessThan(free.joints.upperArmL.x - 0.3);
+    expect(aiming.joints.upperArmR.x).toBeLessThan(free.joints.upperArmR.x - 0.3);
+    expect(aiming.joints.upperArmL.x).toBeGreaterThan(pose({ speed: WALK, gaitPhase: 0, carrying: true }).joints.upperArmL.x);
+    // A held part is a two-handed job: carrying beats aiming, exactly like the rigs implement.
+    const both = pose({ speed: WALK, gaitPhase: 0, carrying: true, aiming: true });
+    const loaded = pose({ speed: WALK, gaitPhase: 0, carrying: true });
+    expect(both.joints.upperArmL.x).toBeCloseTo(loaded.joints.upperArmL.x, 9);
+    expect(both.joints.foreArmL.x).toBeCloseTo(loaded.joints.foreArmL.x, 9);
   });
 
   it('stays finite and inside the joint limits for hostile input', () => {

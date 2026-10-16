@@ -59,10 +59,18 @@ const SCANNER_ROUTE_CAPACITY = 64;
  * origin, so placing the group at the muzzle and aiming its +Z along the shot direction puts the
  * barrel tip exactly where the bullet leaves — the picture and the simulation share one point by
  * construction, not by a tuned offset.
+ *
+ * The two-handed grip is read off the same geometry: the rear hand sits on the stock the
+ * `setWeaponView` mount implies, and the front hand on the barrel — both measured back from the
+ * muzzle along the shot direction, so the IK targets and the drawn mesh can never disagree.
  */
 const WEAPON_BODY_LENGTH = 0.34;
 const WEAPON_BARREL_LENGTH = 0.3;
 const WEAPON_STOCK_LENGTH = 0.24;
+/** Metres back from the muzzle the rear hand grips (the stock the weapon mesh draws). */
+export const WEAPON_REAR_GRIP_OFFSET = 0.30;
+/** Metres back from the muzzle the front hand grips (mid-barrel on the drawn mesh). */
+export const WEAPON_FRONT_GRIP_OFFSET = 0.12;
 /** Pools, not growth: a sustained fight costs what a single shot costs (the plan's budget rule). */
 const TRACER_CAPACITY = 24;
 const IMPACT_CAPACITY = 16;
@@ -197,6 +205,7 @@ export class ThreeRenderer implements RenderPort {
     carrying: false,
     dt: 0,
     holdTarget: null,
+    weaponGrip: null,
     footGroundY: null,
     lookTarget: null,
     cameraDistance: Number.POSITIVE_INFINITY
@@ -209,6 +218,15 @@ export class ThreeRenderer implements RenderPort {
   /** Where the held part is, remembered from `setCarryables` (the grip target). */
   private readonly heldPartCenter = { x: 0, y: 0, z: 0 };
   private holding = false;
+  /**
+   * Last drawn weapon's grip, remembered from `setWeaponView` for the body's IK. `setWeaponView`
+   * runs after `syncPlayerMarker` in the frame (main.ts), so the body reads last frame's mount —
+   * a 33 ms lag on the grip, invisible and never fed back into logic (same as the held part).
+   */
+  private readonly weaponGripRear = { x: 0, y: 0, z: 0 };
+  private readonly weaponGripFront = { x: 0, y: 0, z: 0 };
+  private readonly weaponGripPair = { rear: this.weaponGripRear, front: this.weaponGripFront };
+  private weaponDrawn = false;
   private lastMarkerAt = 0;
   private readonly labGroup: THREE.Group;
   private readonly focusMarker: THREE.Mesh;
@@ -559,6 +577,7 @@ export class ThreeRenderer implements RenderPort {
     update.carrying = this.holding;
     update.dt = dt;
     update.holdTarget = this.holding ? this.heldPartCenter : null;
+    update.weaponGrip = !this.holding && this.weaponDrawn ? this.weaponGripPair : null;
     // Copied into one mutable buffer: the rig keeps no reference to the caller's snapshot.
     const ground = state.footGroundY;
     if (ground === undefined) {
@@ -883,6 +902,7 @@ export class ThreeRenderer implements RenderPort {
   setWeaponView(state: WeaponRenderState | null): void {
     if (state === null || state.holstered) {
       this.weaponGroup.visible = false;
+      this.weaponDrawn = false;
       return;
     }
     const muzzle = this.muzzleScratch.set(state.muzzle.x, state.muzzle.y, state.muzzle.z);
@@ -892,6 +912,7 @@ export class ThreeRenderer implements RenderPort {
       this.aimScratch.lengthSq() < 1e-9
     ) {
       this.weaponGroup.visible = false;
+      this.weaponDrawn = false;
       return;
     }
     this.aimScratch.normalize();
@@ -904,6 +925,15 @@ export class ThreeRenderer implements RenderPort {
     // Aiming brings the weapon up to the sights: a small, readable shift rather than a rig.
     this.weaponGroup.position.y += 0.05 * Math.min(Math.max(state.adsBlend, 0), 1);
     this.weaponGroup.visible = true;
+    // The body's two-handed grip, read off the same mount the mesh draws: the rear hand on the
+    // stock, the front hand on the barrel, measured back from the muzzle along the shot line.
+    this.weaponGripRear.x = muzzle.x - this.aimScratch.x * WEAPON_REAR_GRIP_OFFSET;
+    this.weaponGripRear.y = muzzle.y - this.aimScratch.y * WEAPON_REAR_GRIP_OFFSET;
+    this.weaponGripRear.z = muzzle.z - this.aimScratch.z * WEAPON_REAR_GRIP_OFFSET;
+    this.weaponGripFront.x = muzzle.x - this.aimScratch.x * WEAPON_FRONT_GRIP_OFFSET;
+    this.weaponGripFront.y = muzzle.y - this.aimScratch.y * WEAPON_FRONT_GRIP_OFFSET;
+    this.weaponGripFront.z = muzzle.z - this.aimScratch.z * WEAPON_FRONT_GRIP_OFFSET;
+    this.weaponDrawn = true;
   }
 
   /**

@@ -18,6 +18,7 @@ function makeUpdate(overrides: Partial<CharacterUpdate> = {}): CharacterUpdate {
     carrying: false,
     dt: 0.033,
     holdTarget: null,
+    weaponGrip: null,
     footGroundY: null,
     lookTarget: null,
     cameraDistance: 4.2,
@@ -110,6 +111,35 @@ describe('CharacterRig — the player’s body (procedural skinned humanoid)', (
         rig.update(makeUpdate({ carrying: false, holdTarget: null, dt: 0.1 }));
       }
       expect(boneWorld(rig, 'handL').distanceTo(boneWorld(rig, 'handR'))).toBeGreaterThan(rest * 0.9);
+    } finally {
+      rig.dispose();
+    }
+  });
+
+  it('grips a drawn weapon: left hand forward on the barrel, right hand back on the stock', () => {
+    const rig = new CharacterRig();
+    try {
+      const grip = {
+        rear: { x: 0.06, y: 1.32, z: -0.4 },
+        front: { x: -0.06, y: 1.3, z: -0.52 }
+      };
+      for (let i = 0; i < 4; i += 1) {
+        rig.update(makeUpdate({ weaponGrip: grip, dt: 0.1 }));
+      }
+      const left = boneWorld(rig, 'handL');
+      const right = boneWorld(rig, 'handR');
+      expect(Math.hypot(left.x - grip.front.x, left.y - grip.front.y, left.z - grip.front.z)).toBeLessThan(0.12);
+      expect(Math.hypot(right.x - grip.rear.x, right.y - grip.rear.y, right.z - grip.rear.z)).toBeLessThan(0.12);
+      // Two ends of one gun: the hands stay apart instead of converging on one point.
+      expect(left.distanceTo(right)).toBeGreaterThan(0.1);
+
+      // A held part wins over the weapon: the hands leave the gun for the part.
+      const part = { x: 0, y: 1.3, z: -0.42 };
+      for (let i = 0; i < 4; i += 1) {
+        rig.update(makeUpdate({ carrying: true, holdTarget: part, weaponGrip: grip, dt: 0.1 }));
+      }
+      const carriedL = boneWorld(rig, 'handL');
+      expect(Math.hypot(carriedL.x - part.x, carriedL.y - part.y, carriedL.z - part.z)).toBeLessThan(0.08);
     } finally {
       rig.dispose();
     }

@@ -82,6 +82,12 @@ export interface CharacterUpdate {
   /** World-space grip target (the held part), or null when the hands are free. */
   holdTarget: Vec3 | null;
   /**
+   * World-space two-handed weapon grip, or null when no weapon is drawn. Carrying wins:
+   * a held part is a two-handed job, so the grip is only solved when `carrying` is false.
+   * Presentation only — never read back into logic.
+   */
+  weaponGrip: { readonly rear: Vec3; readonly front: Vec3 } | null;
+  /**
    * Ground height under each foot (from `gameplay/foot-grounding.ts`), or null for a foot with
    * nothing under it. Null disables planting; a missing value behaves the same way.
    */
@@ -203,6 +209,7 @@ export class CharacterRig implements PlayerBody {
     runSpeed: 4.2,
     grounded: true,
     carrying: false,
+    aiming: false,
     gaitPhase: 0,
     breathPhase: 0
   };
@@ -274,6 +281,7 @@ export class CharacterRig implements PlayerBody {
   private readonly euler = new THREE.Euler();
   private readonly previousPosition = new THREE.Vector3();
   private carryBlend = 0;
+  private weaponBlend = 0;
   private first = true;
   /** Last grip state, for tooling facts only (never read back into the pose). */
   private lastHolding = false;
@@ -353,6 +361,7 @@ export class CharacterRig implements PlayerBody {
     this.poseInput.runSpeed = runSpeed;
     this.poseInput.grounded = state.grounded;
     this.poseInput.carrying = state.carrying;
+    this.poseInput.aiming = state.weaponGrip !== null && !state.carrying;
     this.poseInput.gaitPhase = this.gait.phase;
     this.poseInput.breathPhase = this.gait.breathPhase;
     sampleCharacterPose(this.poseInput, this.pose);
@@ -380,14 +389,23 @@ export class CharacterRig implements PlayerBody {
     // ride on. Everything after the pose is presentation-only.
     this.stepFootPlant(state.footGroundY, state.grounded, dt);
 
-    // Carrying: blend the arms from the authored pose onto the solved grip.
+    // Carrying: blend the arms from the authored pose onto the solved grip. A drawn
+    // weapon aims each hand at its own end of the gun (rear + front) — the same IK,
+    // one target per side. Carrying wins: a held part keeps both hands.
     const holding = state.carrying && state.holdTarget !== null;
     const blendStep = dt * CARRY_BLEND_RATE;
     this.carryBlend = holding
       ? Math.min(1, this.carryBlend + blendStep)
       : Math.max(0, this.carryBlend - blendStep);
     if (this.carryBlend > 0 && state.holdTarget !== null) {
-      this.applyHandAim(state.holdTarget, this.carryBlend);
+      this.applyHandAim(state.holdTarget, state.holdTarget, this.carryBlend);
+    }
+    const gripping = !holding && state.weaponGrip !== null;
+    this.weaponBlend = gripping
+      ? Math.min(1, this.weaponBlend + blendStep)
+      : Math.max(0, this.weaponBlend - blendStep);
+    if (this.weaponBlend > 0 && state.weaponGrip !== null) {
+      this.applyHandAim(state.weaponGrip.front, state.weaponGrip.rear, this.weaponBlend);
     }
     // Facts-only snapshot of the grip (never read back into the pose): the harness compares
     // the hands against this target, so `facts()` must report what this frame actually used.
@@ -646,14 +664,15 @@ export class CharacterRig implements PlayerBody {
    * `setFromUnitVectors`, so the elbow always folds inside the plane through the target, and the
    * forearm's bend is simply a rotation about its own X.
    */
-  private applyHandAim(targetWorld: Vec3, blend: number): void {
-    this.scratchTarget.set(targetWorld.x, targetWorld.y, targetWorld.z);
-    // World → character-root space: the root is a pure yaw + translation, so this is exact and
-    // needs no matrix refresh.
-    this.scratchTarget.sub(this.object.position);
-    this.scratchTarget.applyAxisAngle(UP, -this.object.rotation.y);
-
+  private applyHandAim(targetL: Vec3, targetR: Vec3, blend: number): void {
     for (const side of ['L', 'R'] as const) {
+      const targetWorld = side === 'L' ? targetL : targetR;
+      this.scratchTarget.set(targetWorld.x, targetWorld.y, targetWorld.z);
+      // World → character-root space: the root is a pure yaw + translation, so this is exact and
+      // needs no matrix refresh.
+      this.scratchTarget.sub(this.object.position);
+      this.scratchTarget.applyAxisAngle(UP, -this.object.rotation.y);
+
       const upperArm = this.bones.get(side === 'L' ? 'upperArmL' : 'upperArmR');
       const foreArm = this.bones.get(side === 'L' ? 'foreArmL' : 'foreArmR');
       const shoulderId: CharacterJointId = side === 'L' ? 'shoulderL' : 'shoulderR';
