@@ -451,6 +451,33 @@ impact point and the normal are asserted in metres.
 Verified: `npm run typecheck` exit 0; `npx vitest run` exit 0 — 59 files, **723 tests** (687 +
 36).
 
+### 16/10/2026 — Phase C (input, world and camera wiring) done
+Done: **C.3** `phase-world.ts` composes the weapon system — one optional `weapons` field, the step
+placed exactly where the plan asks (after player + camera, before interaction/manipulation), the
+actions routed (`fire`/`fireHeld`/`ads`/`reload`/`fireModeNext`/`weaponNext`/slot), the stance and
+speed read from the player's own read model, and the part boxes built in place from the manipulation
+layer's live `snapshots()` (a held part is excluded; `fire` is not even routed in the Manipulation
+context). `WorldStepResult` gained `weapon`. The mount is resolved by an optional `weaponMount`
+provider (the composition owns the drawn muzzle; headless tests and a weapons-on composition without
+one fall back to the camera's own line from a chest-height muzzle). ADS now really slows the player:
+the weapon's published `moveScale` rides the existing `speedScale` seam (one step behind, like every
+other cross-step fact in that file). **C.4** `camera-rig.ts` owns a recoil accumulator (clamped at
+±0.14 rad, bled at 7.5/s) that is added to the solved view angle but never written into `yaw`/`pitch`,
+so the player's aim is never moved; ADS closes the lens (`currentFov()` = `fov · adsFovScale` at full
+blend, read by `snapshot()`, `previewPose()` and the renderer alike) and shortens the arm by 1.1 m.
+Supporting read-model additions: `WeaponView.adsFovScale`, `PlayerDynamicState.walkSpeed`.
+
+Tests: `camera-rig.test.ts` +7 (kick lifts the view and recovers; the accumulator is clamped
+however hard it is hit; a sustained spray holds the view off-axis; the same kick sequence reproduces
+the same pose; ADS closes the lens and shortens the arm and restores both on release; the blend is
+honoured; malformed input is ignored) and `phase-world.test.ts` +7 (composed weapon steps and fires
+on the edge; LMB fires while `E` still grabs and the trigger is dead while carrying; a bullet stops
+on the lab's own crate with `hitKind: 'part'`; the kick reaches the camera on the next step and
+recovers; ADS really shortens the walk and closes the lens; no weapons composed = the pre-pass result
+is `null`).
+
+Verified: `npm run typecheck` exit 0; `npx vitest run` exit 0 — 59 files, **736 tests**.
+
 ### 16/10/2026 — session start
 Recon: worktree clean, `main` == `origin/main` (0/0 after `git fetch`); `npm run typecheck` exit 0;
 `npx vitest run` exit 0 with **678 tests** in 58 files. Read the architecture contract's scope line

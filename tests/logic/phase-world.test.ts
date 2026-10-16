@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { KinematicPhysics } from '../../src/adapters/kinematic-physics.ts';
-import { vec3 } from '../../src/core/vec3.ts';
+import { vec3, type Vec3 } from '../../src/core/vec3.ts';
+import { LOADOUT, WEAPON_DEFINITIONS } from '../../src/data/weapons.ts';
+import { WeaponSystem } from '../../src/gameplay/weapon-system.ts';
 import { CameraRig, DEFAULT_CAMERA_TUNING } from '../../src/gameplay/camera-rig.ts';
 import { InputSystem, neutralSample } from '../../src/gameplay/input-system.ts';
 import { PhaseWorld, type WorldStepResult } from '../../src/gameplay/phase-world.ts';
@@ -607,5 +609,151 @@ describe('PhaseWorld — M4 snap / attach wiring (ARCH §14 steps 6–7, §21)',
     };
 
     expect(script()).toBe(script());
+  });
+});
+
+describe('PhaseWorld — weapons pass (16/10/2026)', () => {
+  interface WeaponHarness extends Harness {
+    readonly weapons: WeaponSystem;
+    readonly interaction: InteractionSystem;
+    readonly manipulation: ManipulationSystem;
+  }
+
+  /**
+   * The weapons pass composed over the real lab physics and the lab's own carryable, with an
+   * optional mount override, since the drawn muzzle normally comes from the renderer.
+   */
+  function buildWeaponWorld(
+    mount?: (request: { camera: { target: Vec3 }; player: { position: Vec3 } }) => {
+      muzzle: Vec3;
+      aimDirection: Vec3;
+    }
+  ): WeaponHarness {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders(LAB_WORLD.colliders);
+    const input = new InputSystem();
+    const player = new PlayerController(
+      physics,
+      vec3(LAB_WORLD.spawn.x, LAB_WORLD.spawn.y, LAB_WORLD.spawn.z)
+    );
+    const camera = new CameraRig(physics);
+    const interaction = new InteractionSystem(physics, LAB_INTERACTABLES);
+    const manipulation = new ManipulationSystem(physics, LAB_CARRYABLE, interaction);
+    const weapons = new WeaponSystem(physics, WEAPON_DEFINITIONS, LOADOUT);
+    const world = new PhaseWorld({
+      input,
+      player,
+      camera,
+      interaction,
+      manipulation,
+      weapons,
+      weaponMount: mount
+    });
+    return { world, physics, weapons, interaction, manipulation };
+  }
+
+  it('steps a composed weapon system and fires on the trigger edge', () => {
+    const harness = buildWeaponWorld();
+    expect(harness.world.weapons).toBe(harness.weapons);
+    expect(harness.world.step(DT, neutralSample()).weapon?.view.magazine).toBe(30);
+
+    const fired = harness.world.step(DT, neutralSample({ primaryPressed: true, primaryHeld: true }));
+    expect(fired.weapon?.shots).toHaveLength(1);
+    expect(fired.weapon?.view.magazine).toBe(29);
+    expect(harness.world.step(DT, neutralSample({ primaryHeld: true })).weapon?.shots).toHaveLength(0);
+  });
+
+  it('does not let the trigger grab: LMB fires, E still interacts', () => {
+    const harness = buildWeaponWorld();
+    // Look down at the crate the lab spawns one metre ahead until it is focused: the
+    // vertical axis is inverted (15/10/2026), so looking down is `-lookDeltaY`.
+    for (let index = 0; index < 4; index += 1) {
+      harness.world.step(DT, neutralSample({ lookDeltaY: -120 }));
+    }
+    run(harness.world, 8, neutralSample());
+    expect(harness.interaction.focus?.id).toBe(LAB_CARRYABLE.instanceId);
+
+    const fired = harness.world.step(DT, neutralSample({ primaryPressed: true, primaryHeld: true }));
+    expect(fired.weapon?.shots).toHaveLength(1);
+    expect(harness.manipulation.isHolding).toBe(false);
+    expect(harness.manipulation.heldId).toBeNull();
+
+    // …and the key the HUD has always prompted still does the interacting.
+    harness.world.step(DT, neutralSample({ pressed: new Set(['KeyE']) }));
+    run(harness.world, 3, neutralSample());
+    expect(harness.manipulation.isHolding).toBe(true);
+    expect(harness.manipulation.heldId).toBe(LAB_CARRYABLE.instanceId);
+
+    // With a part in hand the weapon layer is blind: the trigger is not routed at all.
+    const carrying = harness.world.step(
+      DT,
+      neutralSample({ primaryPressed: true, primaryHeld: true })
+    );
+    expect(carrying.weapon?.shots).toHaveLength(0);
+    expect(carrying.actions.fire).toBe(false);
+  });
+
+  it('stops a bullet on the loose part the manipulation layer poses', () => {
+    const crate = LAB_CARRYABLE.spawn.center;
+    const harness = buildWeaponWorld(() => ({
+      muzzle: vec3(0, 1.2, -6),
+      aimDirection: vec3(0, crate.y - 1.2, crate.z - -6)
+    }));
+    const fired = harness.world.step(DT, neutralSample({ primaryPressed: true }));
+    expect(fired.weapon?.shots).toHaveLength(1);
+    const impacts = fired.weapon?.impacts ?? [];
+    expect(impacts).toHaveLength(1);
+    expect(impacts[0]?.hitKind).toBe('part');
+    expect(impacts[0]?.hitId).toBe(LAB_CARRYABLE.instanceId);
+  });
+
+  it('carries the shot’s kick into the camera on the next step, and recovers it', () => {
+    const harness = buildWeaponWorld();
+    run(harness.world, 30, neutralSample());
+    const straight = harness.world.step(DT, neutralSample()).camera;
+
+    const fired = harness.world.step(DT, neutralSample({ primaryPressed: true, primaryHeld: true }));
+    expect(fired.weapon?.shots).toHaveLength(1);
+    expect(fired.weapon?.recoilKick.pitch).toBeGreaterThan(0);
+
+    // The shot leaves along the camera solved *this* step (no stale aim), so the kick lands
+    // on the next one… and the view is lifted: the eye drops below the anchor it orbits.
+    const kicked = harness.world.step(DT, neutralSample()).camera;
+    expect(kicked.eye.y).toBeLessThan(straight.eye.y);
+    expect(kicked.target.y).toBeCloseTo(straight.target.y, 6);
+
+    // Holding still bleeds it back to where the player was looking.
+    const recovered = run(harness.world, 60, neutralSample()).camera;
+    expect(recovered.eye.y).toBeCloseTo(straight.eye.y, 2);
+  });
+
+  it('really slows the player while aiming down the sights', () => {
+    // Walk away from the crate (S = backpedal): the lab crate is solid to the capsule, and
+    // walking into it would measure the crate, not the stance.
+    const hip = buildWeaponWorld();
+    run(hip.world, 30, neutralSample());
+    const hipStart = hip.world.player.snapshot().position;
+    const hipWalked = run(hip.world, 30, held('KeyS')).player.position;
+
+    const aim = buildWeaponWorld();
+    run(aim.world, 30, neutralSample({ secondaryHeld: true }));
+    const aimStart = aim.world.player.snapshot().position;
+    const aimed = run(aim.world, 30, neutralSample({ secondaryHeld: true, held: new Set(['KeyS']) }))
+      .player.position;
+
+    const hipDistance = Math.abs(hipWalked.z - hipStart.z);
+    const aimDistance = Math.abs(aimed.z - aimStart.z);
+    expect(hipDistance).toBeGreaterThan(1);
+    expect(aimDistance).toBeGreaterThan(0.2);
+    expect(aimDistance).toBeLessThan(hipDistance);
+    // ADS also closes the lens, and the camera's own fov is what the renderer draws.
+    expect(aim.world.camera.currentFov()).toBeLessThan(DEFAULT_CAMERA_TUNING.fov);
+  });
+
+  it('leaves the pre-pass game alone when no weapon system is composed', () => {
+    const { world } = buildWorld();
+    const result = world.step(DT, neutralSample({ primaryPressed: true }));
+    expect(result.weapon).toBeNull();
+    expect(world.weapons).toBeNull();
   });
 });

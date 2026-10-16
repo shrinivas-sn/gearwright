@@ -80,6 +80,12 @@ export interface PlayerDynamicState {
   readonly speed: number;
   /** Stance pass: true while the crouched capsule is the one being simulated. */
   readonly crouched: boolean;
+  /**
+   * Weapons pass (16/10/2026): the speed this controller calls a *walk*, so a consumer can
+   * speak in fractions of it (the weapon layer's moving-bloom term) instead of guessing a
+   * number that only the tuning knows.
+   */
+  readonly walkSpeed: number;
 }
 
 /**
@@ -348,7 +354,8 @@ export class PlayerController {
       grounded: this.grounded,
       groundY: this.groundY,
       speed: vec3Length(this.velocity),
-      crouched: this.crouched
+      crouched: this.crouched,
+      walkSpeed: this.tuning.walkSpeed
     };
   }
 }

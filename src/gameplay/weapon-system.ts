@@ -144,6 +144,8 @@ export interface WeaponView {
   readonly reloadProgress: number;
   readonly swapping: boolean;
   readonly adsBlend: number;
+  /** Field-of-view multiplier at full aim — the camera rig reads it (it owns the lens). */
+  readonly adsFovScale: number;
   /** Current cone radius in radians — what the crosshair's gap is drawn from. */
   readonly spread: number;
   /** False while the weapon cannot fire (empty, reloading, or still coming up). */
@@ -234,6 +236,7 @@ interface MutableView {
   reloadProgress: number;
   swapping: boolean;
   adsBlend: number;
+  adsFovScale: number;
   spread: number;
   canFire: boolean;
   moveScale: number;
@@ -359,6 +362,7 @@ export class WeaponSystem {
       reloadProgress: 0,
       swapping: false,
       adsBlend: 0,
+      adsFovScale: first.adsFovScale,
       spread: first.spread.base,
       canFire: true,
       moveScale: 1,
@@ -811,6 +815,7 @@ export class WeaponSystem {
         : 0;
     this.view.swapping = this.swapTimer > 0;
     this.view.adsBlend = this.adsBlend;
+    this.view.adsFovScale = definition.adsFovScale;
     // Between steps the last *stepped* cone is the honest one; the base cone is only the
     // pre-first-step answer, and even that is a real cone the first shot would use.
     this.view.spread = input === undefined ? this.view.spread : this.currentSpread(input);

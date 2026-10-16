@@ -9,9 +9,15 @@
  * by adding one field rather than rewriting the wiring.
  */
 
+import { vec3, vec3Normalize, vec3Sub, type Vec3 } from '../core/vec3.ts';
 import { InputSystem, type ActionState, type RawInputSample } from './input-system.ts';
 import { PlayerController, type PlayerDynamicState } from './player-controller.ts';
 import { CameraRig, type CameraPoseState } from './camera-rig.ts';
+import {
+  type HitVolume,
+  type WeaponStepResult,
+  type WeaponSystem
+} from './weapon-system.ts';
 import { type FocusChanged, type InteractionSystem } from './interaction-system.ts';
 import { type ManipulationStepResult, type ManipulationSystem } from './manipulation-system.ts';
 import { type SnapCandidateView, type SnapSystem } from './snap-system.ts';
@@ -24,6 +30,30 @@ import type { PuzzleSystem, PuzzleUpdate } from '../game-state/puzzle-system.ts'
  * a *slow strafe*). One number, owned by the composition that knows both systems.
  */
 const MANIPULATION_MOVE_SCALE = 0.55;
+
+/** A part's muzzle point and the direction it is aimed along (weapons pass). */
+export interface WeaponMount {
+  readonly muzzle: Vec3;
+  readonly aimDirection: Vec3;
+}
+
+/** What the composition knows when it resolves the mount: the solved camera, the player. */
+export interface WeaponMountRequest {
+  readonly camera: CameraPoseState;
+  readonly player: PlayerDynamicState;
+}
+
+/** Shootable volume of one loose part, mutated in place (no per-step allocation). */
+interface PartVolume {
+  readonly id: string;
+  readonly kind: 'part';
+  readonly min: Vec3;
+  readonly max: Vec3;
+}
+
+/** Chest height of the fallback muzzle above the player's feet (crouched, then standing). */
+const FALLBACK_MUZZLE_HEIGHT = 1.35;
+const FALLBACK_MUZZLE_HEIGHT_CROUCHED = 0.95;
 
 export interface WorldSystems {
   readonly input: InputSystem;
@@ -52,6 +82,17 @@ export interface WorldSystems {
    * it only watches the version move (§35.3).
    */
   readonly stagedVersion?: (() => number) | undefined;
+  /**
+   * Optional from the weapons pass (16/10/2026): the L2 weapon system. Runtime state only
+   * — nothing it holds is saved, and nothing it does can reach the machine graph.
+   */
+  readonly weapons?: WeaponSystem | undefined;
+  /**
+   * Optional: where the drawn weapon is and what it is aimed at. The composition resolves it
+   * (the drawn muzzle lives in the renderer, the converged aim in the camera), so L2 never
+   * imports either. Absent = the camera's own line from a chest-height muzzle.
+   */
+  readonly weaponMount?: ((request: WeaponMountRequest) => WeaponMount) | undefined;
 }
 
 export interface WorldStepResult {
@@ -71,6 +112,8 @@ export interface WorldStepResult {
   readonly puzzles: ReadonlyArray<PuzzleUpdate>;
   /** Feedback intents this step produced, or null when no model is composed (M6+). */
   readonly feedback: ReadonlyArray<FeedbackIntent> | null;
+  /** Weapon state after this step, or null when no weapon system is composed (weapons pass). */
+  readonly weapon: WeaponStepResult | null;
 }
 
 export interface WorldConfig {
@@ -88,6 +131,28 @@ export class PhaseWorld {
   private readonly attachedState = new Map<string, boolean>();
   /** Last free/occupied state published to the interaction layer, per socket (M6). */
   private readonly socketFreeState = new Map<string, boolean>();
+
+  // ---- Weapons pass (16/10/2026) ------------------------------------------------------
+  /**
+   * The previous weapon step's kick and aim blend, handed to the camera on the *next* step.
+   * ARCH §14 order is load-bearing here: the shot must leave along the camera the player is
+   * looking through *this* step, so its kick can only be felt from the next one (one step of
+   * latency at a fixed 30 Hz, which is exactly what "a one-step impulse" means).
+   */
+  private readonly pendingRecoil = { pitch: 0, yaw: 0 };
+  private readonly cameraAds = { blend: 0, fovScale: 1 };
+  /** The weapon's ADS locomotion scale, applied to the player on the following step. */
+  private weaponMoveScale = 1;
+  /** Stable per-part volumes, mutated in place so a fired step allocates nothing. */
+  private readonly partVolumes = new Map<string, PartVolume>();
+  private readonly partVolumeList: PartVolume[] = [];
+  /** Fallback mount scratch (used only when no `weaponMount` is composed). */
+  private readonly fallbackMuzzle = vec3();
+  private readonly fallbackAim = vec3();
+  private readonly fallbackMount: WeaponMount = {
+    muzzle: this.fallbackMuzzle,
+    aimDirection: this.fallbackAim
+  };
 
   constructor(systems: WorldSystems) {
     this.systems = systems;
@@ -129,6 +194,10 @@ export class PhaseWorld {
     return this.systems.graph ?? null;
   }
 
+  get weapons(): WeaponSystem | null {
+    return this.systems.weapons ?? null;
+  }
+
   /**
    * One fixed step, in ARCH §14 order: input sampled -> player moved -> camera
    * solved -> focus resolved -> manipulation ticked. Returns the authoritative
@@ -151,7 +220,10 @@ export class PhaseWorld {
       moveZ: actions.moveZ,
       run: actions.run,
       cameraYaw: this.systems.camera.currentYaw,
-      speedScale: holding ? MANIPULATION_MOVE_SCALE : 1,
+      // Aiming really does slow the player: the weapon layer owns the ADS blend, so its
+      // published locomotion scale rides here (one step behind, like every other cross-step
+      // fact in this file). Holding a part keeps its own slow strafe.
+      speedScale: holding ? MANIPULATION_MOVE_SCALE : this.weaponMoveScale,
       jump: actions.jump,
       // Stance pass: crouch is locomotion state, so it goes to the player owner with the
       // rest of the stance — the weapon layer only *reads* the resulting stance.
@@ -171,8 +243,18 @@ export class PhaseWorld {
       // Manipulation framing (ARCH §17): eased by the rig, never snapped.
       mode: holding ? 'manipulation' : 'follow',
       idleTime: this.lookIdleTime,
-      playerMoving: Math.hypot(player.velocity.x, player.velocity.z) > 0.4
+      playerMoving: Math.hypot(player.velocity.x, player.velocity.z) > 0.4,
+      // The previous shot's kick and the aim blend, in the shape the rig's single answer
+      // for "what is my own pose" takes: a request plus a blend, never a pose write.
+      recoil: this.pendingRecoil,
+      ads: this.cameraAds
     });
+
+    // Weapons (ARCH §14 order, weapons pass): after the player and the camera, so a shot
+    // leaves along the camera the player is looking through, and before interaction and
+    // manipulation, so holding the trigger can never be read as a grab. Nothing here can
+    // reach the machine graph: a bullet only reports what it struck (SHOOTING-MECHANIC §5.1).
+    const weapon = this.stepWeapons(dt, actions, player, camera, holding);
 
     // Interaction runs next: it consumes the solved camera pose (ARCH §14 order).
     const interaction = this.systems.interaction;
@@ -242,8 +324,98 @@ export class PhaseWorld {
       snap: snapCandidate,
       machine,
       puzzles,
-      feedback
+      feedback,
+      weapon
     };
+  }
+
+  /**
+   * One weapon step, or null when the pass is not composed. The hit volumes are the loose
+   * parts the manipulation layer already poses (a held part is excluded — it is in the
+   * player's hands, and `fire` is not routed in the Manipulation context at all), rebuilt
+   * in place so a shot allocates nothing.
+   */
+  private stepWeapons(
+    dt: number,
+    actions: ActionState,
+    player: PlayerDynamicState,
+    camera: CameraPoseState,
+    holding: boolean
+  ): WeaponStepResult | null {
+    const weapons = this.systems.weapons;
+    if (!weapons) return null;
+
+    const mount = this.systems.weaponMount?.({ camera, player }) ?? this.fallbackWeaponMount(camera, player);
+    const result = weapons.step(dt, {
+      firePressed: actions.fire,
+      fireHeld: actions.fireHeld,
+      // Aiming is a two-handed stance: it is not available with a part in hand.
+      ads: actions.ads && !holding,
+      reload: actions.reload,
+      fireModeNext: actions.fireModeNext,
+      switchNext: actions.weaponNext,
+      slot: actions.weaponSlot,
+      crouched: player.crouched,
+      grounded: player.grounded,
+      speed: player.speed,
+      walkSpeed: player.walkSpeed,
+      muzzle: mount.muzzle,
+      aimDirection: mount.aimDirection,
+      hitVolumes: this.loosePartVolumes()
+    });
+
+    this.pendingRecoil.pitch = result.recoilKick.pitch;
+    this.pendingRecoil.yaw = result.recoilKick.yaw;
+    this.cameraAds.blend = result.view.adsBlend;
+    this.cameraAds.fovScale = result.view.adsFovScale;
+    this.weaponMoveScale = result.view.moveScale;
+    return result;
+  }
+
+  /** The parts a bullet may strike: every loose carryable, as the live box it occupies. */
+  private loosePartVolumes(): ReadonlyArray<HitVolume> {
+    const manipulation = this.systems.manipulation;
+    this.partVolumeList.length = 0;
+    if (!manipulation) return this.partVolumeList;
+
+    for (const part of manipulation.snapshots()) {
+      if (part.held) continue;
+      let volume = this.partVolumes.get(part.id);
+      if (volume === undefined) {
+        volume = {
+          id: part.id,
+          kind: 'part',
+          min: vec3(),
+          max: vec3()
+        };
+        this.partVolumes.set(part.id, volume);
+      }
+      // Authored half extents, so the box follows the part without a second geometry source.
+      // A yawed part is covered by its axis-aligned box, which is the approximation a bullet
+      // can be given without asking the port a question it deliberately does not answer.
+      volume.min.x = part.center.x - part.halfExtents.x;
+      volume.min.y = part.center.y - part.halfExtents.y;
+      volume.min.z = part.center.z - part.halfExtents.z;
+      volume.max.x = part.center.x + part.halfExtents.x;
+      volume.max.y = part.center.y + part.halfExtents.y;
+      volume.max.z = part.center.z + part.halfExtents.z;
+      this.partVolumeList.push(volume);
+    }
+    return this.partVolumeList;
+  }
+
+  /**
+   * No mount composed: aim down the camera's own line from a chest-height muzzle. Only the
+   * headless tests and a weapons-on composition without a drawn weapon take this path.
+   */
+  private fallbackWeaponMount(camera: CameraPoseState, player: PlayerDynamicState): WeaponMount {
+    vec3Sub(this.fallbackAim, camera.target, camera.eye);
+    vec3Normalize(this.fallbackAim, this.fallbackAim);
+    const height = player.crouched ? FALLBACK_MUZZLE_HEIGHT_CROUCHED : FALLBACK_MUZZLE_HEIGHT;
+    this.fallbackMuzzle.x = player.position.x;
+    this.fallbackMuzzle.y = player.position.y + height;
+    this.fallbackMuzzle.z = player.position.z;
+    return this.fallbackMount;
   }
 
   /**
@@ -292,6 +464,9 @@ export class PhaseWorld {
   clearInput(): void {
     this.systems.manipulation?.suspend();
     this.manipulationContextActive = false;
+    // The trigger is not held through a blur either: the next step's kick is nothing.
+    this.pendingRecoil.pitch = 0;
+    this.pendingRecoil.yaw = 0;
     // Both the input and interaction contexts return to Exploration: play resumes
     // in the base context with no held object and no stale one-shot latches.
     this.systems.interaction?.setContext('Exploration');

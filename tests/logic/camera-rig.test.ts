@@ -4,6 +4,7 @@ import { vec3, type Vec3 } from '../../src/core/vec3.ts';
 import {
   DEFAULT_CAMERA_TUNING,
   CameraRig,
+  type CameraAdsState,
   type CameraMode,
   type CameraStepInput
 } from '../../src/gameplay/camera-rig.ts';
@@ -76,6 +77,10 @@ interface StepOverrides {
   readonly facingYaw?: number;
   readonly mode?: CameraMode;
   readonly idleTime?: number;
+  /** Weapons pass: the one-step kick the weapon layer reports for a shot. */
+  readonly recoil?: { readonly pitch: number; readonly yaw: number };
+  /** Weapons pass: aim-down-sights state. */
+  readonly ads?: CameraAdsState;
 }
 
 function step(rig: CameraRig, overrides: StepOverrides = {}) {
@@ -87,9 +92,18 @@ function step(rig: CameraRig, overrides: StepOverrides = {}) {
       facingYaw: overrides.facingYaw ?? 0
     },
     mode: overrides.mode ?? 'follow',
-    idleTime: overrides.idleTime ?? 0
+    idleTime: overrides.idleTime ?? 0,
+    recoil: overrides.recoil,
+    ads: overrides.ads
   };
   return rig.step(DT, input);
+}
+
+/** The framing anchor a step with no player offset and no mode blend settles on. */
+const ANCHOR = vec3(0, DEFAULT_CAMERA_TUNING.targetHeight, 0);
+
+function preview(rig: CameraRig) {
+  return rig.previewPose({ anchor: ANCHOR, pendingLookX: 0, pendingLookY: 0, dt: DT });
 }
 
 function eyeDistance(pose: { eye: Vec3; target: Vec3 }): number {
@@ -378,5 +392,116 @@ describe('CameraRig — PLAN T2.4', () => {
     const pose = step(rig);
     expect(pose.target.x).toBeCloseTo(0.45, 6);
     expect(pose.target.z).toBeCloseTo(0, 6);
+  });
+});
+
+describe('CameraRig — weapons pass (recoil)', () => {
+  it('lifts the view by the kick and bleeds it back to the player’s own aim', () => {
+    const rig = new CameraRig(new FakePhysics());
+    step(rig);
+    const before = preview(rig);
+
+    // A +pitch kick raises the view: the eye drops below the anchor it orbits.
+    step(rig, { recoil: { pitch: 0.05, yaw: 0 } });
+    const kicked = preview(rig);
+    expect(kicked.eye.y).toBeLessThan(before.eye.y - 0.05);
+
+    // Hold still and the kick is temporary — the pose returns to where it was.
+    for (let index = 0; index < 40; index += 1) step(rig);
+    const recovered = preview(rig);
+    expect(recovered.eye.y).toBeCloseTo(before.eye.y, 3);
+    expect(recovered.eye.z).toBeCloseTo(before.eye.z, 3);
+    // …and the player's own aim was never written to.
+    expect(rig.currentYaw).toBe(0);
+  });
+
+  it('clamps the accumulated kick at the ceiling however hard it is hit', () => {
+    const ceiling = new CameraRig(new FakePhysics());
+    step(ceiling);
+    step(ceiling, { recoil: { pitch: DEFAULT_CAMERA_TUNING.maxRecoilPitch, yaw: 0 } });
+
+    const hammered = new CameraRig(new FakePhysics());
+    step(hammered);
+    // Ten times the ceiling in one step: the accumulator still lands on the ceiling.
+    step(hammered, { recoil: { pitch: DEFAULT_CAMERA_TUNING.maxRecoilPitch * 10, yaw: 0 } });
+
+    const a = preview(ceiling);
+    const b = preview(hammered);
+    expect(b.eye.y).toBeCloseTo(a.eye.y, 6);
+    expect(b.eye.z).toBeCloseTo(a.eye.z, 6);
+  });
+
+  it('walks the view sideways with a yaw kick and holds it under a held trigger', () => {
+    const rig = new CameraRig(new FakePhysics());
+    step(rig);
+    const straight = preview(rig);
+
+    // A sustained spray (a kick every step) settles somewhere short of the ceiling, and the
+    // view is off-axis the whole time rather than springing back between shots.
+    for (let index = 0; index < 30; index += 1) step(rig, { recoil: { pitch: 0.012, yaw: 0.002 } });
+    const spray = preview(rig);
+    expect(Math.abs(spray.eye.x - straight.eye.x)).toBeGreaterThan(0.02);
+    expect(spray.eye.y).toBeLessThan(straight.eye.y);
+  });
+
+  it('reproduces the same pose for the same kick sequence', () => {
+    const run = () => {
+      const rig = new CameraRig(new FakePhysics());
+      const poses = [];
+      step(rig);
+      for (let index = 0; index < 12; index += 1) {
+        poses.push(step(rig, { recoil: { pitch: 0.0125, yaw: 0.0009 } }));
+      }
+      return poses;
+    };
+    expect(run()).toEqual(run());
+  });
+});
+
+describe('CameraRig — weapons pass (ADS)', () => {
+  const ADS: CameraAdsState = { blend: 1, fovScale: 0.5 };
+
+  it('closes the lens and shortens the arm, and restores both on release', () => {
+    const rig = new CameraRig(new FakePhysics());
+    step(rig);
+    const hipFov = rig.snapshot().fov;
+    const hipArm = eyeDistance(preview(rig));
+    expect(hipFov).toBe(DEFAULT_CAMERA_TUNING.fov);
+
+    step(rig, { ads: ADS });
+    expect(rig.currentFov()).toBeCloseTo(DEFAULT_CAMERA_TUNING.fov * 0.5, 6);
+    expect(rig.snapshot().fov).toBe(rig.currentFov());
+    expect(preview(rig).fov).toBe(rig.currentFov());
+    expect(eyeDistance(preview(rig))).toBeLessThan(hipArm);
+    expect(eyeDistance(preview(rig))).toBeCloseTo(
+      DEFAULT_CAMERA_TUNING.distance - DEFAULT_CAMERA_TUNING.adsArmShorten,
+      6
+    );
+
+    // Release: both come back.
+    step(rig, {});
+    expect(rig.currentFov()).toBeCloseTo(hipFov, 6);
+    expect(eyeDistance(preview(rig))).toBeCloseTo(hipArm, 6);
+  });
+
+  it('eases the change in with the blend the caller owns', () => {
+    const rig = new CameraRig(new FakePhysics());
+    step(rig);
+    const half = step(rig, { ads: { blend: 0.5, fovScale: 0.5 } });
+    expect(half.fov).toBeCloseTo(DEFAULT_CAMERA_TUNING.fov * 0.75, 6);
+    step(rig, { ads: { blend: 1, fovScale: 0.5 } });
+    expect(rig.currentFov()).toBeCloseTo(DEFAULT_CAMERA_TUNING.fov * 0.5, 6);
+  });
+
+  it('never shortens past the minimum arm or the lens past the scale it is given', () => {
+    const rig = new CameraRig(new FakePhysics(), { adsArmShorten: 20 });
+    step(rig);
+    step(rig, { ads: { blend: 1, fovScale: 0.5 } });
+    expect(eyeDistance(preview(rig))).toBeCloseTo(DEFAULT_CAMERA_TUNING.minDistance, 6);
+
+    const broken = new CameraRig(new FakePhysics());
+    step(broken);
+    step(broken, { ads: { blend: Number.NaN, fovScale: Number.NaN } });
+    expect(broken.currentFov()).toBe(DEFAULT_CAMERA_TUNING.fov);
   });
 });

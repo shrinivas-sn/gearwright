@@ -62,6 +62,18 @@ export interface CameraTuning {
   readonly fov: number;
   /** Metres the look target sits to the camera's right (over-the-shoulder). 0 = centred. */
   readonly shoulderOffset?: number | undefined;
+  /**
+   * Weapons pass (16/10/2026): metres the arm shortens at full ADS, so aiming pulls the
+   * camera in toward the sights instead of only zooming the lens.
+   */
+  readonly adsArmShorten: number;
+  /** Metres the framing target rises at full ADS (the sights sit above the hip line). */
+  readonly adsTargetLift: number;
+  /** 1/s rate the accumulated recoil bleeds back toward zero (the kick is temporary). */
+  readonly recoilRecovery: number;
+  /** Radians ceiling on the accumulated recoil, per axis (a spray cannot outrun the clamp). */
+  readonly maxRecoilPitch: number;
+  readonly maxRecoilYaw: number;
 }
 
 export const DEFAULT_CAMERA_TUNING: CameraTuning = {
@@ -82,8 +94,28 @@ export const DEFAULT_CAMERA_TUNING: CameraTuning = {
   manipulationOffset: 0.9,
   manipulationLift: 0.2,
   modeBlendRate: 12,
-  fov: 60
+  fov: 60,
+  // ADS shortens the arm by about a quarter of the full pull and lifts the framing a little;
+  // the FOV itself comes from the weapon (`adsFovScale`), because that is a weapon fact.
+  adsArmShorten: 1.1,
+  adsTargetLift: 0.12,
+  // ~95% of a kick is gone in 0.4 s: a spray walks the view, holding still brings it back.
+  recoilRecovery: 7.5,
+  // 0.14 rad ≈ 8° per axis — a rifle's pattern can never spin the camera away from the player.
+  maxRecoilPitch: 0.14,
+  maxRecoilYaw: 0.14
 };
+
+/**
+ * Aim-down-sights state as the camera needs it: how far into the aim the player is (eased by
+ * the weapon layer, which owns the blend) and how far the lens closes at full aim.
+ */
+export interface CameraAdsState {
+  /** 0…1 blend. */
+  readonly blend: number;
+  /** Field-of-view multiplier at full ADS (1 = unchanged, lower = zoomed in). */
+  readonly fovScale: number;
+}
 
 export interface CameraStepInput {
   readonly lookDeltaX: number;
@@ -94,9 +126,21 @@ export interface CameraStepInput {
   readonly idleTime: number;
   /** False while the player stands still: the auto-recentre never fights a player at a machine. Absent = legacy (recentre by idle time only). */
   readonly playerMoving?: boolean | undefined;
+  /**
+   * Weapons pass: this step's recoil impulse in radians, or absent for none. A *request* —
+   * the rig owns the accumulator, the clamp and the recovery (ARCH §12.1: only the rig
+   * writes its own pose), so the weapon layer just reports what the shot kicked.
+   */
+  readonly recoil?: { readonly pitch: number; readonly yaw: number } | undefined;
+  /** Weapons pass: aim-down-sights state, or absent when not aiming. */
+  readonly ads?: CameraAdsState | undefined;
 }
 
 const FULL_CIRCLE = Math.PI * 2;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
 
 function wrapAngle(angle: number): number {
   let wrapped = angle % FULL_CIRCLE;
@@ -123,6 +167,12 @@ export class CameraRig {
   private occludedDistance: number | null = null;
   /** 0 = follow framing, 1 = fully in manipulation framing (eased, never snapped). */
   private modeBlend = 0;
+  /** Weapons pass: accumulated, clamped and self-recovering recoil offset (radians). */
+  private recoilPitch = 0;
+  private recoilYaw = 0;
+  /** Weapons pass: 0…1 ADS blend and the lens multiplier it applies at full aim. */
+  private adsBlend = 0;
+  private adsFovScale = 1;
   private initialised = false;
 
   constructor(physics: PhysicsPort, tuning: Partial<CameraTuning> = {}) {
@@ -147,13 +197,18 @@ export class CameraRig {
   step(dt: number, input: CameraStepInput): CameraPoseState {
     const clampedDt = Number.isFinite(dt) && dt > 0 && dt <= 0.25 ? dt : 1 / 30;
 
+    this.applyRecoil(input, clampedDt);
     this.integrateLook(input, clampedDt);
+    this.applyAds(input);
     this.recentreBehindPlayer(input, clampedDt);
     this.advanceModeBlend(input, clampedDt);
     this.solveDistances();
     this.desiredTarget.x = input.player.position.x;
     this.desiredTarget.y =
-      input.player.position.y + this.tuning.targetHeight + this.tuning.manipulationLift * this.modeBlend;
+      input.player.position.y +
+      this.tuning.targetHeight +
+      this.tuning.manipulationLift * this.modeBlend +
+      this.tuning.adsTargetLift * this.adsBlend;
     this.desiredTarget.z = input.player.position.z;
     this.applyShoulderOffset();
     this.placeAndCollide();
@@ -178,13 +233,26 @@ export class CameraRig {
     return {
       eye: { x: this.eye.x, y: this.eye.y, z: this.eye.z },
       target: { x: this.target.x, y: this.target.y, z: this.target.z },
-      fov: this.tuning.fov
+      fov: this.currentFov()
     };
   }
 
-  /** Current yaw — consumed by `PlayerController` for camera-relative motion. */
+  /**
+   * Current yaw — consumed by `PlayerController` for camera-relative motion. Deliberately the
+   * *base* yaw: recoil moves the view, never the direction "forward" means, or a spray would
+   * steer the player who is compensating for it.
+   */
   get currentYaw(): number {
     return this.yaw;
+  }
+
+  /**
+   * Field of view right now: the lens, zoomed by the ADS blend. Read by `snapshot()`, by
+   * `previewPose()` and by the renderer, so the drawn frame and the simulation cannot
+   * disagree about how far in the player is aimed.
+   */
+  currentFov(): number {
+    return this.tuning.fov * (1 + (this.adsFovScale - 1) * this.adsBlend);
   }
 
   /**
@@ -202,14 +270,19 @@ export class CameraRig {
     const dt = Number.isFinite(input.dt) && input.dt > 0 ? input.dt : 1 / 30;
     const lookX = Number.isFinite(input.pendingLookX) ? input.pendingLookX : 0;
     const lookY = Number.isFinite(input.pendingLookY) ? input.pendingLookY : 0;
-    const yaw = wrapAngle(this.yaw - lookX * this.tuning.yawSpeed * dt);
+    // The pending look *and* the recoil offset the next step has not consumed yet, so the
+    // drawn frame shows the kick as it happens rather than one step late.
+    const yaw = wrapAngle(this.yaw - lookX * this.tuning.yawSpeed * dt + this.recoilYaw);
     // Same vertical mapping as `integrateLook`: mouse-down raises the view (inverted).
-    const pitch = Math.min(
-      this.tuning.maxPitch,
-      Math.max(this.tuning.minPitch, this.pitch + lookY * this.tuning.pitchSpeed * dt)
+    const pitch = clamp(
+      this.pitch + lookY * this.tuning.pitchSpeed * dt + this.recoilPitch,
+      this.tuning.minPitch,
+      this.tuning.maxPitch
     );
     const cosPitch = Math.cos(pitch);
     const direction = { x: Math.sin(yaw) * cosPitch, y: -Math.sin(pitch), z: Math.cos(yaw) * cosPitch };
+    // `armLength` is the arm `solveDistances` already solved for this frame's stance, ADS
+    // included — the preview must not shorten it a second time.
     let arm = this.armLength;
     const hit = this.physics.castSphere(input.anchor, this.tuning.collisionRadius, direction, arm + this.tuning.skin);
     if (hit) arm = Math.min(arm, Math.max(this.tuning.minDistance, hit.distance - this.tuning.skin));
@@ -220,8 +293,47 @@ export class CameraRig {
         z: input.anchor.z + direction.z * arm
       },
       target: { x: input.anchor.x, y: input.anchor.y, z: input.anchor.z },
-      fov: this.tuning.fov
+      fov: this.currentFov()
     };
+  }
+
+  /**
+   * The kick from the last shot: accumulate it, clamp it, bleed it back. Clamping *before*
+   * the bleed is what makes the ceiling real — a held trigger keeps adding to an
+   * accumulator that cannot grow past `maxRecoilPitch`/`maxRecoilYaw`, so a long spray walks
+   * the view to its limit and no further.
+   */
+  private applyRecoil(input: CameraStepInput, dt: number): void {
+    const kick = input.recoil;
+    if (kick !== undefined) {
+      if (Number.isFinite(kick.pitch)) this.recoilPitch += kick.pitch;
+      if (Number.isFinite(kick.yaw)) this.recoilYaw += kick.yaw;
+    }
+    this.recoilPitch = clamp(this.recoilPitch, -this.tuning.maxRecoilPitch, this.tuning.maxRecoilPitch);
+    this.recoilYaw = clamp(this.recoilYaw, -this.tuning.maxRecoilYaw, this.tuning.maxRecoilYaw);
+    const bleed = Math.exp(-this.tuning.recoilRecovery * dt);
+    this.recoilPitch *= bleed;
+    this.recoilYaw *= bleed;
+    // Snap the settled tail to zero so a recovery test (and the harness) can read "back".
+    if (Math.abs(this.recoilPitch) < 1e-5) this.recoilPitch = 0;
+    if (Math.abs(this.recoilYaw) < 1e-5) this.recoilYaw = 0;
+  }
+
+  private applyAds(input: CameraStepInput): void {
+    const ads = input.ads;
+    const blend = ads === undefined ? 0 : clamp(ads.blend, 0, 1);
+    this.adsBlend = Number.isFinite(blend) ? blend : 0;
+    const fovScale = ads === undefined ? 1 : ads.fovScale;
+    this.adsFovScale = clamp(Number.isFinite(fovScale) ? fovScale : 1, 0.05, 1);
+  }
+
+  /** The pitch the view is actually solved at: the player's look plus the recoil offset. */
+  private viewPitch(): number {
+    return clamp(
+      this.pitch + this.recoilPitch,
+      this.tuning.minPitch,
+      this.tuning.maxPitch
+    );
   }
 
   private integrateLook(input: CameraStepInput, dt: number): void {
@@ -251,9 +363,10 @@ export class CameraRig {
     const shoulder = this.tuning.shoulderOffset ?? 0;
     if (!(shoulder > 0)) return;
     // Camera-right on the ground plane: yaw 0 looks toward -Z, so right is +X.
-    this.scratchRight.x = Math.cos(this.yaw);
+    const viewYaw = wrapAngle(this.yaw + this.recoilYaw);
+    this.scratchRight.x = Math.cos(viewYaw);
     this.scratchRight.y = 0;
-    this.scratchRight.z = -Math.sin(this.yaw);
+    this.scratchRight.z = -Math.sin(viewYaw);
     const hit = this.physics.castSphere(
       this.desiredTarget,
       this.tuning.collisionRadius * 0.5,
@@ -272,15 +385,25 @@ export class CameraRig {
     if (this.modeBlend < 1e-4) this.modeBlend = 0;
   }
 
-  /** Framing target: closer (ARCH §17) and slightly higher while manipulating. */
+  /**
+   * Framing target: closer (ARCH §17) and slightly higher while manipulating, and closer
+   * still while aiming down the sights.
+   */
   private solveDistances(): void {
-    const framed = this.tuning.distance - this.tuning.manipulationOffset * this.modeBlend;
+    const framed =
+      this.tuning.distance -
+      this.tuning.manipulationOffset * this.modeBlend -
+      this.tuning.adsArmShorten * this.adsBlend;
     this.distance = Math.max(this.tuning.minDistance, framed);
   }
 
   private placeAndCollide(): void {
-    const cosPitch = Math.cos(this.pitch);
-    const sinPitch = Math.sin(this.pitch);
+    // The view angle solved here is the base look *plus* recoil: the kick is a temporary
+    // offset owned by this rig, never a write into the player's aim.
+    const viewPitch = this.viewPitch();
+    const viewYaw = wrapAngle(this.yaw + this.recoilYaw);
+    const cosPitch = Math.cos(viewPitch);
+    const sinPitch = Math.sin(viewPitch);
 
     // Direction from the look target out to the camera: with yaw 0 the eye sits
     // on +Z behind a player facing -Z, and the camera looks toward -Z (three.js
@@ -291,9 +414,9 @@ export class CameraRig {
     // `+movementY` for downward travel and the sample is passed through unnegated;
     // `integrateLook` maps that onto a *rising* view (inverted vertical), so the eye
     // drops below the anchor as the mouse travels down.
-    this.direction.x = Math.sin(this.yaw) * cosPitch;
+    this.direction.x = Math.sin(viewYaw) * cosPitch;
     this.direction.y = -sinPitch;
-    this.direction.z = Math.cos(this.yaw) * cosPitch;
+    this.direction.z = Math.cos(viewYaw) * cosPitch;
     vec3Normalize(this.direction, this.direction);
 
     const anchor = this.desiredTarget;
