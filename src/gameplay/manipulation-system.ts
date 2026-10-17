@@ -23,7 +23,7 @@
  * nearest-valid-pose search a release uses (never embedded, invariant 4).
  */
 
-import { vec3, type Vec3 } from '../core/vec3.ts';
+import { vec3, vec3Set, type Vec3 } from '../core/vec3.ts';
 import { rotatedHalfExtents } from '../core/geometry.ts';
 import {
   MASS_RANK,
@@ -140,12 +140,21 @@ export interface ManipulationTuning {
 export const DEFAULT_MANIPULATION_TUNING: ManipulationTuning = {
   holdDistance: 1.35,
   holdHeight: 1.05,
-  holdBlend: 14,
+  // Carry-feel pass (17/10/2026). The blend is the *lag* of the carried part: for a
+  // target moving at `v`, the steady-state gap is `v / (1 - e^(-holdBlend·dt))`, so at
+  // 14 the part trailed a running player by ~0.56 m — it read as dragging a boat
+  // anchor rather than holding a part. 30 puts the same lag at ~0.33 m, which is what
+  // "in the player's hands" looks like at a run.
+  holdBlend: 30,
   grabRange: 3.2,
   maxHoldRange: 2.6,
   releaseSearchRadius: 0.5,
-  rotateSpeed: 2.2,
-  maxLinearSpeed: 8,
+  // A quarter turn in ~0.46 s of held rotate input (was 0.71 s at 2.2). Turning a part
+  // to face a socket is a frequent, repeated action, and the old rate made it a wait.
+  rotateSpeed: 3.4,
+  // Above the 6.3 m/s carrying run so the part can actually keep station; the per-step
+  // clamp is what stops a snap-assist or a teleported player from yanking it.
+  maxLinearSpeed: 9,
   maxMassClass: 'standard',
   assistEnabled: true,
   softDetach: true,
@@ -220,6 +229,13 @@ export interface CarryableSnapshot extends Pose {
 const CANONICAL_PRECISION = 1e-4;
 /** Skin kept between the swept object and geometry. */
 const SKIN = 0.004;
+/**
+ * Smallest box-check chunk used while advancing a held part (metres). The swept probe
+ * is the sphere inscribed in the part's box, so it cannot guard a flat part's corners;
+ * advancing in chunks no larger than half the part's own thickness means the box check
+ * runs often enough that nothing can pass a wall between two checks.
+ */
+const HOLD_CHUNK_MIN = 0.02;
 /** Steps of the release search (0.1 m increments up to the 0.5 m cap). */
 const RELEASE_SEARCH_STEPS = 5;
 /** Fixed steps the snap assist stays suppressed after a detach (feel, not logic). */
@@ -315,6 +331,7 @@ export class ManipulationSystem {
   private readonly scratchCandidate = { center: vec3(), yaw: 0 };
   private readonly scratchOrigin = vec3();
   private readonly scratchDown = vec3(0, -1, 0);
+  private readonly scratchDirection = vec3();
   /** The box a record is vacating, captured before a move overwrites its mirror. */
   private readonly scratchVacated = { min: vec3(), max: vec3() };
 
@@ -1121,40 +1138,63 @@ export class ManipulationSystem {
     // Swept along the path so the object can never tunnel through geometry.
     const half = record.binding.definition.halfExtents;
     const probeRadius = Math.min(half.x, half.y, half.z);
+    vec3Set(this.scratchDirection, dirX, dirY, dirZ);
     const hit = this.physics.castSphere(
       record.pose.center,
       probeRadius,
-      vec3(dirX, dirY, dirZ),
+      this.scratchDirection,
       travel + probeRadius
     );
     // A hit *at* the probe's origin is a degenerate starting contact — an object
     // resting on the floor reports its own support surface at distance 0, and
     // subtracting the skin there would pin the object in place forever. Falling
-    // back to the destination box check is safe: it is the real embedding guard,
-    // and the per-step travel cap is far below the object's own thickness, so
-    // nothing can tunnel past it.
+    // back to the destination box check is safe: it is the real embedding guard.
     const degenerate = hit !== null && hit.distance <= SKIN;
     const allowed = hit !== null && !degenerate ? Math.max(0, hit.distance - SKIN) : travel;
 
-    this.scratchCandidate.center.x = record.pose.center.x + dirX * allowed;
-    this.scratchCandidate.center.y = record.pose.center.y + dirY * allowed;
-    this.scratchCandidate.center.z = record.pose.center.z + dirZ * allowed;
-    this.scratchCandidate.yaw = record.pose.yaw;
+    // Advance in chunks of at most half the part's own thickness, and keep the last
+    // chunk that is free of geometry. The sphere sweep above only guards the sphere
+    // inscribed in the part's box, so a flat part sliding edge-on (a plate, a valve
+    // cover) could otherwise cross a thin wall between two box checks; the full move is
+    // the first candidate, so an unobstructed follow still costs exactly one box query.
+    const baseX = record.pose.center.x;
+    const baseY = record.pose.center.y;
+    const baseZ = record.pose.center.z;
+    const chunkLimit = Math.max(HOLD_CHUNK_MIN, probeRadius * 0.5);
+    const chunks = allowed > chunkLimit ? Math.ceil(allowed / chunkLimit) : 1;
 
-    this.boxFor(record, this.scratchCandidate.yaw, this.scratchBox, this.scratchCandidate.center);
-    if (this.physics.isBoxBlocked(this.scratchBox.min, this.scratchBox.max)) {
-      // Blocked: hold the previous (valid) pose instead of embedding. The player
+    let advanced = -1;
+    for (let index = 1; index <= chunks; index += 1) {
+      const distance = (allowed * index) / chunks;
+      this.scratchCandidate.center.x = baseX + dirX * distance;
+      this.scratchCandidate.center.y = baseY + dirY * distance;
+      this.scratchCandidate.center.z = baseZ + dirZ * distance;
+      this.scratchCandidate.yaw = record.pose.yaw;
+      this.boxFor(record, this.scratchCandidate.yaw, this.scratchBox, this.scratchCandidate.center);
+      if (this.physics.isBoxBlocked(this.scratchBox.min, this.scratchBox.max)) break;
+      advanced = distance;
+    }
+
+    if (advanced < 0) {
+      // Nowhere to go: hold the previous (valid) pose instead of embedding. The player
       // walking on then grows the hold range, which soft-detaches cleanly.
       this.blocked = true;
       record.blocked = true;
       return;
     }
 
+    // A partial advance is still a refusal to go where the hold asked: the feedback
+    // tint and the block flag report it, exactly as an all-or-nothing block did.
+    if (advanced < allowed) {
+      this.blocked = true;
+      record.blocked = true;
+    }
+
     if (desiredYaw !== null) this.tryYaw(record, desiredYaw);
 
-    record.pose.center.x = this.scratchCandidate.center.x;
-    record.pose.center.y = this.scratchCandidate.center.y;
-    record.pose.center.z = this.scratchCandidate.center.z;
+    record.pose.center.x = baseX + dirX * advanced;
+    record.pose.center.y = baseY + dirY * advanced;
+    record.pose.center.z = baseZ + dirZ * advanced;
     this.publishRecord(record, false);
   }
 

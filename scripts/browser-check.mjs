@@ -391,6 +391,31 @@ window.__probe = {
   /** Why route planning is unavailable, or null when it is fine (for the report). */
   colliderNote: () => window.__probe.__colliderNote ?? null,
   /**
+   * The height a hop should place the player at over (x, z): the highest collider top whose
+   * footprint covers the point and that is reachable from fromY (within the capsule's
+   * step height), or null when there is nothing there to stand on.
+   *
+   * Hops used to teleport to a flat y = 0.01. That only worked because the physics reported
+   * "supported" for a pose with nothing under it — a bug fixed on 17/10/2026 — so a spot
+   * inside a plinth, or past a floor edge, floated the player up instead of dropping them.
+   * With gravity working, such a teleport *falls*, the held part soft-detaches (EC-MAN-07)
+   * once the player is more than maxHoldRange (2.6 m) below it, and the whole dock attempt
+   * is lost — a tooling artefact that reads exactly like a game defect. Placing the player
+   * on the height the level actually has is the same fix the route planner got (issue #8).
+   */
+  standingHeightAt: async (x, z, fromY) => {
+    const list = await window.__probe.staticColliders();
+    if (list === null) return null;
+    const reach = (Number.isFinite(fromY) ? fromY : 0) + 0.45;
+    let best = null;
+    for (const box of list) {
+      if (x < box.min.x || x > box.max.x || z < box.min.z || z > box.max.z) continue;
+      if (box.max.y > reach) continue;
+      if (best === null || box.max.y > best) best = box.max.y;
+    }
+    return best;
+  },
+  /**
    * A walkable route from (ax, az) to (bx, bz), on a 0.5 m grid over the hall and the
    * Steam Works, using the same static colliders the player collides with.
    *
@@ -509,8 +534,9 @@ window.__probe = {
   /**
    * Carry-safe relocation. EC-MAN-07 soft-detaches a held part that ends a step more
    * than maxHoldRange (2.6 m) from the player, and the part can only close
-   * maxLinearSpeed (8 m/s ≈ 0.27 m per fixed step) — so one long teleport leaves the
-   * part metres behind and drops it (what killed the valve's first dock attempt).
+   * maxLinearSpeed (9 m/s ≈ 0.30 m per fixed step since the 17/10/2026 carry pass) — so
+   * one long teleport leaves the part metres behind and drops it (what killed the valve's
+   * first dock attempt).
    *
    * Three things make the hop survivable: 0.4 m steps, a wait after each step until the
    * part has come abreast again, and a **route around the level's colliders** — the
@@ -550,7 +576,12 @@ window.__probe = {
       const [bx, bz] = waypoints[leg];
       const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.4));
       for (let i = 1; i <= steps; i += 1) {
-        dev.player.teleport({ x: ax + ((bx - ax) * i) / steps, y: 0.01, z: az + ((bz - az) * i) / steps });
+        const tx = ax + ((bx - ax) * i) / steps;
+        const tz = az + ((bz - az) * i) / steps;
+        // Stand on the height the level has here, not at a flat 0.01 above its floor: with
+        // gravity working (17/10/2026) a teleport into a pocket falls and drops the part.
+        const ground = await window.__probe.standingHeightAt(tx, tz, start.y);
+        dev.player.teleport({ x: tx, y: (ground === null ? 0.01 : ground + 0.002), z: tz });
         if (yaw !== undefined) await window.__probe.aimYaw(yaw);
         for (let frame = 0; frame < 30 && dev.manipulation.heldId !== null; frame += 1) {
           const pose = dev.manipulation.currentPose;
@@ -566,7 +597,8 @@ window.__probe = {
           // The teleport landed inside geometry and the physics resolved the capsule
           // downwards, out through the floor (a trace once caught the player at y = -1.9).
           // Roll back to the last good spot and let the caller choose another vantage.
-          dev.player.teleport({ x: lastGood.x, y: 0.01, z: lastGood.z });
+          const back = await window.__probe.standingHeightAt(lastGood.x, lastGood.z, start.y);
+          dev.player.teleport({ x: lastGood.x, y: (back === null ? 0.01 : back + 0.002), z: lastGood.z });
           await new Promise((resolve) => setTimeout(resolve, 120));
           trace.push({
             hop: 'rollback',

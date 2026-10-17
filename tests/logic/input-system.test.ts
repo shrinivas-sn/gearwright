@@ -179,9 +179,12 @@ describe('InputSystem — context routing', () => {
       })
     );
 
-    // Movement continues while carrying, but never as a run (ARCH §15).
+    // Movement continues while carrying, and the run modifier *is* read: the carry's
+    // speed cost belongs to the composition (phase-world scales a carried walk 0.6 and a
+    // carried run 0.85), not to the input map. Until the carry-feel pass (17/10/2026)
+    // this was hard-false, which made "run while carrying" impossible rather than slow.
     expect(actions.moveZ).toBe(1);
-    expect(actions.run).toBe(false);
+    expect(actions.run).toBe(true);
     expect(actions.lookDeltaY).toBe(4);
     // Q/F rotate the held object here: `E` is the grab key only in Exploration.
     expect(actions.rotate).toBe(1);

@@ -211,8 +211,6 @@ export class KinematicPhysics implements PhysicsPort {
 
     let hitWall = false;
     let hitHead = false;
-    let supported = false;
-    let groundY = from.y;
 
     const position = vec3(from.x, from.y, from.z);
     for (let i = 0; i < substeps; i += 1) {
@@ -222,25 +220,23 @@ export class KinematicPhysics implements PhysicsPort {
       position.z = stepResult.z;
       hitWall = hitWall || stepResult.hitWall;
       hitHead = hitHead || stepResult.hitHead;
-      if (stepResult.supported) {
-        supported = true;
-        groundY = stepResult.groundY;
-      }
     }
 
     // Final de-penetration pass: guarantee the reported pose is never embedded.
     depenetrate(position, resolved, this.solids);
+
+    // `supported` describes the pose that was actually reached, not "touched ground at
+    // some point during this move". Accumulating it across sub-steps meant a move that
+    // crossed a ledge claimed ground after leaving it (the whole sweep gets resolved in
+    // one call when the frame stalls), so the controller skipped gravity and let the
+    // player jump from mid-air.
     const probe = probeDown(position, resolved, this.solids);
-    if (!supported && probe.supported) {
-      supported = true;
-      groundY = probe.groundY;
-    }
 
     out.x = clampWorld(position.x);
     out.y = clampWorld(position.y);
     out.z = clampWorld(position.z);
 
-    return { position: out, hitWall, hitHead, supported, groundY };
+    return { position: out, hitWall, hitHead, supported: probe.supported, groundY: probe.groundY };
   }
 
   isPoseValid(feet: Vec3, spec: CapsuleSpec): boolean {
@@ -355,7 +351,10 @@ function slideOne(
   } else if (delta.y <= 0) {
     const support = landOnSupport(x, y, z, spec, colliders);
     y = support.y;
-    supported = true;
+    // The move was blocked below, but that is not the same as touching down: if the
+    // blocker has no top under the footprint, this is a wall/lip, not a floor, and
+    // claiming `supported` here would hand the controller phantom ground.
+    supported = support.supported;
     groundY = support.groundY;
   } else {
     y = clampHead(x, y, z, spec, colliders);
@@ -382,9 +381,17 @@ function tryStepUp(
   return null;
 }
 
-function landOnSupport(
+/**
+ * Highest surface top at or just below the feet whose footprint the capsule overlaps.
+ * `null` means there is genuinely nothing underfoot — open air, or a wall face — and
+ * callers must not treat that as ground. Returning the current `y` here (the old
+ * behaviour) made the whole world "supportive": the player stuck to whatever altitude
+ * they were at while walking off a ledge, never accelerated under gravity, and could
+ * jump from mid-air.
+ */
+function supportTopUnder(
   x: number, y: number, z: number, spec: ResolvedSpec, colliders: ReadonlyArray<InternalCollider>
-): { y: number; groundY: number } {
+): number | null {
   let best: number | null = null;
   for (const collider of colliders) {
     if (collider.max.y > y + SKIN * 2) continue;
@@ -397,8 +404,15 @@ function landOnSupport(
       best = collider.max.y;
     }
   }
-  const groundY = best ?? y;
-  return { y: groundY + SKIN, groundY };
+  return best;
+}
+
+function landOnSupport(
+  x: number, y: number, z: number, spec: ResolvedSpec, colliders: ReadonlyArray<InternalCollider>
+): { y: number; groundY: number; supported: boolean } {
+  const top = supportTopUnder(x, y, z, spec, colliders);
+  if (top === null) return { y, groundY: y, supported: false };
+  return { y: top + SKIN, groundY: top, supported: true };
 }
 
 function clampHead(
@@ -420,9 +434,9 @@ function clampHead(
 function probeDown(
   position: Vec3, spec: ResolvedSpec, colliders: ReadonlyArray<InternalCollider>
 ): { supported: boolean; groundY: number } {
-  const support = landOnSupport(position.x, position.y, position.z, spec, colliders);
-  const gap = position.y - support.groundY;
-  return { supported: gap <= SKIN * 4, groundY: support.groundY };
+  const top = supportTopUnder(position.x, position.y, position.z, spec, colliders);
+  if (top === null) return { supported: false, groundY: position.y };
+  return { supported: position.y - top <= SKIN * 4, groundY: top };
 }
 function depenetrate(
   position: Vec3, spec: ResolvedSpec, colliders: ReadonlyArray<InternalCollider>

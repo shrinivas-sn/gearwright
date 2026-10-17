@@ -130,6 +130,74 @@ describe('KinematicPhysics — step-up', () => {
   });
 });
 
+describe('KinematicPhysics — supports and ledges', () => {
+  /** A raised platform (top 1.0) over a floor at 0 — the workshop's machines all sit like this. */
+  function platform(): KinematicPhysics {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([box([-10, -1, -10], [10, 0, 10]), box([-1, 0, -1], [1, 1, 1])]);
+    return physics;
+  }
+
+  it('stays supported while walking on a platform', () => {
+    const { result, out } = move(platform(), [0, 1 + SKIN, 0], [0.2, -1 / 30, 0]);
+
+    expect(result.supported).toBe(true);
+    expect(result.groundY).toBeCloseTo(1, 6);
+    expect(out.y).toBeCloseTo(1 + SKIN, 6);
+  });
+
+  it('reports NOT supported the step after walking off a ledge', () => {
+    // The capsule leaves the platform in the same call that carries it forward and down
+    // (a 2 m sweep, so the sub-stepper crosses the edge mid-call). Once there is nothing
+    // under the footprint, claiming "supported" tells the controller it is standing on
+    // thin air: gravity is skipped and the player can jump from mid-air.
+    const { result, out } = move(platform(), [0, 1 + SKIN, 0], [2, -1 / 30, 0]);
+
+    expect(out.x).toBeGreaterThan(1);
+    expect(out.y).toBeLessThan(1 + SKIN - 1e-6);
+    expect(result.supported).toBe(false);
+  });
+
+  it('never reports support in open air', () => {
+    const { result } = move(platform(), [20, 5, 20], [0, -0.5, 0]);
+
+    expect(result.supported).toBe(false);
+  });
+});
+
+describe('KinematicPhysics — step-up only onto what is underfoot', () => {
+  it('does not lift the player onto a steppable collider elsewhere in the room', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([
+      box([-10, -1, -10], [10, 0, 10]),
+      // A wall whose capsule contact lands exactly at the radius boundary, so the
+      // raised-footprint probe is clear — the old code then stepped onto the *first*
+      // steppable collider it found anywhere, which is this box 6 m away in Z.
+      box([2.68, 0, -5], [4, 4, 5]),
+      box([3, 0, 6], [4, 0.2, 8])
+    ]);
+
+    const { result, out } = move(physics, [2.36, SKIN, 0], [0.32, 0, 0]);
+
+    expect(out.y).toBeCloseTo(SKIN, 6);
+    expect(result.hitWall).toBe(true);
+  });
+
+  it('steps onto the highest steppable top under the footprint', () => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([
+      box([-10, -1, -10], [10, 0, 10]),
+      box([3, 0, -5], [5, 0.1, 5]),
+      box([3, 0, -0.4], [5, 0.3, 0.4])
+    ]);
+
+    const { result, out } = move(physics, [2.5, SKIN, 0], [1, 0, 0]);
+
+    expect(result.hitWall).toBe(false);
+    expect(out.y).toBeCloseTo(0.3 + SKIN, 3);
+  });
+});
+
 describe('KinematicPhysics — ceilings', () => {
   it('reports a head hit and clamps the climb under a low ceiling', () => {
     const physics = new KinematicPhysics();

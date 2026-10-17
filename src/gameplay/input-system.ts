@@ -231,7 +231,8 @@ export class InputSystem {
         hint: false, // no hint request mid-carry: Q/E are the carry's keys (§15)
         jump: false,
         // Both hands are on the part: the carry owns the stance, so there is no crouch
-        // to leak into it (and the hop is off for the same reason).
+        // to leak into it (and the hop is off for the same reason). Running is *not*
+        // withheld here — it is read and scaled (see `run` below).
         crouch: false,
         // …and you cannot shoot with your hands full. The weapon layer is deliberately
         // blind here: a held part is a two-handed job, so the trigger is not routed.
@@ -244,7 +245,12 @@ export class InputSystem {
         weaponSlot: null,
         moveX,
         moveZ,
-        run: false,
+        // `run` is read here too (carry-feel pass, 17/10/2026). It used to be hard-false
+        // because ARCH §15 calls the carry a "slow strafe" — but that deleted the sprint
+        // outright, so a carrying player could not run at all. How much a carry costs is
+        // locomotion's call, not the input map's: the composition (phase-world) scales the
+        // walk and the run differently while something is held.
+        run: held.has(this.bindings.run),
         lookDeltaX: look.x,
         lookDeltaY: look.y,
         // E or the mouse confirms while carrying (dock / confirm rotation), so the HUD's

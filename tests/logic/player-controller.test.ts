@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { vec3, type Vec3 } from '../../src/core/vec3.ts';
+import { KinematicPhysics } from '../../src/adapters/kinematic-physics.ts';
 import {
   DEFAULT_PLAYER_TUNING,
   PlayerController,
@@ -205,6 +206,55 @@ describe('PlayerController — rotation', () => {
     const state = run(controller, 90, { ...NEUTRAL, moveX: 1 });
 
     expect(state.facingYaw).toBeCloseTo(-Math.PI / 2, 2);
+  });
+});
+
+describe('PlayerController — real physics: leaving a ledge', () => {
+  const CAPSULE: CapsuleSpec = { radius: 0.32, height: 1.7, stepHeight: 0.35 };
+  const SKIN = 0.002;
+
+  /** A 4 m platform over the floor, so a fall leaves time to observe gravity. */
+  function ledgeWorld() {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([
+      { min: vec3(-10, -1, -10), max: vec3(10, 0, 10) },
+      { min: vec3(-1, 0, -5), max: vec3(1, 4, 5) }
+    ]);
+    return physics;
+  }
+
+  it('falls under gravity once the platform edge is behind it — and cannot hop mid-air', () => {
+    const physics = ledgeWorld();
+    const controller = new PlayerController(physics, vec3(0, 4 + SKIN, 0));
+
+    // Walk east (camera yaw 0: +X is strafe-right) off the 2 m-wide platform.
+    let state = controller.step(DT, { ...NEUTRAL, moveX: 1 });
+    for (let i = 0; i < 29; i += 1) state = controller.step(DT, { ...NEUTRAL, moveX: 1 });
+
+    // ~0.7 s after the edge: still falling, and clearly past the coyote window.
+    expect(state.position.x).toBeGreaterThan(1);
+    expect(state.grounded).toBe(false);
+    expect(state.position.y).toBeLessThan(4 - SKIN);
+    expect(state.position.y).toBeGreaterThan(0);
+    expect(state.velocity.y).toBeLessThan(-2);
+
+    const hopped = controller.step(DT, { ...NEUTRAL, jump: true });
+    expect(hopped.grounded).toBe(false);
+    expect(hopped.velocity.y).toBeLessThan(0);
+  });
+
+  it('lands on the floor at the end of the fall and is grounded again', () => {
+    const physics = ledgeWorld();
+    const controller = new PlayerController(physics, vec3(0, 4 + SKIN, 0));
+
+    let state = controller.step(DT, { ...NEUTRAL, moveX: 1 });
+    for (let i = 0; i < 39; i += 1) state = controller.step(DT, { ...NEUTRAL, moveX: 1 });
+    for (let i = 0; i < 60; i += 1) state = controller.step(DT, NEUTRAL);
+
+    expect(state.grounded).toBe(true);
+    expect(state.groundY).toBeCloseTo(0, 3);
+    expect(state.position.y).toBeCloseTo(SKIN, 3);
+    expect(physics.isPoseValid(state.position, CAPSULE)).toBe(true);
   });
 });
 

@@ -328,6 +328,32 @@ describe('PhaseWorld — M3 grab / carry / release wiring (ARCH §14 order, §19
     expect(walkedCarrying).toBeLessThan(walkedFree * 0.75);
   });
 
+  it('lets a carrying player run — slower than empty-handed, faster than a carry walk (17/10/2026)', () => {
+    const measure = (run: boolean, carry: boolean): number => {
+      const harness = buildManipWorld();
+      if (carry) {
+        aimAtFloorCrate(harness);
+        harness.world.step(DT, neutralSample({ pressed: new Set(['KeyE']) }));
+        harness.world.step(DT, neutralSample());
+        expect(harness.manipulation.isHolding).toBe(true);
+      }
+      const keys = run ? ['KeyS', 'ShiftLeft'] : ['KeyS'];
+      const before = harness.world.player.snapshot().position.z;
+      for (let i = 0; i < 40; i += 1) harness.world.step(DT, held(...keys));
+      return Math.abs(harness.world.player.snapshot().position.z - before);
+    };
+
+    const carryWalk = measure(false, true);
+    const carryRun = measure(true, true);
+    const freeRun = measure(true, false);
+
+    // A held part still costs speed, but a run while carrying is a real run: the old
+    // flat 0.55 scale made carrying delete the sprint entirely.
+    expect(carryRun).toBeGreaterThan(carryWalk * 1.25);
+    expect(carryRun).toBeLessThan(freeRun * 0.95);
+    expect(carryRun).toBeGreaterThan(freeRun * 0.7);
+  });
+
   it('releases a held object on blur / visibility loss (EC-BRN-05)', () => {
     const harness = buildManipWorld();
     aimAtFloorCrate(harness);

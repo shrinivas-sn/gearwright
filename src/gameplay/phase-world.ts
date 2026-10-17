@@ -26,10 +26,17 @@ import type { MachineChanged, MachineGraph } from '../game-state/machine-graph.t
 import type { PuzzleSystem, PuzzleUpdate } from '../game-state/puzzle-system.ts';
 
 /**
- * Locomotion scale while something is held (ARCH §15: the Manipulation context is
- * a *slow strafe*). One number, owned by the composition that knows both systems.
+ * Locomotion scales while something is held (ARCH §15: the Manipulation context is a
+ * *slow strafe*), owned by the composition that knows both systems.
+ *
+ * Carry-feel pass (17/10/2026): a held part used to scale the player by one flat 0.55
+ * whatever they were doing, so carrying quietly deleted the run — the slow strafe
+ * became the only strafe. Two scales keep the mechanic's weight while making a carried
+ * run a real (and slower than empty-handed) option: 0.6 walking, 0.85 at a run
+ * (7.4 m/s → 6.29 m/s carrying, 4.44 m/s carrying at a walk).
  */
-const MANIPULATION_MOVE_SCALE = 0.55;
+const CARRY_WALK_SCALE = 0.6;
+const CARRY_RUN_SCALE = 0.85;
 
 /** A part's muzzle point and the direction it is aimed along (weapons pass). */
 export interface WeaponMount {
@@ -222,8 +229,13 @@ export class PhaseWorld {
       cameraYaw: this.systems.camera.currentYaw,
       // Aiming really does slow the player: the weapon layer owns the ADS blend, so its
       // published locomotion scale rides here (one step behind, like every other cross-step
-      // fact in this file). Holding a part keeps its own slow strafe.
-      speedScale: holding ? MANIPULATION_MOVE_SCALE : this.weaponMoveScale,
+      // fact in this file). Holding a part keeps its own slow strafe — heavier at a walk
+      // than at a run, so the part's mass reads as weight rather than as a tax.
+      speedScale: holding
+        ? actions.run
+          ? CARRY_RUN_SCALE
+          : CARRY_WALK_SCALE
+        : this.weaponMoveScale,
       jump: actions.jump,
       // Stance pass: crouch is locomotion state, so it goes to the player owner with the
       // rest of the stance — the weapon layer only *reads* the resulting stance.

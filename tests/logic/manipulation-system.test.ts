@@ -716,6 +716,148 @@ describe('ManipulationSystem — hold pose, carryables and determinism', () => {
   });
 });
 
+describe('ManipulationSystem — carry feel (17/10/2026)', () => {
+  /** The speed the live game gives a player running while carrying (phase-world's 0.85 × 7.4). */
+  const CARRY_RUN_SPEED = 7.4 * 0.85;
+
+  it('keeps a carried part within 0.4 m of the hold anchor while the player runs', () => {
+    const { sm } = build();
+    grab(sm);
+    for (let i = 0; i < 10; i += 1) step(sm);
+
+    let x = AT_REST.position.x;
+    let furthest = 0;
+    for (let i = 0; i < 30; i += 1) {
+      x += CARRY_RUN_SPEED * DT;
+      const result = step(sm, { player: { position: { x, y: AT_REST.position.y, z: AT_REST.position.z } } });
+      const lag = Math.hypot(
+        result.pose.center.x - x,
+        result.pose.center.z - (AT_REST.position.z - DEFAULT_MANIPULATION_TUNING.holdDistance)
+      );
+      furthest = Math.max(furthest, lag);
+    }
+
+    // The hold follows an exponential at `holdBlend`, so the part trails the anchor by
+    // `v / (1 - e^(-holdBlend·dt))` — 0.56 m at the old 14, which read as a part being
+    // dragged behind rather than carried.
+    expect(furthest).toBeLessThan(0.4);
+    // It really did travel: it is beside the player, not left at the spawn. The crate
+    // sits in a corner, so a failed follow would leave it stalled there for good.
+    expect(sm.currentPose.center.x).toBeGreaterThan(x - 0.4);
+  });
+
+  it('never exceeds the per-step travel clamp while following a run', () => {
+    const { sm } = build();
+    grab(sm);
+
+    let x = AT_REST.position.x;
+    for (let i = 0; i < 30; i += 1) {
+      x += CARRY_RUN_SPEED * DT;
+      const before = sm.currentPose.center;
+      step(sm, { player: { position: { x, y: AT_REST.position.y, z: AT_REST.position.z } } });
+      const after = sm.currentPose.center;
+      expect(
+        Math.hypot(after.x - before.x, after.y - before.y, after.z - before.z)
+      ).toBeLessThanOrEqual(DEFAULT_MANIPULATION_TUNING.maxLinearSpeed * DT + 1e-9);
+    }
+  });
+
+  it('turns a held part a quarter turn in under half a second of held rotate input', () => {
+    const { sm } = build();
+    grab(sm);
+    const entry = sm.currentPose.yaw;
+
+    let yaw = entry;
+    let stepsTaken = 0;
+    while (stepsTaken < 30) {
+      yaw = step(sm, { actions: { rotate: 1 } }).pose.yaw;
+      stepsTaken += 1;
+      if (Math.abs(yaw - entry) >= Math.PI / 2) break;
+    }
+
+    expect(Math.abs(yaw - entry)).toBeGreaterThanOrEqual(Math.PI / 2 - 1e-9);
+    // Facing a part at a socket is a repeated action; at 2.2 rad/s a quarter turn was a
+    // 0.71 s wait, which is what "rotating feels sluggish" was.
+    expect(stepsTaken * DT).toBeLessThanOrEqual(0.5);
+  });
+});
+
+describe('ManipulationSystem — carry physics: a part never passes through geometry (17/10/2026)', () => {
+  /** A shaft-shaped part: thin along its travel axis, long across it (real content's shape). */
+  const SHAFT: CarryableBinding = {
+    instanceId: 'shaft-t',
+    definition: {
+      id: 'def/shaft-t',
+      kind: 'carryable',
+      tags: ['shaft'],
+      massClass: 'standard',
+      allowedAxes: ['y'],
+      halfExtents: { x: 0.16, y: 0.16, z: 0.5 },
+      grabbable: true
+    },
+    // Spawned exactly on the hold anchor for AT_REST, so it starts in hand.
+    spawn: { center: { x: 0, y: 1.06, z: -7.35 }, yaw: 0 }
+  };
+
+  function shaftBox(binding: CarryableBinding, pose: { center: Vec3; yaw: number }) {
+    const half = rotatedHalfExtents(binding.definition.halfExtents, pose.yaw, vec3());
+    return {
+      min: vec3(pose.center.x - half.x, pose.center.y - half.y, pose.center.z - half.z),
+      max: vec3(pose.center.x + half.x, pose.center.y + half.y, pose.center.z + half.z)
+    };
+  }
+
+  it('cannot be carried through a beam edge in one long step, at any step size', () => {
+    const { sm, physics } = build({}, null, SHAFT);
+    grab(sm, SHAFT);
+    // A 0.1 m beam whose edge the part's box clips while the sphere inscribed in that
+    // box misses it entirely — so the destination box check is the only guard, and it
+    // used to run once per step. At 6.29 m/s the part advances ~0.63 m in a 1/10 s step
+    // (the SM accepts any step size up to 0.25 s), which jumps clean over the beam.
+    physics.blocked = [{ min: vec3(1, -1, -7.05), max: vec3(1.1, 2, -6.95) }];
+
+    let x = AT_REST.position.x;
+    for (let i = 0; i < 12; i += 1) {
+      x += 6.29 * 0.1;
+      const result: ManipulationStepResult = sm.step(0.1, {
+        focus: null,
+        actions: { ...NEUTRAL_ACTIONS },
+        player: { ...AT_REST, position: { x, y: AT_REST.position.y, z: AT_REST.position.z } }
+      });
+      const box = shaftBox(SHAFT, result.pose);
+      expect(physics.isBoxBlocked(box.min, box.max)).toBe(false);
+    }
+
+    // It stopped at the beam rather than crossing it (the old code emerged past x = 1.1).
+    expect(sm.currentPose.center.x).toBeLessThan(1);
+  });
+
+  it('noses up to the beam and stops there rather than freezing short of it', () => {
+    const { sm, physics } = build({}, null, SHAFT);
+    grab(sm, SHAFT);
+    physics.blocked = [{ min: vec3(1, -1, -7.05), max: vec3(1.1, 2, -6.95) }];
+
+    let x = AT_REST.position.x;
+    let lastX = sm.currentPose.center.x;
+    for (let i = 0; i < 40; i += 1) {
+      x += 6.29 * DT;
+      const result = step(sm, { player: { position: { x, y: AT_REST.position.y, z: AT_REST.position.z } } });
+      const box = shaftBox(SHAFT, result.pose);
+      // Never embedded, and never past the beam: the carve-up commits only free chunks.
+      expect(physics.isBoxBlocked(box.min, box.max)).toBe(false);
+      expect(result.pose.center.x).toBeLessThan(1);
+      lastX = result.pose.center.x;
+    }
+
+    // It got right up against the beam's face instead of holding station a whole
+    // travel-step away from it: 0.84 is the beam face minus the part's own half width,
+    // and the carve-up resolves to within one chunk (half the part's thickness, 0.08 m)
+    // of it. Without the carve-up this rested at ~0.63 and then jumped clean over.
+    expect(lastX).toBeLessThanOrEqual(0.84 + 1e-9);
+    expect(lastX).toBeGreaterThan(0.84 - 0.08 - 1e-3);
+  });
+});
+
 describe('ManipulationSystem — world integration (real kinematics, TEST §8)', () => {
   it('never embeds the carried object while it is walked into the tall block', () => {
     const physics = new KinematicPhysics();
