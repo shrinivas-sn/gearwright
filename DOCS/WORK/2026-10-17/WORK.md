@@ -68,7 +68,7 @@ adapter, and the **carry-feel tune** `PLAN.md`'s Phase A folded in and left owed
 | `guns --production` | exit 0 — pools flat (`poolPeak 8`, `poolDrops 0`), 79 idle → 82 firing, ADS 60° → 43.45°, crouch-walk 2.06 vs 3.74 m/s, `?guns=0` still the pre-pass game |
 | `hold` (dev) | exit 0 — `problems: []`, reach dots 0.968 / 0.958 (unchanged by the carry tune) |
 | `dock` (dev) | exit 0 — `problems: []`, first vantage "Socket compatible — confirm to dock", route planning available |
-| `branch` (dev) | **re-run owed at checkpoint time** — see below |
+| `branch` (dev) | **unconfirmed** — the confirming run was stopped after ~30 min without finishing; see below |
 
 **The `branch` curve, and what the first run on this code found.** Playing the whole curve in
 one session is the long gate (~12 min). Its first run on this code ended with branch A still
@@ -84,8 +84,15 @@ a new `__probe.standingHeightAt(x, z, fromY)` returns the highest collider top u
 target that is reachable from the player (within the capsule's step height), and `hopTo`
 places the player there; the rollback path uses it too. A clean-profile `branch` run at HEAD
 was green for comparison (branch A and B Complete, hub stage 2, both clue plates restored
-after the reload), and the confirming run on this code was still in flight when this
-checkpoint was written.
+after the reload, ~12 min).
+
+The confirming run on this code was **stopped after ~30 min without finishing** (the dev
+server and the run's Chrome were left clean and the tree committed at `f21a875`), so the
+whole-curve gate is proven at HEAD but **not yet on this pass's code**, and the hop change
+is itself a suspect for the extra time: it adds one async collider query per 0.4 m hop
+step, and a hop that keeps landing badly retries through vantages. That is the first thing
+the next session should settle, with the run time-boxed and the hop instrumented rather
+than assumed.
 
 ## Owed / deliberately not done
 
