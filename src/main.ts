@@ -78,6 +78,10 @@ import type { ValidationReason } from './game-state/validator.ts';
 import type { SocketDefinition } from './game-state/component-model.ts';
 import type { Vec3 } from './core/vec3.ts';
 import {
+  createWeaponMount,
+  resolveWeaponMount as resolveWeaponMountCore
+} from './core/weapon-mount.ts';
+import {
   P1_INTERACTABLES,
   P1_CARRYABLES,
   P1_SOCKETS,
@@ -1148,80 +1152,27 @@ function boot(): void {
   const weaponEffects = weapons === null ? null : new WeaponEffects(renderPort);
 
   /**
-   * Where the drawn weapon is and what it is aimed along. The camera owns the aim line
-   * (§12.1) and the renderer owns the hands (`characterFacts().handR`), so the mount is
-   * resolved here — the one place that knows both — and L2 imports neither.
+   * Where the drawn weapon is and what it is aimed along, from the stance and the camera's aim
+   * line **only** (`core/weapon-mount.ts`).
    *
-   * Bullets leave the *muzzle*, but they are aimed at the point the reticle covers: the
-   * direction is re-converged from the muzzle onto a point on the camera's own line, so a
-   * shot from a hand-held barrel still lands where the crosshair is pointing.
+   * This used to take its origin from `characterFacts().handR` — the rendered right hand — on
+   * every fixed step, which closed a loop (muzzle → grip target → hand → next muzzle). The arm
+   * chased its own output forward until the reach clamp locked it straight, and grip wobble
+   * re-steered the gun. A simulated weapon must not read a rendered one; the drawn mesh is put
+   * on this same muzzle by `setWeaponView`, so the picture still shares one point with the shot.
    *
    * Scratch object: this runs on the fixed step, so it must allocate nothing.
    */
-  const AIM_CONVERGENCE_M = 60;
-  const MUZZLE_LEAD_M = 0.32;
-  const FALLBACK_MUZZLE_STANDING = 1.35;
-  const FALLBACK_MUZZLE_CROUCHED = 0.95;
-  const weaponMountScratch: { muzzle: Vec3; aimDirection: Vec3 } = {
-    muzzle: { x: 0, y: 0, z: 0 },
-    aimDirection: { x: 0, y: 0, z: -1 }
+  const weaponMountScratch = createWeaponMount();
+  /** The presentation mount: same maths, the interpolated stance the body is drawn with. */
+  const presentMountScratch = createWeaponMount();
+  const presentStance = {
+    position: { x: 0, y: 0, z: 0 },
+    facingYaw: 0,
+    crouched: false
   };
-  const resolveWeaponMount = (request: WeaponMountRequest): WeaponMount => {
-    const pose = request.camera;
-    const stance = request.player;
-    const mounted = weaponMountScratch;
-
-    let dx = pose.target.x - pose.eye.x;
-    let dy = pose.target.y - pose.eye.y;
-    let dz = pose.target.z - pose.eye.z;
-    const length = Math.hypot(dx, dy, dz);
-    if (!Number.isFinite(length) || length <= 1e-6) {
-      dx = 0;
-      dy = 0;
-      dz = -1;
-    } else {
-      dx /= length;
-      dy /= length;
-      dz /= length;
-    }
-    // The point the reticle covers, out along the camera's line.
-    const aimX = pose.eye.x + dx * AIM_CONVERGENCE_M;
-    const aimY = pose.eye.y + dy * AIM_CONVERGENCE_M;
-    const aimZ = pose.eye.z + dz * AIM_CONVERGENCE_M;
-
-    // The barrel sits in the drawn hand when there is one (both bodies report it), and a
-    // chest-height muzzle when there is not — headless checks, or no body drawn at all.
-    const facts = renderPort.characterFacts?.() ?? null;
-    const hand = facts?.visible === true ? facts.handR : undefined;
-    if (hand !== undefined && Number.isFinite(hand.x)) {
-      mounted.muzzle.x = hand.x + dx * MUZZLE_LEAD_M;
-      mounted.muzzle.y = hand.y + dy * MUZZLE_LEAD_M;
-      mounted.muzzle.z = hand.z + dz * MUZZLE_LEAD_M;
-    } else {
-      mounted.muzzle.x = stance.position.x;
-      mounted.muzzle.y =
-        stance.position.y + (stance.crouched ? FALLBACK_MUZZLE_CROUCHED : FALLBACK_MUZZLE_STANDING);
-      mounted.muzzle.z = stance.position.z;
-    }
-
-    let ax = aimX - mounted.muzzle.x;
-    let ay = aimY - mounted.muzzle.y;
-    let az = aimZ - mounted.muzzle.z;
-    const aimLength = Math.hypot(ax, ay, az);
-    if (!Number.isFinite(aimLength) || aimLength <= 1e-6) {
-      ax = dx;
-      ay = dy;
-      az = dz;
-    } else {
-      ax /= aimLength;
-      ay /= aimLength;
-      az /= aimLength;
-    }
-    mounted.aimDirection.x = ax;
-    mounted.aimDirection.y = ay;
-    mounted.aimDirection.z = az;
-    return mounted;
-  };
+  const resolveWeaponMount = (request: WeaponMountRequest): WeaponMount =>
+    resolveWeaponMountCore(request.camera, request.player, weaponMountScratch);
 
   /**
    * The weapon block's read model (§33.2 rule 2: the HUD is handed values, never systems).
@@ -1537,6 +1488,24 @@ function boot(): void {
         audio.setListener(cameraPose);
         const markerPosition = lerpVec(interp.player, playerState.position, blend);
         const markerYaw = lerpAngle(interp.facingYaw, playerState.facingYaw, blend);
+
+        // Weapons, *before* the body: the mount is resolved from the same interpolated stance the
+        // body is drawn with, and `setWeaponView` caches the two-handed grip the body reads in
+        // this same call. When this ran last, the hands followed a mount computed from the
+        // simulated position one frame earlier — at a run that is a 6–12 cm trail between the
+        // body and its own hands (measured: the `arms` harness scenario). Interpolation is
+        // visual-only; the simulated muzzle used for bullets is untouched.
+        if (weaponEffects !== null) {
+          presentStance.position.x = markerPosition.x;
+          presentStance.position.y = markerPosition.y;
+          presentStance.position.z = markerPosition.z;
+          presentStance.facingYaw = markerYaw;
+          presentStance.crouched = playerState.crouched;
+          const mount = resolveWeaponMountCore(cameraPose, presentStance, presentMountScratch);
+          weaponEffects.aim(mount.muzzle, mount.aimDirection, manipulation.isHolding);
+          weaponEffects.present();
+        }
+
         footGrounding.step(markerPosition, markerYaw);
         renderPort.syncPlayerMarker({
           position: markerPosition,
@@ -1556,16 +1525,6 @@ function boot(): void {
         // The §29.3 reveal (M10): the presenter hands over the fading overlay, or clears
         // it once — the renderer never decides when a scan ends.
         scanner.present();
-
-        // Weapons (weapons pass): the drawn weapon sits at the muzzle the *simulation* fires
-        // from, resolved through the same mount function on this frame's interpolated camera
-        // pose; tracers, the muzzle flash and the impacts are the presenter's pools, aged on
-        // the fixed step above. Carrying a part holsters the weapon (the hands are full).
-        if (weaponEffects !== null) {
-          const mount = resolveWeaponMount({ camera: cameraPose, player: playerState });
-          weaponEffects.aim(mount.muzzle, mount.aimDirection, manipulation.isHolding);
-          weaponEffects.present();
-        }
 
         // Every socket the level authors gets a marker, derived from live occupancy.
         for (const marker of snapMarkerStates) {
@@ -1916,6 +1875,18 @@ function boot(): void {
       // Read live, not snapshot at boot: the harness proves the player's body is built,
       // drawn and standing on the simulated position.
       character: () => renderPort.characterFacts?.() ?? null,
+      // The weapon mount is stance-derived (core/weapon-mount.ts), so a live run can prove the
+      // hands are not chasing it: while the player stands still the muzzle must not move at all.
+      weaponMount: () => ({
+        muzzle: { ...weaponMountScratch.muzzle },
+        aimDirection: { ...weaponMountScratch.aimDirection }
+      }),
+      // The mount the *picture* is drawn from (interpolated stance). The hands follow this one, so
+      // a stability measurement has to compare them against it, not against the fixed step's.
+      weaponMountPresent: () => ({
+        muzzle: { ...presentMountScratch.muzzle },
+        aimDirection: { ...presentMountScratch.aimDirection }
+      }),
       // Weapons (16/10/2026): the `guns` scenario reads the live view + counters. `null`
       // when `?guns=0`, which is exactly how that escape hatch is verified.
       weapon: () =>

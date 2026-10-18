@@ -90,7 +90,7 @@ describe('CharacterRig — the player’s body (procedural skinned humanoid)', (
     }
   });
 
-  it('grips a held part: both hands converge on it', () => {
+  it('grips a held part: two hands bracket it, not both on the same atom', () => {
     const rig = new CharacterRig();
     try {
       const target = { x: 0, y: 1.3, z: -0.42 }; // in front of the chest, inside arm reach
@@ -101,10 +101,14 @@ describe('CharacterRig — the player’s body (procedural skinned humanoid)', (
       }
       const left = boneWorld(rig, 'handL');
       const right = boneWorld(rig, 'handR');
-      // Solved in character space, so the torso's own rotation leaves a couple of centimetres.
-      expect(Math.hypot(left.x - target.x, left.y - target.y, left.z - target.z)).toBeLessThan(0.08);
-      expect(Math.hypot(right.x - target.x, right.y - target.y, right.z - target.z)).toBeLessThan(0.08);
-      expect(left.distanceTo(right)).toBeLessThan(rest * 0.5);
+      // The hands sit either side of the part's centre (the player's left is -X), so a carry has
+      // the width of the thing being carried instead of two hands on one point.
+      expect(left.x).toBeLessThan(target.x - 0.1);
+      expect(right.x).toBeGreaterThan(target.x + 0.1);
+      expect(Math.abs(left.y - target.y)).toBeLessThan(0.08);
+      expect(Math.abs(right.z - target.z)).toBeLessThan(0.08);
+      expect(left.distanceTo(right)).toBeGreaterThan(0.25);
+      expect(left.distanceTo(right)).toBeLessThan(rest);
 
       // Releasing lets the arms return to the authored pose, which hangs them slightly out.
       for (let i = 0; i < 3; i += 1) {
@@ -119,9 +123,11 @@ describe('CharacterRig — the player’s body (procedural skinned humanoid)', (
   it('grips a drawn weapon: left hand forward on the barrel, right hand back on the stock', () => {
     const rig = new CharacterRig();
     try {
+      // The two grips sit on one line down the shot (as the renderer derives them from the
+      // muzzle), so the torso has nothing to twist away from.
       const grip = {
-        rear: { x: 0.06, y: 1.32, z: -0.4 },
-        front: { x: -0.06, y: 1.3, z: -0.52 }
+        rear: { x: 0, y: 1.32, z: -0.36 },
+        front: { x: 0, y: 1.32, z: -0.48 }
       };
       for (let i = 0; i < 4; i += 1) {
         rig.update(makeUpdate({ weaponGrip: grip, dt: 0.1 }));
@@ -139,7 +145,105 @@ describe('CharacterRig — the player’s body (procedural skinned humanoid)', (
         rig.update(makeUpdate({ carrying: true, holdTarget: part, weaponGrip: grip, dt: 0.1 }));
       }
       const carriedL = boneWorld(rig, 'handL');
-      expect(Math.hypot(carriedL.x - part.x, carriedL.y - part.y, carriedL.z - part.z)).toBeLessThan(0.08);
+      expect(carriedL.x).toBeLessThan(part.x - 0.1);
+      expect(Math.abs(carriedL.y - part.y)).toBeLessThan(0.08);
+    } finally {
+      rig.dispose();
+    }
+  });
+
+  it('keeps a settled grip still — no drift, no per-frame chatter', () => {
+    const rig = new CharacterRig();
+    try {
+      // Two hands on one gun, held still in the world. The old solve read the *rest* shoulder
+      // and ignored the hips/spine the gait rotates, so the hand orbited the target as the body
+      // breathed and walked. A settled solve must be still to within a millimetre.
+      const grip = { rear: { x: 0, y: 1.3, z: -0.4 }, front: { x: 0, y: 1.32, z: -0.5 } };
+      for (let i = 0; i < 60; i += 1) {
+        rig.update(makeUpdate({ weaponGrip: grip, dt: 1 / 60 }));
+      }
+      let previousL = boneWorld(rig, 'handL');
+      let previousR = boneWorld(rig, 'handR');
+      let worst = 0;
+      for (let i = 0; i < 60; i += 1) {
+        rig.update(makeUpdate({ weaponGrip: grip, dt: 1 / 60 }));
+        const left = boneWorld(rig, 'handL');
+        const right = boneWorld(rig, 'handR');
+        worst = Math.max(worst, left.distanceTo(previousL), right.distanceTo(previousR));
+        previousL = left;
+        previousR = right;
+      }
+      expect(worst).toBeLessThan(0.002);
+    } finally {
+      rig.dispose();
+    }
+  });
+
+  it('aims at a grip it cannot reach instead of inventing a pose', () => {
+    const rig = new CharacterRig();
+    try {
+      // A part held 2 m out: the hand reaches its own length along the line to it, and keeps
+      // pointing at the part. Locking the elbow straight while the hand sits wherever is worse.
+      const grip = { rear: { x: 0, y: 1.3, z: -2.2 }, front: { x: 0, y: 1.3, z: -2.4 } };
+      for (let i = 0; i < 30; i += 1) {
+        rig.update(makeUpdate({ weaponGrip: grip, dt: 1 / 60 }));
+      }
+      const shoulder = boneWorld(rig, 'upperArmL');
+      const hand = boneWorld(rig, 'handL');
+      const length = hand.distanceTo(shoulder);
+      expect(length).toBeGreaterThan(0.5);
+      expect(length).toBeLessThan(0.56);
+      const direction = hand.clone().sub(shoulder).normalize();
+      const wanted = new THREE.Vector3(
+        grip.front.x - shoulder.x,
+        grip.front.y - shoulder.y,
+        grip.front.z - shoulder.z
+      ).normalize();
+      expect(direction.dot(wanted)).toBeGreaterThan(0.999);
+    } finally {
+      rig.dispose();
+    }
+  });
+
+  it('squares the chest toward the aim, leaving the feet where the walk put them', () => {
+    const rig = new CharacterRig();
+    try {
+      // A grip angled to the player's right (+X): the upper body turns that way, the legs do not.
+      const grip = { rear: { x: 0, y: 1.3, z: -0.45 }, front: { x: 0.4, y: 1.3, z: -0.45 } };
+      for (let i = 0; i < 60; i += 1) {
+        rig.update(makeUpdate({ weaponGrip: grip, dt: 1 / 30 }));
+      }
+      const chest = rig.object.getObjectByName('chest');
+      const foot = rig.object.getObjectByName('footL');
+      if (chest === undefined || foot === undefined) throw new Error('rig is missing a bone');
+      rig.object.updateMatrixWorld(true);
+      const chestForward = new THREE.Vector3(0, 0, -1).applyQuaternion(
+        chest.getWorldQuaternion(new THREE.Quaternion())
+      );
+      expect(chestForward.x).toBeGreaterThan(0.3);
+
+      // The hips were never twisted, so the foot still points where the character faces (-Z).
+      const footForward = new THREE.Vector3(0, 0, -1).applyQuaternion(
+        foot.getWorldQuaternion(new THREE.Quaternion())
+      );
+      expect(Math.abs(footForward.x)).toBeLessThan(0.2);
+
+      // The head looks at what the player is looking at, not where the chest happens to point:
+      // with the body squared 0.9 rad toward the gun and the look target dead ahead, the face
+      // must still be near -Z. Without the twist correction the head overshoots by the twist.
+      const head = rig.object.getObjectByName('head');
+      if (head === undefined) throw new Error('rig is missing a bone');
+      const look = { x: 0, y: 1.6, z: -6 };
+      for (let i = 0; i < 30; i += 1) {
+        rig.update(makeUpdate({ weaponGrip: grip, lookTarget: look, dt: 1 / 30 }));
+      }
+      rig.object.updateMatrixWorld(true);
+      const headForward = new THREE.Vector3(0, 0, -1)
+        .applyQuaternion(head.getWorldQuaternion(new THREE.Quaternion()))
+        .setY(0)
+        .normalize();
+      const wanted = new THREE.Vector3(look.x, 0, look.z).normalize();
+      expect(headForward.dot(wanted)).toBeGreaterThan(0.93);
     } finally {
       rig.dispose();
     }
@@ -304,8 +408,10 @@ describe('CharacterRig — the player’s body (procedural skinned humanoid)', (
       expect(grip.handL).toBeDefined();
       expect(grip.handR).toBeDefined();
       if (grip.handL === undefined || grip.handR === undefined || grip.hold === null) return;
-      expect(Math.hypot(grip.handL.x - target.x, grip.handL.y - target.y, grip.handL.z - target.z)).toBeLessThan(0.08);
-      expect(Math.hypot(grip.handR.x - target.x, grip.handR.y - target.y, grip.handR.z - target.z)).toBeLessThan(0.08);
+      // Each hand is on its own side of the part's centre (a two-handed carry has width).
+      expect(grip.handL.x).toBeLessThan(target.x - 0.1);
+      expect(grip.handR.x).toBeGreaterThan(target.x + 0.1);
+      expect(Math.abs(grip.handL.y - target.y)).toBeLessThan(0.08);
     } finally {
       rig.dispose();
     }

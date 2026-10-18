@@ -5,7 +5,7 @@
  * composition actually does: boot logs, HUD read-outs, focus acquisition from real
  * vantages, a played BM-1 sequence, console errors, and §36 budget numbers.
  *
- * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|dock|bm1|branch|b2audit] [--production]
+ * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|arms|dock|bm1|branch|b2audit] [--production]
  */
 
 import { spawn } from 'node:child_process';
@@ -648,6 +648,19 @@ window.__probe = {
   weapon: () => {
     const dev = window.__gearwrightDev;
     return typeof dev.weapon === 'function' ? dev.weapon() : null;
+  },
+  /**
+   * The weapon mount (stance-derived since the hand-motion pass): the muzzle and aim direction
+   * the simulation is using this step. Standing still, the muzzle must not move at all — that is
+   * what proves the arms are not driving the gun.
+   */
+  weaponMount: () => {
+    const dev = window.__gearwrightDev;
+    return typeof dev.weaponMount === 'function' ? dev.weaponMount() : null;
+  },
+  weaponMountPresent: () => {
+    const dev = window.__gearwrightDev;
+    return typeof dev.weaponMountPresent === 'function' ? dev.weaponMountPresent() : null;
   },
   /** How many tracers/impacts the presenter handed the renderer on the last frame. */
   weaponEffects: () => {
@@ -2067,6 +2080,149 @@ async function main() {
   if (SCENARIO === 'title') await scenarioTitle(cdp);
   if (SCENARIO === 'focus') await scenarioFocus(cdp);
   if (SCENARIO === 'b2audit') await scenarioB2Audit(cdp);
+  if (SCENARIO === 'arms') {
+    // The hand-motion pass (18/10/2026). Two numbers, both measured rather than looked at:
+    //  - standing still with a weapon drawn, the muzzle must not move (it used to drift forward
+    //    until the arm's reach clamp, because the mount read the rendered hand — a closed loop);
+    //  - the hands, measured *relative to the body*, must not chatter while the player walks.
+    report.data.arms = { body: await waitForPlayerBody(cdp), still: null, walk: null };
+    const read = async () =>
+      evaluate(
+        cdp,
+        '({ c: window.__probe.character(), m: window.__probe.weaponMountPresent() })'
+      );
+
+    const collect = async (ms, every = 60) => {
+      const samples = [];
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        const s = await read();
+        if (s?.c?.handL && s?.c?.handR && s?.m?.muzzle) {
+          samples.push({
+            root: { x: s.c.x, y: s.c.y, z: s.c.z },
+            left: { x: s.c.handL.x - s.c.x, y: s.c.handL.y - s.c.y, z: s.c.handL.z - s.c.z },
+            right: { x: s.c.handR.x - s.c.x, y: s.c.handR.y - s.c.y, z: s.c.handR.z - s.c.z },
+            muzzle: s.m.muzzle,
+            aim: s.m.aimDirection
+          });
+        }
+        await sleep(every);
+      }
+      return samples;
+    };
+
+    const worstStep = (samples) => {
+      let worst = 0;
+      for (let i = 1; i < samples.length; i += 1) {
+        for (const key of ['left', 'right']) {
+          const a = samples[i - 1][key];
+          const b = samples[i][key];
+          worst = Math.max(worst, Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z));
+        }
+      }
+      return worst;
+    };
+    // Where each hand actually is, versus the grip the mount says it should hold: the two are
+    // the same target when the solve is exact, and a gap means the hand is trailing the gun.
+    const gripError = (samples) => {
+      let worst = 0;
+      for (const s of samples) {
+        const dir = s.aim;
+        const rear = {
+          x: s.muzzle.x - dir.x * 0.3,
+          y: s.muzzle.y - dir.y * 0.3,
+          z: s.muzzle.z - dir.z * 0.3
+        };
+        const front = {
+          x: s.muzzle.x - dir.x * 0.12,
+          y: s.muzzle.y - dir.y * 0.12,
+          z: s.muzzle.z - dir.z * 0.12
+        };
+        const left = { x: s.left.x + s.root.x, y: s.left.y + s.root.y, z: s.left.z + s.root.z };
+        const right = { x: s.right.x + s.root.x, y: s.right.y + s.root.y, z: s.right.z + s.root.z };
+        worst = Math.max(
+          worst,
+          Math.hypot(left.x - front.x, left.y - front.y, left.z - front.z),
+          Math.hypot(right.x - rear.x, right.y - rear.y, right.z - rear.z)
+        );
+      }
+      return worst;
+    };
+    const muzzleDrift = (samples) => {
+      let worst = 0;
+      const first = samples[0]?.muzzle;
+      if (first === undefined) return 0;
+      for (const s of samples) {
+        worst = Math.max(
+          worst,
+          Math.hypot(s.muzzle.x - first.x, s.muzzle.y - first.y, s.muzzle.z - first.z)
+        );
+      }
+      return worst;
+    };
+
+    await sleep(900);
+    const still = await collect(1600);
+    report.data.arms.still = {
+      samples: still.length,
+      muzzleDrift: Number(muzzleDrift(still).toFixed(4)),
+      handStep: Number(worstStep(still).toFixed(4)),
+      gripError: Number(gripError(still).toFixed(4))
+    };
+    if (still.length < 10) {
+      report.problems.push('arms: too few samples while standing still (is a body drawn?)');
+    } else {
+      if (still.muzzleDrift > 0.005) {
+        report.problems.push(
+          `arms: the muzzle drifted ${report.data.arms.still.muzzleDrift} m while standing still (a renderer-driven mount loops)`
+        );
+      }
+      if (report.data.arms.still.handStep > 0.005) {
+        report.problems.push(
+          `arms: the hands moved ${report.data.arms.still.handStep} m between samples while standing still`
+        );
+      }
+      if (report.data.arms.still.gripError > 0.02) {
+        report.problems.push(
+          `arms: hands are ${report.data.arms.still.gripError} m off their grip while standing still`
+        );
+      }
+    }
+
+    await keyDown(cdp, 'KeyW');
+    const walk = await collect(1600);
+    await keyUp(cdp, 'KeyW');
+    report.data.arms.walk = {
+      samples: walk.length,
+      handStep: Number(worstStep(walk).toFixed(4)),
+      gripError: Number(gripError(walk).toFixed(4)),
+      // Spread of each hand's body-relative position over the whole walk: drift, not per-frame
+      // noise, is what a broken solve shows (it walks away from the gun over seconds).
+      leftSpread: Number(
+        (Math.max(...walk.map((s) => s.left.z)) - Math.min(...walk.map((s) => s.left.z))).toFixed(4)
+      ),
+      rightSpread: Number(
+        (Math.max(...walk.map((s) => s.right.z)) - Math.min(...walk.map((s) => s.right.z))).toFixed(4)
+      )
+    };
+    if (walk.length < 10) {
+      report.problems.push('arms: too few samples while walking');
+    } else {
+      // The hands are pinned to a body-relative grip, so walking must not move them relative to
+      // the body at all. This held at 0.0001 m; the old solve wandered by up to 0.12 m.
+      if (report.data.arms.walk.handStep > 0.02) {
+        report.problems.push(
+          `arms: a hand jumped ${report.data.arms.walk.handStep} m between samples while walking (body-relative chatter)`
+        );
+      }
+      if (report.data.arms.walk.gripError > 0.02) {
+        report.problems.push(
+          `arms: a hand is ${report.data.arms.walk.gripError} m off its grip while walking (the arm cannot reach it)`
+        );
+      }
+    }
+    drainConsole(cdp);
+  }
   if (SCENARIO === 'hold') {
     // PLAN T1.1 regression: a human-length E press (~160 ms ≈ 5 fixed steps) must grab
     // without rotating the part. The body swap is awaited first: the grip gate is meant to cover

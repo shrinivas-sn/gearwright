@@ -36,6 +36,15 @@ import {
   type CharacterPose,
   type CharacterPoseInput
 } from '../core/character-pose.ts';
+import {
+  CARRY_HAND_SPREAD,
+  MAX_AIM_TWIST,
+  aimYawOf,
+  clampGripTarget,
+  clampTwist,
+  splitGrip,
+  type GripPoint
+} from '../core/arm-ik.ts';
 import type { Vec3 } from '../core/vec3.ts';
 import type { CharacterFacts } from '../ports/render-port.ts';
 
@@ -60,6 +69,20 @@ const HIDE_BELOW_CAMERA_DISTANCE = 0.75;
 const MAX_STRIDE_DELTA = 2;
 /** How fast the arms give way to (or leave) the hand IK, per second. */
 const CARRY_BLEND_RATE = 12;
+/**
+ * The arm's own reach, metres, and the elbow's minimum fold (|upper − fore|), from the joint
+ * lengths the rig is built with — a grip point is clamped into this shell before it is solved.
+ */
+const ARM_MIN_REACH = Math.abs(CHARACTER_ARM.upper - CHARACTER_ARM.fore) + 1e-3;
+const ARM_MAX_REACH = CHARACTER_ARM.upper + CHARACTER_ARM.fore - 1e-3;
+/** How fast the chest turns toward the aim (1/s), and how fast it returns to the walk pose. */
+const AIM_TWIST_RATE = 10;
+const AIM_TWIST_RELEASE_RATE = 6;
+/** Share of the twist carried by each torso joint; the hips are left alone so the feet do not turn. */
+const TWIST_SPINE_SHARE = 0.4;
+const TWIST_CHEST_SHARE = 0.6;
+/** Wrist curl while gripping, radians — a hand wrapped around a grip, not a hand aimed at it. */
+const GRIP_WRIST_CURL = -0.35;
 
 /** Shared up axis (never mutated): used for the world → character-space rotation. */
 const UP = new THREE.Vector3(0, 1, 0);
@@ -223,10 +246,6 @@ export class CharacterRig implements PlayerBody {
     axisZ: 0,
     bend: 0
   };
-  private readonly shoulderRest: Readonly<Record<'L' | 'R', Vec3>> = {
-    L: restPositionOf('upperArmL'),
-    R: restPositionOf('upperArmR')
-  };
   private readonly hipRest: Readonly<Record<'L' | 'R', Vec3>> = {
     L: restPositionOf('thighL'),
     R: restPositionOf('thighR')
@@ -282,6 +301,11 @@ export class CharacterRig implements PlayerBody {
   private readonly previousPosition = new THREE.Vector3();
   private carryBlend = 0;
   private weaponBlend = 0;
+  /** Smoothed torso twist toward the aim, radians (character-space yaw). */
+  private aimTwist = 0;
+  /** The two hands' points on a carried part, world space (split across the body's lateral axis). */
+  private readonly carryLeft: GripPoint = { x: 0, y: 0, z: 0 };
+  private readonly carryRight: GripPoint = { x: 0, y: 0, z: 0 };
   private first = true;
   /** Last grip state, for tooling facts only (never read back into the pose). */
   private lastHolding = false;
@@ -389,16 +413,24 @@ export class CharacterRig implements PlayerBody {
     // ride on. Everything after the pose is presentation-only.
     this.stepFootPlant(state.footGroundY, state.grounded, dt);
 
-    // Carrying: blend the arms from the authored pose onto the solved grip. A drawn
-    // weapon aims each hand at its own end of the gun (rear + front) — the same IK,
-    // one target per side. Carrying wins: a held part keeps both hands.
+    // Square the torso toward the aim *before* the arms are solved: the chest (and therefore the
+    // shoulders) turning with the gun is what lets both arms sit on it instead of one crossing the
+    // body, and it is why the solved hands stay where the solve put them.
+    this.stepAimTwist(state, dt);
+
+    // Carrying: blend the arms from the authored pose onto the solved grip. A carried part is held
+    // at two points either side of its centre — both hands on one atom read as touching a prop,
+    // not holding one. A drawn weapon aims each hand at its own end of the gun (rear + front).
     const holding = state.carrying && state.holdTarget !== null;
     const blendStep = dt * CARRY_BLEND_RATE;
     this.carryBlend = holding
       ? Math.min(1, this.carryBlend + blendStep)
       : Math.max(0, this.carryBlend - blendStep);
     if (this.carryBlend > 0 && state.holdTarget !== null) {
-      this.applyHandAim(state.holdTarget, state.holdTarget, this.carryBlend);
+      const rightX = Math.cos(this.rootYaw);
+      const rightZ = -Math.sin(this.rootYaw);
+      splitGrip(state.holdTarget, rightX, rightZ, CARRY_HAND_SPREAD, this.carryLeft, this.carryRight);
+      this.applyHandAim(this.carryLeft, this.carryRight, this.carryBlend);
     }
     const gripping = !holding && state.weaponGrip !== null;
     this.weaponBlend = gripping
@@ -655,34 +687,90 @@ export class CharacterRig implements PlayerBody {
     const poseHead = this.pose.joints.head;
     neck.rotation.x += (poseNeck.x + wantedPitch * LOOK_PITCH_SHARE - neck.rotation.x) * this.headBlend;
     head.rotation.x += (poseHead.x + wantedPitch * (1 - LOOK_PITCH_SHARE) - head.rotation.x) * this.headBlend;
-    head.rotation.y += (poseHead.y + wantedYaw - head.rotation.y) * this.headBlend;
+    // The head inherits the chest's aim twist, and `wantedYaw` is the yaw *from the body's own
+    // facing* — so the twist has to come back out or a squared-up torso aims the face past the
+    // target (up to 31° with a full-clamp twist).
+    head.rotation.y +=
+      (poseHead.y + wantedYaw - this.aimTwist * TWIST_CHEST_SHARE - head.rotation.y) * this.headBlend;
   }
 
   /**
-   * Place one arm with the solved two-bone aim. The upper arm's basis is built explicitly (X =
-   * the bend axis, Y = opposite the aim, Z = X × Y) rather than with a minimal-twist
-   * `setFromUnitVectors`, so the elbow always folds inside the plane through the target, and the
-   * forearm's bend is simply a rotation about its own X.
+   * Square the torso toward the aim. The legs keep the walk's direction (the hips are untouched),
+   * while the spine and chest carry the twist, clamped so a target behind the character turns the
+   * body as far as it can and no further. The rate limit is what stops a mouse flick from snapping
+   * the whole upper body in one frame.
+   */
+  private stepAimTwist(state: CharacterUpdate, dt: number): void {
+    let forwardX = 0;
+    let forwardZ = 0;
+    if (state.weaponGrip !== null) {
+      forwardX = state.weaponGrip.front.x - state.weaponGrip.rear.x;
+      forwardZ = state.weaponGrip.front.z - state.weaponGrip.rear.z;
+    } else if (state.carrying && state.holdTarget !== null) {
+      forwardX = state.holdTarget.x - this.rootPosition.x;
+      forwardZ = state.holdTarget.z - this.rootPosition.z;
+    }
+
+    let desired = 0;
+    if (Math.abs(forwardX) + Math.abs(forwardZ) > 1e-4) {
+      // World → character yaw (the inverse of the root's own rotation about Y).
+      const cos = Math.cos(this.rootYaw);
+      const sin = Math.sin(this.rootYaw);
+      const localX = forwardX * cos - forwardZ * sin;
+      const localZ = forwardX * sin + forwardZ * cos;
+      desired = clampTwist(aimYawOf(localX, localZ), MAX_AIM_TWIST);
+    }
+    const rate = Math.abs(desired) > Math.abs(this.aimTwist) ? AIM_TWIST_RATE : AIM_TWIST_RELEASE_RATE;
+    this.aimTwist += (desired - this.aimTwist) * Math.min(dt * rate, 1);
+    if (!Number.isFinite(this.aimTwist)) this.aimTwist = 0;
+
+    const spine = this.bones.get('spine');
+    const chest = this.bones.get('chest');
+    if (spine !== undefined) spine.rotation.y += this.aimTwist * TWIST_SPINE_SHARE;
+    if (chest !== undefined) chest.rotation.y += this.aimTwist * TWIST_CHEST_SHARE;
+  }
+
+  /**
+   * Place one arm with the solved two-bone aim, in **world space from the posed shoulder**.
+   *
+   * The old version solved from the rig's *rest* shoulder offset and inverted only the chest ×
+   * shoulder eulers. The gait rotates the hips and spine every frame, so the shoulder it aimed
+   * from was several centimetres from the real one and the frame it aimed *in* was wrong by the
+   * same amount — the hand orbited its target with the walk cycle. Reading the bone's own world
+   * position and its parent's world rotation removes both errors and needs no bookkeeping: the
+   * pose (including the aim twist) is already in the matrices.
+   *
+   * The target is clamped into the arm's reach shell first, so an unreachable part/target is
+   * *aimed at* with the arm at its length instead of the solve inventing a pose.
    */
   private applyHandAim(targetL: Vec3, targetR: Vec3, blend: number): void {
+    // One subtree refresh for both arms: the shoulder bones above them are already posed.
+    this.object.updateMatrixWorld(true);
     for (const side of ['L', 'R'] as const) {
       const targetWorld = side === 'L' ? targetL : targetR;
-      this.scratchTarget.set(targetWorld.x, targetWorld.y, targetWorld.z);
-      // World → character-root space: the root is a pure yaw + translation, so this is exact and
-      // needs no matrix refresh.
-      this.scratchTarget.sub(this.object.position);
-      this.scratchTarget.applyAxisAngle(UP, -this.object.rotation.y);
-
       const upperArm = this.bones.get(side === 'L' ? 'upperArmL' : 'upperArmR');
       const foreArm = this.bones.get(side === 'L' ? 'foreArmL' : 'foreArmR');
-      const shoulderId: CharacterJointId = side === 'L' ? 'shoulderL' : 'shoulderR';
+      const hand = this.bones.get(side === 'L' ? 'handL' : 'handR');
       if (upperArm === undefined || foreArm === undefined) continue;
 
-      const rest = this.shoulderRest[side];
-      this.scratchShoulder.set(rest.x, rest.y + this.effectiveRise, rest.z);
+      upperArm.getWorldPosition(this.scratchShoulder);
+      const reach = clampGripTarget(
+        this.scratchShoulder,
+        targetWorld,
+        ARM_MIN_REACH,
+        ARM_MAX_REACH,
+        this.scratchTarget
+      );
+      if (!(reach > 0)) continue;
       // Vector3 is structurally a Vec3, so the solve reads the scratch vectors directly —
       // animating the character allocates no objects at all.
-      const solved = solveArmAim(this.scratchShoulder, this.scratchTarget, CHARACTER_ARM.upper, CHARACTER_ARM.fore, this.aim);
+      const solved = solveArmAim(
+        this.scratchShoulder,
+        this.scratchTarget,
+        CHARACTER_ARM.upper,
+        CHARACTER_ARM.fore,
+        this.aim
+      );
       if (solved === null) continue;
 
       // Bone basis: local -Y points along the aim, local +X is the shared bend axis.
@@ -692,23 +780,18 @@ export class CharacterRig implements PlayerBody {
       this.scratchMatrix.makeBasis(this.scratchX, this.scratchY, this.scratchZ);
       this.worldQuaternion.setFromRotationMatrix(this.scratchMatrix);
 
-      // The pose already rotates the chest and shoulder, so the bone's *local* rotation is the
-      // solved one expressed in the parent's frame.
-      this.euler.set(
-        this.pose.joints.chest.x,
-        this.pose.joints.chest.y,
-        this.pose.joints.chest.z
-      );
-      this.parentQuaternion.setFromEuler(this.euler);
-      const shoulder = this.pose.joints[shoulderId];
-      this.euler.set(shoulder.x, shoulder.y, shoulder.z);
-      this.parentQuaternion.multiply(this.poseQuaternion.setFromEuler(this.euler));
-      this.worldQuaternion.premultiply(this.parentQuaternion.invert());
-
+      // Express the solved world orientation in the *actual* parent frame (shoulder bone, posed).
+      const parent = upperArm.parent;
+      if (parent !== null) {
+        parent.getWorldQuaternion(this.parentQuaternion);
+        this.worldQuaternion.premultiply(this.parentQuaternion.invert());
+      }
       this.poseQuaternion.setFromEuler(upperArm.rotation);
       this.poseQuaternion.slerp(this.worldQuaternion, blend);
       upperArm.quaternion.copy(this.poseQuaternion);
       foreArm.rotation.x += (solved.bend - foreArm.rotation.x) * blend;
+      // A gripping wrist curls onto the grip instead of continuing the forearm's line.
+      if (hand !== undefined) hand.rotation.x += (GRIP_WRIST_CURL - hand.rotation.x) * blend;
     }
   }
 

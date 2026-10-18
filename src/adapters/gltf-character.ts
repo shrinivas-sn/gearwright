@@ -32,6 +32,16 @@ import {
   type ClipWeights
 } from '../core/character-clips.ts';
 import { GaitDriver } from '../core/character-pose.ts';
+import {
+  CARRY_HAND_SPREAD,
+  ElbowPole,
+  MAX_AIM_TWIST,
+  aimYawOf,
+  clampGripTarget,
+  clampTwist,
+  splitGrip,
+  type GripPoint
+} from '../core/arm-ik.ts';
 import type { Vec3 } from '../core/vec3.ts';
 import type { CharacterFacts } from '../ports/render-port.ts';
 import type { CharacterUpdate, PlayerBody } from './character-rig.ts';
@@ -51,6 +61,13 @@ const MAX_STRIDE_DELTA = 2;
 const CARRY_BLEND_RATE = 12;
 /** Below this a direction is degenerate: a pole has to be invented, and a bone must not be written. */
 const MIN_AXIS = 1e-4;
+/** How fast the elbow's bending plane may turn (rad/s), so a fast aim sweeps instead of flipping. */
+const POLE_TURN_RATE = 8;
+/** Share of the aim twist carried by each spine bone (Mixamo has Spine, Spine1, Spine2). */
+const TWIST_SHARES = [0.35, 0.65] as const;
+/** How fast the chest turns toward the aim (1/s), and how fast it returns. */
+const AIM_TWIST_RATE = 10;
+const AIM_TWIST_RELEASE_RATE = 6;
 
 interface ArmChain {
   /** Upper-arm bone: its origin is the shoulder joint. */
@@ -142,23 +159,38 @@ export class GltfCharacterBody implements PlayerBody {
   private lastHolding = false;
   private carryBlend = 0;
   private weaponBlend = 0;
+  /** The bones that carry the torso twist toward the aim (empty when the rig has no spine chain). */
+  private readonly twistBones: ReadonlyArray<{ bone: THREE.Object3D; share: number }>;
+  /** Smoothed twist, radians in character-space yaw. */
+  private aimTwist = 0;
+  /** The character's world right axis, from the *game* facing yaw (not the model's own offset). */
+  private bodyRightX = 1;
+  private bodyRightZ = 0;
+  /** The two hands' points on a carried part, world space. */
+  private readonly carryLeft: GripPoint = { x: 0, y: 0, z: 0 };
+  private readonly carryRight: GripPoint = { x: 0, y: 0, z: 0 };
+  /** One elbow plane per arm: they must not share state, or the arms trade sides. */
+  private readonly elbowPoleLeft = new ElbowPole();
+  private readonly elbowPoleRight = new ElbowPole();
 
   // Scratch: the hot path allocates nothing (ARCH §14).
   private readonly vShoulder = new THREE.Vector3();
   private readonly vElbow = new THREE.Vector3();
   private readonly vWrist = new THREE.Vector3();
   private readonly vAxis = new THREE.Vector3();
-  private readonly vPole = new THREE.Vector3();
   private readonly vUpper = new THREE.Vector3();
   private readonly vFore = new THREE.Vector3();
   private readonly vDir = new THREE.Vector3();
   private readonly vTarget = new THREE.Vector3();
   private readonly vUp = new THREE.Vector3(0, 1, 0);
-  private readonly vSide = new THREE.Vector3(1, 0, 0);
   private readonly qDelta = new THREE.Quaternion();
   private readonly qBlend = new THREE.Quaternion();
   private readonly qWorld = new THREE.Quaternion();
   private readonly qParent = new THREE.Quaternion();
+  /** Clamped grip point (a Vector3 is structurally a GripPoint). */
+  private readonly vClamped = new THREE.Vector3();
+  private readonly vPreferred = new THREE.Vector3();
+  private readonly vPoleOut = new THREE.Vector3();
 
   constructor(scene: THREE.Object3D, animations: readonly THREE.AnimationClip[], height: number) {
     this.object.add(scene);
@@ -235,6 +267,15 @@ export class GltfCharacterBody implements PlayerBody {
     const right = this.arm(bones, ['rightarm'], ['rightforearm'], ['righthand']);
     this.arms = left === null || right === null ? null : { left, right };
 
+    // 6. The spine chain the aim twist writes to: the upper two spine bones, so the torso bends
+    //    through the twist instead of hinging at one joint. A rig with none simply does not twist.
+    const twistBones: Array<{ bone: THREE.Object3D; share: number }> = [];
+    for (const [index, name] of (['spine1', 'spine2'] as const).entries()) {
+      const bone = findBone(bones, [name]);
+      if (bone !== null) twistBones.push({ bone, share: TWIST_SHARES[index] ?? 0.5 });
+    }
+    this.twistBones = twistBones;
+
     this.object.visible = false;
 
     // One line of instrumented truth, so a run records what was *measured* about this model rather
@@ -297,8 +338,12 @@ export class GltfCharacterBody implements PlayerBody {
     const speedFactor = Math.min(Math.max(speed, 0), runSpeed) / runSpeed;
 
     this.object.position.set(px, py, pz);
-    this.object.rotation.y =
-      (Number.isFinite(state.facingYaw) ? state.facingYaw : 0) + this.yawOffset;
+    const facingYaw = Number.isFinite(state.facingYaw) ? state.facingYaw : 0;
+    this.object.rotation.y = facingYaw + this.yawOffset;
+    // The *game's* lateral axis, not the model's (the file may be facing +Z): the elbow poles
+    // are laid out from this, so they cannot depend on which way the asset was authored.
+    this.bodyRightX = Math.cos(facingYaw);
+    this.bodyRightZ = -Math.sin(facingYaw);
 
     // The gait advances on distance travelled, exactly like the procedural rig, so both bodies put
     // their feet down in the same places for the same input.
@@ -324,17 +369,31 @@ export class GltfCharacterBody implements PlayerBody {
 
     this.mixer?.update(dt);
 
+    // Square the torso toward the aim *after* the clips and *before* the arms: the mixer owns the
+    // pose, so the twist is written on top of it (and overwritten by the next clip sample, which
+    // is why nothing accumulates). The shoulders the IK reads then already face the target.
+    this.stepAimTwist(state, dt);
+
     // Carrying: the arms are solved onto the held part *after* the clips, so the authored pose
-    // gives way to the grip instead of fighting it.
+    // gives way to the grip instead of fighting it. The part is held at two points either side
+    // of its centre, not both hands on one atom.
     const holding = state.carrying && state.holdTarget !== null;
     const blendStep = dt * CARRY_BLEND_RATE;
     this.carryBlend = holding
       ? Math.min(1, this.carryBlend + blendStep)
       : Math.max(0, this.carryBlend - blendStep);
     if (this.carryBlend > 0 && state.holdTarget !== null && this.arms !== null) {
+      splitGrip(
+        state.holdTarget,
+        this.bodyRightX,
+        this.bodyRightZ,
+        CARRY_HAND_SPREAD,
+        this.carryLeft,
+        this.carryRight
+      );
       this.object.updateMatrixWorld(true);
-      this.aimArm(this.arms.left, state.holdTarget, this.carryBlend);
-      this.aimArm(this.arms.right, state.holdTarget, this.carryBlend);
+      this.aimArm(this.arms.left, this.carryLeft, 'left', this.carryBlend, dt);
+      this.aimArm(this.arms.right, this.carryRight, 'right', this.carryBlend, dt);
     }
     // A drawn weapon aims each hand at its own end of the gun (rear + front) — the same
     // IK, one target per arm. Carrying wins: a held part keeps both hands.
@@ -344,8 +403,8 @@ export class GltfCharacterBody implements PlayerBody {
       : Math.max(0, this.weaponBlend - blendStep);
     if (this.weaponBlend > 0 && state.weaponGrip !== null && this.arms !== null) {
       this.object.updateMatrixWorld(true);
-      this.aimArm(this.arms.left, state.weaponGrip.front, this.weaponBlend);
-      this.aimArm(this.arms.right, state.weaponGrip.rear, this.weaponBlend);
+      this.aimArm(this.arms.left, state.weaponGrip.front, 'left', this.weaponBlend, dt);
+      this.aimArm(this.arms.right, state.weaponGrip.rear, 'right', this.weaponBlend, dt);
     }
     // Facts-only snapshot of the grip (never read back into the pose).
     this.lastHolding = holding;
@@ -421,47 +480,65 @@ export class GltfCharacterBody implements PlayerBody {
   }
 
   /**
-   * Two-bone IK onto the held part, solved in **world** space so the model's own bone axes (which
+   * Two-bone IK onto a grip point, solved in **world** space so the model's own bone axes (which
    * differ between exporters) never enter the maths: point the upper arm so the shoulder→elbow line
    * sits at the interior angle the law of cosines demands, then bend the elbow onto the target.
-   * The elbow keeps the side the current pose already has it on, so the arms do not roll.
    *
-   * The target is almost always beyond the arm (the carry lead is 1.35 m; a Mixamo arm reaches
-   * ~0.6 m), so in practice this clamps at full extension pointing at the part — which is exactly
-   * what the harness's reach-shape gate asserts.
+   * Three corrections on the arm pass (18/10/2026):
+   *  - The elbow plane no longer comes from the clip's own elbow. Near full extension that
+   *    reference is almost degenerate, so it flipped between frames and whipped the forearm. Each
+   *    arm now owns an `ElbowPole` — down and away from the body on its own side — that turns at a
+   *    bounded rate.
+   *  - The raw target was used, and a carried part's centre is 1.35 m from a ~0.6 m arm: the solve
+   *    sat at full extension pointing at it. The point is clamped into the arm's reach shell with
+   *    its direction preserved, so the elbow keeps a bend and the hand still reaches toward the part.
+   *  - The two arms have separate pole state, so one cannot inherit the other's side mid-solve.
    */
-  private aimArm(chain: ArmChain, target: Vec3, blend: number): void {
+  private aimArm(
+    chain: ArmChain,
+    target: Vec3,
+    side: 'left' | 'right',
+    blend: number,
+    dt: number
+  ): void {
     chain.upper.getWorldPosition(this.vShoulder);
     chain.elbow.getWorldPosition(this.vElbow);
     chain.wrist.getWorldPosition(this.vWrist);
     const upperLength = this.vElbow.distanceTo(this.vShoulder);
     const foreLength = this.vWrist.distanceTo(this.vElbow);
     const reach = upperLength + foreLength;
-    if (!(reach > 0)) return;
+    if (!(reach > 0) || !(upperLength > 0) || !(foreLength > 0)) return;
 
-    // Direction to the part, clamped into what the arm can actually span.
-    const axis = this.vAxis.set(
-      target.x - this.vShoulder.x,
-      target.y - this.vShoulder.y,
-      target.z - this.vShoulder.z
+    // The grip point, clamped into what this arm can actually span (direction preserved).
+    const distance = clampGripTarget(
+      this.vShoulder,
+      target,
+      Math.abs(upperLength - foreLength) + 1e-3,
+      reach - 1e-3,
+      this.vClamped
     );
-    const rawDistance = axis.length();
-    if (!(rawDistance > 0)) return;
-    axis.multiplyScalar(1 / rawDistance);
-    const distance = Math.min(
-      Math.max(rawDistance, Math.abs(upperLength - foreLength) + 1e-3),
-      reach * 0.999
+    if (!(distance > 0)) return;
+
+    const axis = unitInto(
+      this.vAxis.set(
+        this.vClamped.x - this.vShoulder.x,
+        this.vClamped.y - this.vShoulder.y,
+        this.vClamped.z - this.vShoulder.z
+      )
     );
 
-    // Bend plane: keep the elbow where the clip already has it (the perpendicular part of the
-    // shoulder→elbow direction), falling back to a stable pole invented from the world axes.
-    const currentUpper = unitInto(this.vUpper.subVectors(this.vElbow, this.vShoulder));
-    const pole = this.vPole.copy(currentUpper).addScaledVector(axis, -currentUpper.dot(axis));
-    if (pole.lengthSq() < MIN_AXIS * MIN_AXIS) {
-      pole.crossVectors(axis, this.vUp);
-      if (pole.lengthSq() < MIN_AXIS * MIN_AXIS) pole.crossVectors(axis, this.vSide);
-    }
-    unitInto(pole);
+    // Elbows hang down and slightly away from the body on their own side. `bodyRight*` is the
+    // game's lateral axis, so this is the same shape whichever way the asset was authored.
+    const outward = side === 'left' ? -0.4 : 0.4;
+    this.vPreferred.set(this.bodyRightX * outward, -1, this.bodyRightZ * outward);
+    const pole = this.vPoleOut;
+    (side === 'left' ? this.elbowPoleLeft : this.elbowPoleRight).update(
+      axis,
+      this.vPreferred,
+      dt,
+      POLE_TURN_RATE,
+      pole
+    );
 
     const cos = Math.min(
       Math.max(
@@ -478,17 +555,63 @@ export class GltfCharacterBody implements PlayerBody {
         .multiplyScalar(Math.cos(bend))
         .addScaledVector(pole, Math.sin(bend))
     );
+    const currentUpper = unitInto(this.vUpper.subVectors(this.vElbow, this.vShoulder));
     this.rotateBoneWorld(chain.upper, currentUpper, desiredUpper, blend);
 
-    // The forearm's own direction is read after the upper arm moved, then aimed at the target.
+    // The forearm's own direction is read after the upper arm moved, then aimed at the grip.
     chain.upper.updateMatrixWorld(true);
     chain.elbow.getWorldPosition(this.vElbow);
     chain.wrist.getWorldPosition(this.vWrist);
     const currentFore = unitInto(this.vFore.subVectors(this.vWrist, this.vElbow));
-    const desiredWrist = this.vTarget.copy(this.vShoulder).addScaledVector(axis, distance);
-    const desiredFore = unitInto(this.vDir.subVectors(desiredWrist, this.vElbow));
+    const desiredFore = unitInto(this.vDir.subVectors(this.vClamped, this.vElbow));
     this.rotateBoneWorld(chain.elbow, currentFore, desiredFore, blend);
     chain.elbow.updateMatrixWorld(true);
+  }
+
+  /**
+   * Square the torso toward the aim. The clip owns the pose, so this writes a world-space yaw onto
+   * the upper spine bones *after* the mixer and *before* the arms — the next mixer sample replaces
+   * it, so nothing accumulates.
+   */
+  private stepAimTwist(state: CharacterUpdate, dt: number): void {
+    let forwardX = 0;
+    let forwardZ = 0;
+    if (state.weaponGrip !== null) {
+      forwardX = state.weaponGrip.front.x - state.weaponGrip.rear.x;
+      forwardZ = state.weaponGrip.front.z - state.weaponGrip.rear.z;
+    } else if (state.carrying && state.holdTarget !== null) {
+      forwardX = state.holdTarget.x - this.object.position.x;
+      forwardZ = state.holdTarget.z - this.object.position.z;
+    }
+
+    let desired = 0;
+    if (Math.abs(forwardX) + Math.abs(forwardZ) > 1e-4) {
+      // World → character yaw without the model's own facing offset: the inverse of the game's
+      // `facingYaw` rotation, which `bodyRight*` already encodes.
+      const localX = forwardX * this.bodyRightX + forwardZ * this.bodyRightZ;
+      const localZ = -forwardX * this.bodyRightZ + forwardZ * this.bodyRightX;
+      desired = clampTwist(aimYawOf(localX, localZ), MAX_AIM_TWIST);
+    }
+    const rate = Math.abs(desired) > Math.abs(this.aimTwist) ? AIM_TWIST_RATE : AIM_TWIST_RELEASE_RATE;
+    this.aimTwist += (desired - this.aimTwist) * Math.min(dt * rate, 1);
+    if (!Number.isFinite(this.aimTwist)) this.aimTwist = 0;
+
+    for (const { bone, share } of this.twistBones) this.twistAboutUp(bone, this.aimTwist * share);
+  }
+
+  /** Rotate a bone by `angle` about the world up axis, expressed back in its parent's frame. */
+  private twistAboutUp(bone: THREE.Object3D, angle: number): void {
+    if (!Number.isFinite(angle) || Math.abs(angle) < 1e-6) return;
+    bone.getWorldQuaternion(this.qWorld);
+    this.qDelta.setFromAxisAngle(this.vUp, angle);
+    this.qWorld.premultiply(this.qDelta);
+    const parent = bone.parent;
+    if (parent === null) {
+      bone.quaternion.copy(this.qWorld);
+      return;
+    }
+    parent.getWorldQuaternion(this.qParent);
+    bone.quaternion.copy(this.qParent.invert()).multiply(this.qWorld);
   }
 
   /**
