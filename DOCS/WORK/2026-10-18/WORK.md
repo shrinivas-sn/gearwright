@@ -87,8 +87,16 @@ the *frame order*.
 
 ## Owed / carried forward
 
-1. **A carried part is still 1.35 m from a 0.46 m arm.** The body now aims at it with a bent elbow
-   and a spread grip instead of a locked-straight reach, but the hands cannot touch a part floated
-   that far out. Fixing it is a **design decision** (carry distance vs. part size vs. the part
-   clipping the torso), not a rig change — `holdDistance` is deliberately untouched by this pass.
+1. **A carried part is still 1.35 m from a 0.46 m arm — and the obvious fix was tried and
+   rejected by a gate.** The body now aims at it with a bent elbow and a spread grip instead of a
+   locked-straight reach, but the hands cannot touch a part floated that far out. `holdDistance`
+   1.35 → **0.72** / `holdHeight` 1.05 → **1.22** is the value the imported body's 0.464 m arm can
+   actually span, and it was measured: `hold` stayed green (dots 0.947 / 0.930) — but **`dock` went
+   red**: *"the held part was soft-detached mid-carry"*. A part floating 0.63 m closer sits inside
+   the machinery it is being aimed into, so a blocked follow can no longer keep station and the part
+   drifts past `maxHoldRange` (the trace shows the gap walking out to 2.53 m). The change was
+   reverted and `dock` re-run **green with this pass's rig untouched** (docked in 1 attempt, not
+   dropped), so the carry read is fixed on the *body* side only. Re-tuning the distance needs its
+   own pass that reads the docking geometry (part size, socket clearance, `maxHoldRange`) rather
+   than the rig.
 2. **The `branch` curve on the 17/10 code** is still the one unproven gate (`DOCS/STATUS.md`).

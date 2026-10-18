@@ -138,6 +138,13 @@ export interface ManipulationTuning {
 }
 
 export const DEFAULT_MANIPULATION_TUNING: ManipulationTuning = {
+  // Hand-motion pass (18/10/2026): `holdDistance` was tried at 0.72 m / 1.22 m high, which is what
+  // the imported body's 0.464 m arm can actually reach — and the `dock` browser scenario went red
+  // ("the held part was soft-detached mid-carry"): a part floating 0.63 m closer sits inside the
+  // machinery it is being aimed into, so a blocked follow can no longer keep station and the part
+  // drifts past `maxHoldRange`. The carry read is therefore fixed on the *body* side — the arms
+  // bend onto the part at its own reach instead of locking straight — and this distance stays a
+  // gameplay decision with its own pass (part size vs. docking geometry), not a rig tweak.
   holdDistance: 1.35,
   holdHeight: 1.05,
   // Carry-feel pass (17/10/2026). The blend is the *lag* of the carried part: for a

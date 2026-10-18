@@ -35,11 +35,13 @@
 
 ## Next up (start here)
 
-1. **Decide the carry distance — a part is still held 1.35 m from a 0.46 m arm.** The body now aims
-   at it with a bent elbow and a spread grip instead of a locked-straight reach, but the hands cannot
-   physically touch a part floated that far out. It is a design decision (hold distance vs. part size
-   vs. the part clipping the torso / breaking `dock` and `branch` aiming), not a rig change — so it
-   needs stating before any code. `holdDistance` was deliberately left at 1.35 m by this pass.
+1. **The carry distance needs its own pass — the rig-side fix is in, the tuning attempt was
+   rejected.** A carried part is still floated 1.35 m from a 0.46 m arm, and the value that arm can
+   actually span (`holdDistance` 0.72 / `holdHeight` 1.22) was tried on 18/10: `hold` stayed green
+   but **`dock` went red** ("the held part was soft-detached mid-carry" — a part 0.63 m closer sits
+   inside the machinery it is aimed into, so a blocked follow drifts past `maxHoldRange`). Reverted;
+   `dock` re-run green with the new rig. The next pass has to read the docking geometry (part size,
+   socket clearance) instead of moving the number.
 2. **Watch the arms in motion on the live link** (`?log=1`): fire a burst (the hands should stay on
    the gun through the recoil kick), walk with a part, and turn the camera hard — the elbows should
    sweep, never flip.
