@@ -1,3 +1,74 @@
+# PLAN — hand & arm motion pass
+
+**Written 18/10/2026** (supersedes the 16/10 version of this file; its phases are kept below as the
+record of the pass that shipped, and are closed). Temporary file — deleted when this closes.
+
+**Goal (owner, verbatim):** the firing mechanics are good; the character's **hands move oddly — broken
+movements**. Make the arms and hands move with proper physics and mechanics, the way a battle-royale
+shooter (BGMI/PUBG) does: hands that hold a weapon or a part at a believable distance, elbows that
+keep a stable plane, wrists that do not break, and motion that absorbs sharp aim changes instead of
+snapping.
+
+**Root causes found by reading the seams (before any code):**
+1. **A render→simulation feedback loop.** `main.ts`'s `resolveWeaponMount` read
+   `characterFacts().handR` on every fixed step, then put the muzzle 0.32 m along the aim and the
+   rear grip 0.30 m back from it. The right hand's IK target was therefore `handR_prev + 0.02·aim` —
+   the arm chased its own output forward until the reach clamp locked it straight, and every wobble
+   in the hand re-steered the gun. This is the main "broken" motion.
+2. **Grip targets outside physical reach.** The carry target is the part's *centre*, 1.35 m ahead of
+   a 0.56 m arm, so the carry solve clamped to full extension every frame and the hands hovered in
+   the air beside the part. Both bodies need a reach-clamped grip point, not the object centre.
+3. **Unposed shoulder frame (procedural rig).** `applyHandAim` solved from the *rest* shoulder
+   position and inverted only the chest×shoulder eulers, ignoring the hips and spine that the gait
+   rotates every frame — so the solved hand orbited its target with the walk cycle.
+4. **Clip-derived elbow pole (imported body).** `aimArm` reused whichever side the current clip had
+   the elbow on; near full extension that is almost degenerate, so the bend plane flipped between
+   frames and the forearm whipped.
+5. **No inertia and no wrist control.** The IK wrote the wrist position only, leaving the hand bone
+   with the clip's orientation through an arbitrary forearm rotation (a broken wrist), and followed
+   aim changes instantly (a mouse flick teleported the arms).
+
+**What this changes (by layer):**
+- `src/core/arm-ik.ts` (new, L0) — reach clamp, stable elbow pole (rate-limited, no flips), and a
+  critically damped follower for grip targets; pure numbers, tested without a GPU.
+- `src/core/weapon-mount.ts` (new, L0) — the weapon mount becomes a pure function of the player's
+  stance and the camera's aim line. It no longer reads the renderer, so the loop is gone by
+  construction.
+- `src/adapters/character-rig.ts` — solve the arms from the *posed* shoulder and the *actual* parent
+  rotation, clamp the target to reach, damp the follow, and orient the wrist onto the grip.
+- `src/adapters/gltf-character.ts` — stable pole, clamped target, damped follow, wrist orientation
+  preserved instead of inherited from an arbitrary elbow rotation.
+- `src/main.ts` — compose the mount from the core function (no `characterFacts()` in the step).
+- `tests/` — pure tests for the new maths plus rig-level stability tests: a static target must not
+  drift, a swept aim must produce a bounded per-frame hand step, and a target beyond reach must not
+  produce a locked-straight arm with a hovering hand.
+- `DOCS/` — a WORK log for 18/10, `STATUS.md`, the `README.md` index row.
+
+**Done means:** typecheck clean; the full suite green with the new tests (each new assertion verified
+against the old behaviour where it can be); build clean; `boot`, `guns` and `hold` green in real
+Chrome, with a recorded stability number (max hand step per frame at walk and at a swept aim) rather
+than a visual claim.
+
+**Out of scope:** new content, animation assets, enemy AI/damage, and any change to the carry
+*simulation* distance (`holdDistance` stays 1.35 m; the body reaches toward it properly instead of
+being re-tuned into the chest).
+
+## Status — landed (18/10/2026)
+
+All six causes are fixed and proven (log + numbers: `DOCS/WORK/2026-10-18/WORK.md`): the mount is a
+pure function of stance and aim, the presentation mount runs before the body on the same interpolated
+stance, the grip points sit inside the imported body's real 0.464 m arm, the procedural rig solves
+from its posed shoulder and actual parent frame, each arm owns a rate-limited `ElbowPole` with
+reach-clamped targets, a carried part is held at two spread points, and the torso squares up to the
+aim on both bodies. 792 tests, clean build, and a new `arms` harness case measuring **0.0001 m** of
+body-relative hand movement while walking (0.119 m before).
+
+What closes this file: the **carry-distance decision** in `DOCS/STATUS.md` `## Next up` #1 — a part
+is still floated 1.35 m from a 0.46 m arm, so the hands aim at it without touching it. That is
+content/design, not rig, so it is deferred deliberately rather than half-done here.
+
+---
+
 # PLAN — locomotion feel + weapons pass
 
 **Written 16/10/2026** (supersedes the 15/10/2026 version of this file; that plan's Phases 1–2 are
