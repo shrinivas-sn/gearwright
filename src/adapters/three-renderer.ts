@@ -220,8 +220,8 @@ export class ThreeRenderer implements RenderPort {
   private holding = false;
   /**
    * Last drawn weapon's grip, remembered from `setWeaponView` for the body's IK. `setWeaponView`
-   * runs after `syncPlayerMarker` in the frame (main.ts), so the body reads last frame's mount —
-   * a 33 ms lag on the grip, invisible and never fed back into logic (same as the held part).
+   * runs *before* `syncPlayerMarker` in the frame (main.ts, 18/10 pass), so the body reads this
+   * frame's mount — the grip and the hands cannot trail each other. Still never fed back into logic.
    */
   private readonly weaponGripRear = { x: 0, y: 0, z: 0 };
   private readonly weaponGripFront = { x: 0, y: 0, z: 0 };
