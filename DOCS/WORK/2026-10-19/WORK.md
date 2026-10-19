@@ -58,7 +58,9 @@ A five-part pass, all fixed at the source rather than tuned around:
   +0.65 kB gzip**; `gltf-character` chunk 11.28 kB (gzip 4.06) from 11.08 (4.00); CSS 11.85 kB
   (gzip 2.69).
 - **`boot --production`** — exit 0, **`problems: []`**, body `gltf` (49 bones / 11 376 triangles,
-  clips idle/walk/run), `walkSpeed: 4` live.
+  clips idle/walk/run), `walkSpeed: 4` live. The new layout gate reads the weapon panel at
+  **300 × 119 px** with **five slot chips, 72–83 px wide each, all inside the panel** — they wrap
+  onto three rows instead of overflowing as bare text.
 - **`arms` (dev)** — exit 0, both phases green: standing **0.0000 m** muzzle drift, **0.0000 m**
   hand step, **0.0000 m** grip error; walking **0.0001 m** hand step, **0.0000 m** grip error,
   ≤0.0001 m body-relative spread, **0 hand-inside-torso samples**. The new wrist solve did not move

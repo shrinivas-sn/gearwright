@@ -1085,6 +1085,55 @@ async function scenarioBoot(cdp) {
   report.data.boot = { state, hud, bootStatus, overlay: stats.overlay };
   drainConsole(cdp);
 
+  // Weapon HUD layout (19/10/2026). The weapons pass shipped this markup with no CSS at all,
+  // so the read-out was an unstyled list: "the boxes and the slots don't fit" was literally
+  // true. Pin the fix in layout terms — a real panel, and every visible slot chip a real box
+  // that sits *inside* that panel. Absent when the weapon system is composed off (`?guns=0`).
+  const weaponLayout = await evaluate(
+    cdp,
+    `(() => {
+      const panel = document.querySelector('.gw-hud-weapon');
+      if (panel === null) return null;
+      if (getComputedStyle(panel).display === 'none') return null;
+      const p = panel.getBoundingClientRect();
+      const chips = [...panel.querySelectorAll('.gw-hud-weapon-slots > li')]
+        .filter((li) => !li.classList.contains('gw-hud-hidden'))
+        .map((li) => {
+          const b = li.getBoundingClientRect();
+          return {
+            text: li.textContent,
+            width: b.width,
+            height: b.height,
+            inside:
+              b.left >= p.left - 1 && b.right <= p.right + 1 && b.top >= p.top - 1 && b.bottom <= p.bottom + 1
+          };
+        });
+      return {
+        panel: { width: p.width, height: p.height, left: p.left, right: p.right, top: p.top, bottom: p.bottom },
+        chips
+      };
+    })()`
+  );
+  report.data.weaponLayout = weaponLayout;
+  if (weaponLayout !== null) {
+    if (!(weaponLayout.panel.width > 100 && weaponLayout.panel.height > 40)) {
+      report.problems.push(
+        `hud: the weapon panel is ${weaponLayout.panel.width}×${weaponLayout.panel.height} px (it has no usable surface)`
+      );
+    }
+    if (weaponLayout.chips.length === 0) {
+      report.problems.push('hud: the weapon panel draws no slot chips');
+    }
+    for (const chip of weaponLayout.chips) {
+      if (!(chip.width > 0 && chip.height > 0)) {
+        report.problems.push(`hud: slot chip "${chip.text}" has no box (${chip.width}×${chip.height} px)`);
+      }
+      if (!chip.inside) {
+        report.problems.push(`hud: slot chip "${chip.text}" overflows the weapon panel`);
+      }
+    }
+  }
+
   // The player's body: whichever of the two the composition settled on — the procedural rig
   // (19 bones, generated) or the imported humanoid (CHARACTER-3D.md §5, fetched in the background).
   // This is the only place that can prove the real composition builds it, draws it, and stands it
