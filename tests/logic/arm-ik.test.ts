@@ -4,14 +4,13 @@ import {
   CARRY_HAND_SPREAD,
   DEFAULT_TORSO_CLEARANCE,
   ElbowPole,
-  WRIST_BEND_LIMIT,
   aimYawOf,
   clampGripTarget,
   clampOutsideTorso,
+  clampTurnDirection,
   clampTwist,
   splitGrip,
   wrapAngle,
-  wristAimDirection,
   type GripPoint
 } from '../../src/core/arm-ik.ts';
 
@@ -153,37 +152,34 @@ describe('clampOutsideTorso — a reach never passes through the body', () => {
   });
 });
 
-describe('wristAimDirection — the hand points at its grip, with a bounded bend', () => {
-  it('points straight at a reachable grip', () => {
+describe('clampTurnDirection — the wrist settles onto the arm in bounded steps', () => {
+  it('takes the target outright when it is inside the step', () => {
     const out = point(0, 0, 0);
-    const ok = wristAimDirection(point(0.2, 1.4, 0), point(0.2, 1.4, -0.3), { x: 0, y: 0, z: -1 }, WRIST_BEND_LIMIT, out);
+    const ok = clampTurnDirection({ x: 0, y: 0, z: -1 }, { x: 0, y: 0, z: -1 }, 0.5, out);
     expect(ok).toBe(true);
-    expect(out.x).toBeCloseTo(0, 6);
-    expect(out.y).toBeCloseTo(0, 6);
     expect(out.z).toBeCloseTo(-1, 6);
   });
 
-  it('clamps a grip behind the palm to the wrist’s bend limit', () => {
+  it('turns by exactly the rate limit, no more', () => {
     const out = point(0, 0, 0);
-    // The forearm points forward; the grip sits diagonally behind the wrist. The wrist may
-    // rotate only WRIST_BEND_LIMIT away from the forearm, so the hand cannot fold backwards.
-    const ok = wristAimDirection(point(0, 1.4, 0), point(1, 1.4, 1), { x: 0, y: 0, z: -1 }, WRIST_BEND_LIMIT, out);
+    // 90° away, allowed 0.5 rad this step: the result stays 0.5 rad from the current direction.
+    const ok = clampTurnDirection({ x: 0, y: 0, z: -1 }, { x: 1, y: 0, z: 0 }, 0.5, out);
     expect(ok).toBe(true);
-    expect(Math.acos(-out.z)).toBeCloseTo(WRIST_BEND_LIMIT, 6);
+    expect(Math.acos(-out.z)).toBeCloseTo(0.5, 6);
     expect(Math.hypot(out.x, out.y, out.z)).toBeCloseTo(1, 6);
   });
 
-  it('holds the forearm for a grip exactly behind the palm (no shortest arc)', () => {
+  it('holds the current direction for a target exactly behind (no shortest arc)', () => {
     const out = point(0, 0, 0);
-    const ok = wristAimDirection(point(0, 1.4, 0), point(0, 1.4, 1), { x: 0, y: 0, z: -1 }, WRIST_BEND_LIMIT, out);
+    const ok = clampTurnDirection({ x: 0, y: 0, z: -1 }, { x: 0, y: 0, z: 1 }, 0.9, out);
     expect(ok).toBe(true);
     expect(out.z).toBeCloseTo(-1, 6);
   });
 
-  it('holds the forearm direction for a degenerate grip or forearm', () => {
+  it('refuses a degenerate direction without writing a NaN', () => {
     const out = point(0, 0, 0);
-    expect(wristAimDirection(point(0, 1, 0), point(0, 1, 0), { x: 0, y: 0, z: -1 }, 0.9, out)).toBe(false);
-    expect(wristAimDirection(point(0, 1, 0), point(0, 0, 0), { x: 0, y: 0, z: 0 }, 0.9, out)).toBe(false);
+    expect(clampTurnDirection({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }, 0.9, out)).toBe(false);
+    expect(clampTurnDirection({ x: 0, y: 0, z: -1 }, { x: 0, y: 0, z: 0 }, 0.9, out)).toBe(false);
     expect(Number.isFinite(out.x) && Number.isFinite(out.y) && Number.isFinite(out.z)).toBe(true);
   });
 });

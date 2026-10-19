@@ -19,9 +19,9 @@
  *     centre, not both hands on the same atom (which is what makes a carry read as touching a
  *     prop rather than holding it).
  *  4. **Hands stay outside the body.** `clampOutsideTorso` pushes a grip point that has ended up
- *     inside the torso out through the nearest face, and `wristAimDirection` keeps the hand
- *     pointing at its grip with a bounded bend, so the wrist neither folds backwards nor spins
- *     the hand through the chest when the aim swings behind the character.
+ *     inside the torso out through the nearest face, and `clampTurnDirection` gives the wrist a
+ *     bounded step back toward the forearm's line, so the hand neither folds backwards nor spins
+ *     through the chest when the aim swings behind the character.
  */
 
 import type { Vec3 } from './vec3.ts';
@@ -225,51 +225,47 @@ export function clampOutsideTorso(
   return true;
 }
 
-/** Maximum wrist bend away from the forearm, radians (~52°). Past this a wrist reads as broken. */
-export const WRIST_BEND_LIMIT = 0.9;
-
 /**
- * Direction the hand should point: from the wrist toward the grip point, limited to `limit`
- * radians away from the forearm's own direction. Writes a unit vector into `out` and returns
- * false only when one of the inputs is degenerate (no direction to solve).
+ * Rotate `current` toward `target` by at most `maxTurn` radians, writing a unit direction into
+ * `out`. Returns false only when one of the inputs is degenerate.
  *
- * Why this exists: the imported body's forearm is aimed with a shortest-arc rotation, which leaves
- * the hand's *twist* to the clip. A grip is a point, so the clip's hand can end up pointing
- * anywhere — fingers through the gun, knuckles through the wrist. Aiming the hand itself keeps it
- * on the thing it is holding, and the bend limit stops the correction from folding the wrist
- * backwards.
+ * The wrist uses this to settle back onto the forearm's line: the forearm is aimed with a
+ * shortest-arc rotation, which leaves the hand's own direction to the clip, so a grip can leave a
+ * hand pointing at the shoulder — fingers through the gun, knuckles through the wrist. Correcting
+ * in bounded steps (rather than snapping to the forearm) is what makes a fast aim sweep read as a
+ * wrist turning, never a hand teleporting. A target exactly behind `current` has no shortest arc,
+ * so the input direction is kept: refusing to guess is the stable answer.
  */
-export function wristAimDirection(
-  wrist: Vec3,
-  grip: Vec3,
-  forearm: Vec3,
-  limit: number,
+export function clampTurnDirection(
+  current: Vec3,
+  target: Vec3,
+  maxTurn: number,
   out: GripPoint
 ): boolean {
-  let tx = finite(grip.x) - finite(wrist.x);
-  let ty = finite(grip.y) - finite(wrist.y);
-  let tz = finite(grip.z) - finite(wrist.z);
-  let targetLength = Math.sqrt(tx * tx + ty * ty + tz * tz);
-  let fx = finite(forearm.x);
-  let fy = finite(forearm.y);
-  let fz = finite(forearm.z);
-  let foreLength = Math.sqrt(fx * fx + fy * fy + fz * fz);
-  if (!(targetLength > EPS) || !(foreLength > EPS)) {
+  let cx = finite(current.x);
+  let cy = finite(current.y);
+  let cz = finite(current.z);
+  let tx = finite(target.x);
+  let ty = finite(target.y);
+  let tz = finite(target.z);
+  const currentLength = Math.sqrt(cx * cx + cy * cy + cz * cz);
+  const targetLength = Math.sqrt(tx * tx + ty * ty + tz * tz);
+  if (!(currentLength > EPS) || !(targetLength > EPS)) {
     out.x = 0;
     out.y = 0;
     out.z = 0;
     return false;
   }
+  cx /= currentLength;
+  cy /= currentLength;
+  cz /= currentLength;
   tx /= targetLength;
   ty /= targetLength;
   tz /= targetLength;
-  fx /= foreLength;
-  fy /= foreLength;
-  fz /= foreLength;
 
-  const dot = Math.min(Math.max(fx * tx + fy * ty + fz * tz, -1), 1);
+  const dot = Math.min(Math.max(cx * tx + cy * ty + cz * tz, -1), 1);
   const angle = Math.acos(dot);
-  const max = Math.max(finite(limit), 0);
+  const max = Math.max(finite(maxTurn), 0);
   if (angle <= max) {
     out.x = tx;
     out.y = ty;
@@ -277,23 +273,22 @@ export function wristAimDirection(
     return true;
   }
   if (max <= 0) {
-    out.x = fx;
-    out.y = fy;
-    out.z = fz;
+    out.x = cx;
+    out.y = cy;
+    out.z = cz;
     return true;
   }
 
-  // Rotate the forearm direction toward the target by exactly `max`: Rodrigues about the
-  // unit axis perpendicular to both. A degenerate cross (the target is straight behind) has
-  // no shortest arc, so the forearm itself is the safest answer.
-  let axx = fy * tz - fz * ty;
-  let axy = fz * tx - fx * tz;
-  let axz = fx * ty - fy * tx;
+  // Rodrigues about the unit axis perpendicular to both, through exactly `max` radians.
+  let axx = cy * tz - cz * ty;
+  let axy = cz * tx - cx * tz;
+  let axz = cx * ty - cy * tx;
   const axisLength = Math.sqrt(axx * axx + axy * axy + axz * axz);
   if (!(axisLength > EPS)) {
-    out.x = fx;
-    out.y = fy;
-    out.z = fz;
+    // Exactly opposite (or identical to numerical noise): hold the current direction.
+    out.x = cx;
+    out.y = cy;
+    out.z = cz;
     return true;
   }
   axx /= axisLength;
@@ -301,12 +296,12 @@ export function wristAimDirection(
   axz /= axisLength;
   const cos = Math.cos(max);
   const sin = Math.sin(max);
-  const crossX = axy * fz - axz * fy;
-  const crossY = axz * fx - axx * fz;
-  const crossZ = axx * fy - axy * fx;
-  out.x = fx * cos + crossX * sin;
-  out.y = fy * cos + crossY * sin;
-  out.z = fz * cos + crossZ * sin;
+  const crossX = axy * cz - axz * cy;
+  const crossY = axz * cx - axx * cz;
+  const crossZ = axx * cy - axy * cx;
+  out.x = cx * cos + crossX * sin;
+  out.y = cy * cos + crossY * sin;
+  out.z = cz * cos + crossZ * sin;
   return true;
 }
 

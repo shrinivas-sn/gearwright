@@ -8,15 +8,15 @@ the body**. Plan it, execute, commit, push.
 A five-part pass, all fixed at the source rather than tuned around:
 
 1. **The hands were still spinning (`src/adapters/gltf-character.ts`, `src/core/arm-ik.ts`).**
-   The imported body aimed its *forearm* at a grip point and never touched the hand bone. A
-   shortest-arc forearm rotation leaves the hand's **twist** to whichever roll the clip happened
-   to have, so the fingers could point backwards through the gun or the wrist while the hand's
-   position looked correct — which is exactly the reported "hands rotate and clash inside the
-   body". Every arm chain now resolves a finger bone (`LeftHandMiddle1`/`Index1`, per side) and
-   `orientWrist` aims the hand at the grip it is holding, limited to a real wrist bend
-   (`WRIST_BEND_LIMIT` 0.9 rad) and rate-limited to 24 rad/s, so a camera flick sweeps the wrist
-   instead of snapping it. The fix is convention-free: it uses the bone's own world direction, not
-   an assumed local axis.
+   The imported body aimed its *forearm* at a grip point and never touched the hand bone. The
+   hand's wrist is already *at* the grip after that solve, so its own orientation was left entirely
+   to the clip — fingers could point backwards through the gun or the chest while the hand position
+   measured correct. That is the reported "hands rotate and clash inside the body". Every arm chain
+   now resolves a finger bone (`LeftHandMiddle1`/`Index1`, per side) and `orientWrist` turns the
+   hand back onto the **forearm's line** with `clampTurnDirection`, at most 24 rad/s, so the hand
+   cannot stay folded while a camera flick sweeps a wrist instead of teleporting a hand. The fix is
+   convention-free: it reads the wrist and finger bones' own world positions, never an assumed
+   local axis. (`CharacterFacts` now reports the resulting `handLForward`/`handRForward`.)
 
 2. **A reach could pass through the torso (`clampOutsideTorso`).** When the aim swings behind the
    character the mount is aim-relative, so a supporting hand can end up inside the chest box. The
@@ -51,19 +51,21 @@ A five-part pass, all fixed at the source rather than tuned around:
 
 - `npm run typecheck` — exit 0.
 - `npx vitest run` — exit 0, **63 files / 805 tests** (792 at HEAD). New: 8 arm-geometry tests
-  (torso clearance + wrist aim) and 4 socket-footprint tests; one hop test's step count was
+  (torso clearance + wrist turn) and 4 socket-footprint tests; one hop test's step count was
   re-based because the faster walk reaches the floor sooner (the assertion and its intent are
   unchanged).
-- `npm run build` — exit 0. `app` 291.40 kB (gzip 85.66) from 289.79 (84.97): **+1.61 kB raw /
-  +0.69 kB gzip**; `gltf-character` chunk 11.49 kB (gzip 4.13) from 11.08 (4.00); CSS 11.85 kB
+- `npm run build` — exit 0. `app` 291.36 kB (gzip 85.62) from 289.79 (84.97): **+1.57 kB raw /
+  +0.65 kB gzip**; `gltf-character` chunk 11.28 kB (gzip 4.06) from 11.08 (4.00); CSS 11.85 kB
   (gzip 2.69).
 - **`boot --production`** — exit 0, **`problems: []`**, body `gltf` (49 bones / 11 376 triangles,
   clips idle/walk/run), `walkSpeed: 4` live.
 - **`arms` (dev)** — exit 0, both phases green: standing **0.0000 m** muzzle drift, **0.0000 m**
   hand step, **0.0000 m** grip error; walking **0.0001 m** hand step, **0.0000 m** grip error,
   ≤0.0001 m body-relative spread. The new wrist solve did not move a grip.
-- `CharacterFacts` gained optional `handLForward`/`handRForward` (wrist → fingers, unit) so a later
-  harness pass can measure hand orientation directly; both are absent on a body with no fingers.
+- `CharacterFacts` reports optional `handLForward`/`handRForward` (wrist → fingers, unit), so a
+  later harness pass can measure hand orientation directly; both are absent on a body with no
+  fingers. The wrist solve itself is pinned by the `clampTurnDirection` tests rather than a live
+  number — the harness measures positions, not bone rotations.
 
 ## Owed / carried forward (unchanged)
 

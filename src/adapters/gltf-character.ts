@@ -37,13 +37,12 @@ import {
   DEFAULT_TORSO_CLEARANCE,
   ElbowPole,
   MAX_AIM_TWIST,
-  WRIST_BEND_LIMIT,
   aimYawOf,
   clampGripTarget,
   clampOutsideTorso,
+  clampTurnDirection,
   clampTwist,
   splitGrip,
-  wristAimDirection,
   type GripPoint
 } from '../core/arm-ik.ts';
 import type { Vec3 } from '../core/vec3.ts';
@@ -627,19 +626,21 @@ export class GltfCharacterBody implements PlayerBody {
     this.rotateBoneWorld(chain.elbow, currentFore, desiredFore, blend);
     chain.elbow.updateMatrixWorld(true);
 
-    // The hand, last: the forearm solve leaves its twist to the clip, so a hand can point at the
-    // shoulder while its palm faces the wrong way. Aim the wrist at the grip point it is holding
-    // (bounded to a wrist's real bend), rate-limited so a camera flick sweeps it rather than
-    // snapping it. Without this the imported body's fingers spin through the gun and the body.
-    this.orientWrist(chain, this.vClamped, blend, dt);
+    // The hand, last: the forearm solve leaves the hand's own direction to the clip, so a grip
+    // could leave a hand pointing at the shoulder — fingers through the gun or the chest.
+    // Settle it back onto the forearm's line in bounded steps, so a camera flick sweeps a wrist
+    // instead of teleporting a hand.
+    this.orientWrist(chain, blend, dt);
   }
 
   /**
-   * Point the hand at its grip, with a wrist's bend limit and a bounded angular rate. Reads the
+   * Turn the hand back toward the forearm's line at a bounded angular rate. The hand's wrist is
+   * already *at* the grip (that is what the arm solve produces), so there is no point left to aim
+   * it at — the direction a gripping hand keeps is the one that continues the arm. Reads the
    * finger bone's world position to know which way the hand currently points; a rig with no
    * finger bones is left alone rather than guessed at.
    */
-  private orientWrist(chain: ArmChain, target: Vec3, blend: number, dt: number): void {
+  private orientWrist(chain: ArmChain, blend: number, dt: number): void {
     if (chain.fingers === null) return;
     chain.wrist.getWorldPosition(this.vWrist);
     chain.fingers.getWorldPosition(this.vHandTip);
@@ -649,21 +650,11 @@ export class GltfCharacterBody implements PlayerBody {
     if (this.vHandTip.distanceToSquared(this.vWrist) < MIN_AXIS * MIN_AXIS) return;
     const current = unitInto(this.vUpper.subVectors(this.vHandTip, this.vWrist));
     const forearm = unitInto(this.vFore.subVectors(this.vWrist, this.vElbow));
-    if (!wristAimDirection(this.vWrist, target, forearm, WRIST_BEND_LIMIT, this.vWristDir)) {
+    if (!clampTurnDirection(current, forearm, WRIST_TURN_RATE * Math.max(dt, 0), this.vWristDir)) {
       return;
     }
-
-    const dot = Math.min(Math.max(
-      current.x * this.vWristDir.x + current.y * this.vWristDir.y + current.z * this.vWristDir.z,
-      -1
-    ), 1);
-    const angle = Math.acos(dot);
-    // Rate limit in *angle*, not in blend: a big correction waits its turn instead of completing
-    // in one frame at any dt.
-    const allowed = angle > 1e-5 ? (WRIST_TURN_RATE * Math.max(dt, 0)) / angle : 1;
-    const k = Math.min(Math.max(blend, 0), allowed, 1);
-    if (k <= 0) return;
-    this.rotateBoneWorld(chain.wrist, current, this.vWristDir, k);
+    // `clampTurnDirection` already bounds the step; `blend` only eases the grip itself in.
+    this.rotateBoneWorld(chain.wrist, current, this.vWristDir, blend);
     chain.wrist.updateMatrixWorld(true);
   }
 

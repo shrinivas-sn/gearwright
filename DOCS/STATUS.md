@@ -7,10 +7,10 @@
 ## Shipped state
 
 - **The hands stay on the gun and out of the body (19/10, the reported "hands rotate and clash inside
-  the body").** The imported body used to aim only the forearm, leaving the hand's twist to the
-  clip — so the *position* was right and the fingers still spun through the gun or the chest. Each
-  arm now resolves a finger bone and `orientWrist` aims the hand at its grip within a 0.9 rad wrist
-  bend at 24 rad/s (`core/arm-ik.ts`). A new `clampOutsideTorso` pushes a grip target out of an
+  the body").** The imported body used to aim only the forearm, leaving the hand's own direction to
+  the clip — so the *position* was right and the fingers still pointed through the gun or the chest.
+  Each arm now resolves a finger bone and `orientWrist` turns the hand back onto the forearm's line
+  with `clampTurnDirection`, at most 24 rad/s (`core/arm-ik.ts`). A new `clampOutsideTorso` pushes a grip target out of an
   oriented chest box (0.20 × 0.14 m, 0.8–1.62 m) **before** the reach clamp, so an aim swung behind
   the character cannot drag a forearm through the ribcage; ordinary grips are copied through
   untouched, pinned by tests.
@@ -50,7 +50,7 @@
 
 ## Verification
 
-- **Typecheck** clean · **Tests** 63 files / **805** (792 at HEAD) · **Build** clean: `three` 624.62 kB (gzip 158.35), `app` 291.40 kB (gzip 85.66) — **+1.61 kB raw / +0.69 kB gzip** for this pass; weapon HUD CSS 11.85 kB (gzip 2.69).
+- **Typecheck** clean · **Tests** 63 files / **805** (792 at HEAD) · **Build** clean: `three` 624.62 kB (gzip 158.35), `app` 291.36 kB (gzip 85.62) — **+1.57 kB raw / +0.65 kB gzip** for this pass; weapon HUD CSS 11.85 kB (gzip 2.69).
 - **Live (real Chrome):** `boot --production` (exit 0, **`problems: []`**, body `gltf` 49 bones / 11 376 triangles, `walkSpeed 4`) and **`arms`** (dev; standing 0.0000 m muzzle drift / 0.0000 m hand step / 0.0000 m grip error; walking 0.0001 m step / 0.0000 m grip error, ≤0.0001 m body-relative spread) green after the wrist/torso changes. The 18/10 pass's `guns --production` and `hold` figures still stand (this pass touched neither the weapon simulation nor the carry target).
 - **New this pass:** `CharacterFacts` carries optional `handLForward`/`handRForward` (wrist → fingers, unit) so a future harness run can measure hand orientation directly instead of inferring it.
 - **`branch` (dev, whole curve in one session): unconfirmed.** Its first run on this code stalled at P2 because the hop teleported to a flat `y = 0.01` over unsupported spots — survivable only while the physics bug above held the player up. `hopTo` now stands the player on the height the level has under the target (`__probe.standingHeightAt`), and the confirming run was **stopped after ~30 min without finishing** (a clean-profile run at HEAD took ~12 min: branch A and B `Complete`, hub stage 2, both clue plates restored after the reload). So the curve is proven at HEAD but **not yet on this pass's code** — and the hop change itself is now a suspect for the extra time (it adds one async collider query per 0.4 m hop step).
