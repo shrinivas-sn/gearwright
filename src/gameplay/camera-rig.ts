@@ -85,8 +85,13 @@ export const DEFAULT_CAMERA_TUNING: CameraTuning = {
   maxPitch: 0.55,
   yawSpeed: 0.25,
   pitchSpeed: 0.18,
-  positionBlend: 14,
-  targetBlend: 18,
+  // Follow feel (19/10/2026): the old 14/18 rates left a ~70 ms positional trail, so at the
+  // new 8 m/s sprint the body slid forward under the camera before the eye caught up — the
+  // "not moving smoothly" half of the report. 20/26 cuts that trail to ~50/38 ms while still
+  // being a spring arm rather than a rigid parent (it must stay visibly damped for the
+  // manipulation framing to ease instead of snap).
+  positionBlend: 20,
+  targetBlend: 26,
   skin: 0.18,
   collisionRadius: 0.3,
   recenterDelay: 2.5,

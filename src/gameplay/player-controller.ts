@@ -50,14 +50,16 @@ export interface PlayerTuning {
 }
 
 export const DEFAULT_PLAYER_TUNING: PlayerTuning = {
-  // Speed pass (16/10/2026, owner request: "the character feels a little bit slow").
-  // Values are deliberately still *workshop* speeds, not shooter speeds: ARCH §16's
-  // traversal-safety rule (a hazard telegraph must remain readable at walk pace) is
-  // the ceiling, and 7.4 m/s of sprint is the top of it.
-  walkSpeed: 3.6,
-  runSpeed: 7.4,
-  accelerationTime: 0.07,
-  decelerationTime: 0.06,
+  // Speed pass (16/10/2026, owner request: "the character feels a little bit slow"),
+  // tightened again on 19/10/2026 ("not moving smoothly or even fast"). Values are at the
+  // top of ARCH §16's workshop range — 4.0 m/s walk, 8.0 m/s sprint — with shorter ramps
+  // (55 ms to full speed, 45 ms to stop) so the input is answered on the first two steps
+  // instead of easing in. The hazard-telegraph ceiling is still the limit; this is a
+  // responsiveness pass, not a shooter-speed one.
+  walkSpeed: 4.0,
+  runSpeed: 8.0,
+  accelerationTime: 0.055,
+  decelerationTime: 0.045,
   capsule: { radius: 0.32, height: 1.7, stepHeight: 0.35 },
   // Crouch: head roughly a metre lower, half pace. The radius is unchanged on purpose —
   // a crouched player is shorter, never thinner, so a crouch cannot squeeze through a gap
@@ -367,8 +369,10 @@ function clampSpeedScale(scale: number | undefined): number {
 }
 
 // Radians per second the character may rotate (ARCH §16: face travel, no snapping).
-// Raised 12 -> 14 in the 16/10 speed pass: at the faster walk/run the old rate read as the
-// character turning *after* the input, which is half of what "feels slow" meant.
-const PLAYER_TURN_RATE = 14;
+// Raised 12 -> 14 in the 16/10 speed pass and 14 -> 18 on 19/10: at an 8 m/s sprint a
+// 14 rad/s turn takes ~0.22 s to reverse, which reads as the body lagging the thumb. 18
+// keeps the turn visibly eased (no snapping) while the feet follow the input inside one
+// stride.
+const PLAYER_TURN_RATE = 18;
 // Downward stick speed applied while grounded so contact is never marginal.
 const GROUNDED_STICK_SPEED = 1;

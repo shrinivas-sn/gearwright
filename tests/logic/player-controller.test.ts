@@ -227,11 +227,15 @@ describe('PlayerController — real physics: leaving a ledge', () => {
     const physics = ledgeWorld();
     const controller = new PlayerController(physics, vec3(0, 4 + SKIN, 0));
 
-    // Walk east (camera yaw 0: +X is strafe-right) off the 2 m-wide platform.
+    // Walk east (camera yaw 0: +X is strafe-right) off the 2 m-wide platform. 18 steps is
+    // ~0.6 s: clear of the edge at the 4 m/s walk, ~0.25 s of fall (twice the coyote window),
+    // and still well above the floor. The 19/10 speed pass shortened this from 29 steps — at
+    // the new pace 1 s of walking reaches the floor and the assertion below would read a landed
+    // player, not an airborne one.
     let state = controller.step(DT, { ...NEUTRAL, moveX: 1 });
-    for (let i = 0; i < 29; i += 1) state = controller.step(DT, { ...NEUTRAL, moveX: 1 });
+    for (let i = 0; i < 18; i += 1) state = controller.step(DT, { ...NEUTRAL, moveX: 1 });
 
-    // ~0.7 s after the edge: still falling, and clearly past the coyote window.
+    // ~0.6 s in: still falling, and clearly past the coyote window.
     expect(state.position.x).toBeGreaterThan(1);
     expect(state.grounded).toBe(false);
     expect(state.position.y).toBeLessThan(4 - SKIN);
