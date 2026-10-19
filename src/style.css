@@ -363,6 +363,121 @@ body {
   gap: 5px;
 }
 
+/* --- weapon surface (weapons pass; top-right, opposite the objective) ---- */
+
+/* The weapons pass shipped the markup and the read-model, but no rules: the block
+   rendered as an unstyled list in the document flow, so its "slots" had no boxes and
+   no sizes to fit. This is the surface the 19/10/2026 pass added, at the one corner
+   that is empty in every other state (top-right; the focus line is centred and the
+   objective column is top-left). */
+.gw-hud-weapon {
+  right: 16px;
+  top: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  row-gap: 1px;
+  min-width: 196px;
+  max-width: min(300px, 34vw);
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-hud-weapon-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gw-hud-weapon-class {
+  justify-self: end;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--gw-muted);
+  white-space: nowrap;
+}
+
+/* The magazine is the one number a player reads mid-fight: larger, tabular, first. */
+.gw-hud-weapon-ammo {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.gw-hud-weapon-mode {
+  justify-self: end;
+  align-self: end;
+  font-size: 11px;
+  color: var(--gw-muted);
+  white-space: nowrap;
+}
+
+.gw-hud-weapon-state {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gw-muted);
+}
+
+.gw-hud-weapon-state--reloading {
+  color: var(--gw-compatible);
+}
+
+.gw-hud-weapon-state--notice {
+  color: var(--gw-hazardous);
+}
+
+/* Slot chips size themselves to their own label (a five-name loadout used to print as
+   a bare inline list with no boxes at all). Wrapping is the fit: each chip is exactly
+   as wide as its text, and the panel never grows past its corner. */
+.gw-hud-weapon-slots {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gw-hud-weapon-slots > li {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--gw-concrete);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--gw-muted);
+  white-space: nowrap;
+}
+
+/* The held slot is marked by weight + backing, not colour alone (§33.2 rule 4). */
+.gw-hud-weapon-slot--active {
+  color: var(--gw-interactive);
+  border-color: var(--gw-compatible);
+  background: rgb(58 63 69 / 55%);
+  font-weight: 700;
+}
+
+/* ADS: the reticle closes in, so the *shape* says "aiming" without a colour cue. */
+.gw-hud-reticle--ads {
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+}
+
+.gw-hud-reticle--ads::before {
+  top: -3px;
+  height: 16px;
+}
+
+.gw-hud-reticle--ads::after {
+  left: -3px;
+  width: 16px;
+}
+
 /* --- resource panel (§33.1 row 4, §27.3 compact form) -------------------- */
 
 .gw-hud-resources {

@@ -57,7 +57,7 @@ import type { Pose } from './game-state/component-model.ts';
 import type { LabWorldMesh, ScannerOverlayTargetState } from './ports/render-port.ts';
 import { HUB_DOORS, cluePlateActive, hubColliders, hubInteractables, hubMeshes } from './levels/hub.ts';
 import { FeedbackComposer, type FeedbackView } from './presentation/feedback-composer.ts';
-import { COMPONENT_DEFINITIONS } from './data/components.ts';
+import { COMPONENT_DEFINITIONS, acceptedFootprint } from './data/components.ts';
 import { isStagedAction } from './data/actions.ts';
 import { MACHINE_DEFINITIONS } from './data/machines.ts';
 import { PUZZLE_DEFINITIONS } from './data/puzzles/index.ts';
@@ -1328,11 +1328,18 @@ function boot(): void {
   };
   const lerpVec = (a: Vec3, b: Vec3, t: number): Vec3 => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) });
 
-  /** Pooled socket-marker states (PLAN T3.3): rewritten in place every frame. */
+  /**
+   * Pooled socket-marker states (PLAN T3.3): rewritten in place every frame.
+   *
+   * The *drawn* slot is the footprint of the part its definition accepts (plus a small
+   * clearance), not the level's generous trigger volume: a pipe port used to be drawn as an
+   * 0.8 m cube regardless of the valve that goes in it. The trigger volume the snap query uses is
+   * untouched — it lives on `socket.instance.halfExtents` and never reaches the renderer.
+   */
   const snapMarkerStates = resolvedSockets.map((socket) => ({
     socketId: socket.instance.id,
     center: socket.instance.pose.center,
-    halfExtents: socket.instance.halfExtents,
+    halfExtents: acceptedFootprint(socket.definition.accepts) ?? socket.instance.halfExtents,
     state: 'available' as 'available' | 'preview' | 'occupied'
   }));
 

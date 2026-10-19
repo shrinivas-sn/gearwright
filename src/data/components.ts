@@ -322,3 +322,46 @@ export const COMPONENT_DEFINITIONS: ReadonlyArray<ComponentDefinition> = [
 export function componentDefinitionOf(defId: string): ComponentDefinition | null {
   return COMPONENT_DEFINITIONS.find((definition) => definition.id === defId) ?? null;
 }
+
+/** Axis-aligned half extents, metres. */
+export interface Footprint {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/**
+ * The box a socket has to hold, derived from the parts its definition accepts.
+ *
+ * Socket *placement* carries a generous trigger volume (level data, used by the snap query), but
+ * that is not what the dock should look like: every marker used to be drawn at that volume, so a
+ * thin pipe valve's port appeared as an 0.8 m cube and a crate dock looked no different. This
+ * takes the largest footprint among the accepted definitions and pads it by `margin`, so the drawn
+ * slot fits the thing that goes in it.
+ *
+ * Accepts capability **tags** (the socket's own vocabulary), not ids. A tag no definition carries
+ * resolves to null and the caller keeps its authored size — a missing tag is a content gap, not a
+ * reason to draw nothing.
+ */
+export function acceptedFootprint(
+  tags: ReadonlyArray<string>,
+  margin = 0.04
+): Footprint | null {
+  const wanted = new Set(tags);
+  let footprint: Footprint | null = null;
+  for (const definition of COMPONENT_DEFINITIONS) {
+    if (!definition.tags.some((tag) => wanted.has(tag))) continue;
+    const half = definition.halfExtents;
+    footprint =
+      footprint === null
+        ? { x: half.x, y: half.y, z: half.z }
+        : {
+            x: Math.max(footprint.x, half.x),
+            y: Math.max(footprint.y, half.y),
+            z: Math.max(footprint.z, half.z)
+          };
+  }
+  if (footprint === null) return null;
+  const pad = Math.max(Number.isFinite(margin) ? margin : 0, 0);
+  return { x: footprint.x + pad, y: footprint.y + pad, z: footprint.z + pad };
+}
