@@ -61,11 +61,15 @@ A five-part pass, all fixed at the source rather than tuned around:
   clips idle/walk/run), `walkSpeed: 4` live.
 - **`arms` (dev)** — exit 0, both phases green: standing **0.0000 m** muzzle drift, **0.0000 m**
   hand step, **0.0000 m** grip error; walking **0.0001 m** hand step, **0.0000 m** grip error,
-  ≤0.0001 m body-relative spread. The new wrist solve did not move a grip.
-- `CharacterFacts` reports optional `handLForward`/`handRForward` (wrist → fingers, unit), so a
-  later harness pass can measure hand orientation directly; both are absent on a body with no
-  fingers. The wrist solve itself is pinned by the `clampTurnDirection` tests rather than a live
-  number — the harness measures positions, not bone rotations.
+  ≤0.0001 m body-relative spread, **0 hand-inside-torso samples**. The new wrist solve did not move
+  a grip.
+- **The harness now measures the complaint directly.** `CharacterFacts` reports
+  `handLForward`/`handRForward` (wrist → fingers, unit; absent on a body with no finger bones), and
+  the `arms` scenario reports the worst angular **rate** of either hand while walking plus a
+  body-relative torso-box test. Measured on this code: **`handTurnRate` 4.07 rad/s** (the gate is
+  12; a hand left to the clip runs at the wrist's own 24 rad/s limit) and **`insideBody` 0**. The
+  thresholds are rate-based because the sampling interval includes a CDP round-trip, so a fixed
+  per-sample angle would have been flaky on a busy host.
 
 ## Owed / carried forward (unchanged)
 

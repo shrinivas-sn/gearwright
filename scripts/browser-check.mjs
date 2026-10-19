@@ -2099,9 +2099,13 @@ async function main() {
         const s = await read();
         if (s?.c?.handL && s?.c?.handR && s?.m?.muzzle) {
           samples.push({
+            t: Date.now(),
             root: { x: s.c.x, y: s.c.y, z: s.c.z },
             left: { x: s.c.handL.x - s.c.x, y: s.c.handL.y - s.c.y, z: s.c.handL.z - s.c.z },
             right: { x: s.c.handR.x - s.c.x, y: s.c.handR.y - s.c.y, z: s.c.handR.z - s.c.z },
+            // The 19/10 wrist solve: unit wrist→fingers, absent on a body with no finger bones.
+            leftForward: s.c.handLForward ?? null,
+            rightForward: s.c.handRForward ?? null,
             muzzle: s.m.muzzle,
             aim: s.m.aimDirection
           });
@@ -2147,6 +2151,42 @@ async function main() {
         );
       }
       return worst;
+    };
+    /**
+     * Worst angular *rate* of either hand (wrist → fingers, world space), rad/s. A hand left to
+     * the clip's own orientation swings with the walk; a hand settled onto the forearm holds
+     * still relative to the body and the gun, which is what the 19/10 solve is for. Time-based,
+     * not per-sample: the sampling interval includes a CDP round-trip and is not fixed.
+     */
+    const handTurnRate = (samples) => {
+      let worst = 0;
+      for (let i = 1; i < samples.length; i += 1) {
+        const dt = Math.max((samples[i].t - samples[i - 1].t) / 1000, 1e-3);
+        for (const key of ['leftForward', 'rightForward']) {
+          const a = samples[i - 1][key];
+          const b = samples[i][key];
+          if (a === null || b === null) continue;
+          const dot = Math.min(Math.max(a.x * b.x + a.y * b.y + a.z * b.z, -1), 1);
+          worst = Math.max(worst, Math.acos(dot) / dt);
+        }
+      }
+      return worst;
+    };
+    /**
+     * Samples where a hand sits inside the torso box, in the body's own frame. The harness plays
+     * facing yaw 0 (forward = −Z, right = +X), so the body-relative sample coordinates are already
+     * the torso frame: ±0.18 m wide, ±0.12 m deep, 0.8–1.62 m up.
+     */
+    const handsInsideBody = (samples) => {
+      let count = 0;
+      for (const s of samples) {
+        for (const hand of [s.left, s.right]) {
+          const inside =
+            Math.abs(hand.x) < 0.18 && Math.abs(hand.z) < 0.12 && hand.y > 0.8 && hand.y < 1.62;
+          if (inside) count += 1;
+        }
+      }
+      return count;
     };
     const muzzleDrift = (samples) => {
       let worst = 0;
@@ -2196,6 +2236,8 @@ async function main() {
       samples: walk.length,
       handStep: Number(worstStep(walk).toFixed(4)),
       gripError: Number(gripError(walk).toFixed(4)),
+      handTurnRate: Number(handTurnRate(walk).toFixed(3)),
+      insideBody: handsInsideBody(walk),
       // Spread of each hand's body-relative position over the whole walk: drift, not per-frame
       // noise, is what a broken solve shows (it walks away from the gun over seconds).
       leftSpread: Number(
@@ -2218,6 +2260,20 @@ async function main() {
       if (report.data.arms.walk.gripError > 0.02) {
         report.problems.push(
           `arms: a hand is ${report.data.arms.walk.gripError} m off its grip while walking (the arm cannot reach it)`
+        );
+      }
+      // The 19/10 wrist solve: a held hand must not swing about its own wrist while the body
+      // walks straight, and no hand may sit inside the torso volume. The wrist's own rate limit
+      // is 24 rad/s, so 12 rad/s is "settled, following the arm" while a hand left to the clip
+      // runs at the limit.
+      if (report.data.arms.walk.handTurnRate > 12) {
+        report.problems.push(
+          `arms: a hand turned at ${report.data.arms.walk.handTurnRate} rad/s while walking (the wrist is not settled)`
+        );
+      }
+      if (report.data.arms.walk.insideBody > 0) {
+        report.problems.push(
+          `arms: hands were inside the torso in ${report.data.arms.walk.insideBody} samples`
         );
       }
     }
