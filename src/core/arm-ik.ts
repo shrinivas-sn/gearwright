@@ -8,7 +8,7 @@
  * no `three`, no allocation in the frame loop (every entry point writes into an `out` buffer, the
  * same convention as `vec3.ts` and `character-pose.ts`).
  *
- * Three ideas, each pinned by `tests/logic/arm-ik.test.ts`:
+ * Four ideas, each pinned by `tests/logic/arm-ik.test.ts`:
  *  1. **Reach is a hard constraint.** A hand target beyond the arm is clamped *along its own
  *     direction*, never dropped and never pulled back toward the body, so the arm keeps aiming at
  *     the thing even when it cannot touch it.
@@ -18,6 +18,10 @@
  *  3. **Two hands bracket a part.** A carried object is held at two points either side of its
  *     centre, not both hands on the same atom (which is what makes a carry read as touching a
  *     prop rather than holding it).
+ *  4. **Hands stay outside the body.** `clampOutsideTorso` pushes a grip point that has ended up
+ *     inside the torso out through the nearest face, and `wristAimDirection` keeps the hand
+ *     pointing at its grip with a bounded bend, so the wrist neither folds backwards nor spins
+ *     the hand through the chest when the aim swings behind the character.
  */
 
 import type { Vec3 } from './vec3.ts';
@@ -110,6 +114,200 @@ export function splitGrip(
   outRight.x = tx + sx;
   outRight.y = ty;
   outRight.z = tz + sz;
+}
+
+/**
+ * The torso volume a hand is not allowed to enter, in the body's own frame. Deliberately a box
+ * rather than a cylinder: a person is wider across the shoulders (±0.20 m) than deep (0.14 m),
+ * and a cylinder that cleared the shoulders would push every normal two-handed grip off the gun.
+ */
+export interface TorsoClearance {
+  /** Half-width along the body's lateral axis, metres. */
+  readonly halfWidth: number;
+  /** Half-depth along the body's forward axis, metres. */
+  readonly halfDepth: number;
+  /** Bottom of the torso volume above the feet, metres. */
+  readonly minHeight: number;
+  /** Top of the torso volume above the feet, metres. */
+  readonly maxHeight: number;
+}
+
+export const DEFAULT_TORSO_CLEARANCE: TorsoClearance = {
+  halfWidth: 0.2,
+  halfDepth: 0.14,
+  minHeight: 0.8,
+  maxHeight: 1.62
+};
+
+/**
+ * Push `target` out of the body's torso box through the nearest face, writing into `out`.
+ *
+ * The axes are the *game's*: `rightX`/`rightZ` is the body's lateral unit vector (the same one
+ * `splitGrip` takes), so the volume follows the character's facing rather than the world. A point
+ * outside the box — which is every normal grip in front of the chest — is copied through
+ * untouched, and a target above or below the torso (a hand reaching down to a low part) is never
+ * moved. Returns true when the point had to be moved.
+ *
+ * This is a safety net, not the primary solve: the mount and the carry target are already placed
+ * where a person can reach. It exists so an aim that swings behind the character can never drag
+ * a forearm through the ribcage.
+ */
+export function clampOutsideTorso(
+  feet: Vec3,
+  rightX: number,
+  rightZ: number,
+  target: Vec3,
+  clearance: TorsoClearance,
+  out: GripPoint
+): boolean {
+  const tx = finite(target.x);
+  const ty = finite(target.y);
+  const tz = finite(target.z);
+  out.x = tx;
+  out.y = ty;
+  out.z = tz;
+
+  const height = ty - finite(feet.y);
+  if (height < clearance.minHeight || height > clearance.maxHeight) return false;
+
+  // Normalise the lateral axis; a degenerate axis means the body has no frame this frame, so
+  // there is no volume to test against and the hand is left where the caller put it.
+  const axisLength = Math.hypot(finite(rightX), finite(rightZ));
+  if (!(axisLength > EPS)) return false;
+  const rx = finite(rightX) / axisLength;
+  const rz = finite(rightZ) / axisLength;
+  // Forward is the lateral axis turned 90°: right = (cosθ, −sinθ), forward = (−sinθ, −cosθ),
+  // so forward = (rz, −rx). Same convention as `PlayerController`'s facing yaw.
+  const fx = rz;
+  const fz = -rx;
+
+  const dx = tx - finite(feet.x);
+  const dz = tz - finite(feet.z);
+  const lateral = dx * rx + dz * rz;
+  const forward = dx * fx + dz * fz;
+
+  const halfWidth = Math.max(finite(clearance.halfWidth), 0);
+  const halfDepth = Math.max(finite(clearance.halfDepth), 0);
+  if (Math.abs(lateral) >= halfWidth || Math.abs(forward) >= halfDepth) return false;
+
+  // How far to each face. Leaving through the front is the natural exit for a hand; ties are
+  // resolved in that order (front, back, right, left) so the result is deterministic.
+  const toFront = halfDepth - forward;
+  const toBack = halfDepth + forward;
+  const toRight = halfWidth - lateral;
+  const toLeft = halfWidth + lateral;
+  let best = toFront;
+  let axis = 0; // 0 = forward, 1 = right
+  let sign = 1;
+  if (toBack < best) {
+    best = toBack;
+    axis = 0;
+    sign = -1;
+  }
+  if (toRight < best) {
+    best = toRight;
+    axis = 1;
+    sign = 1;
+  }
+  if (toLeft < best) {
+    best = toLeft;
+    axis = 1;
+    sign = -1;
+  }
+
+  if (axis === 0) {
+    out.x = tx + fx * best * sign;
+    out.z = tz + fz * best * sign;
+  } else {
+    out.x = tx + rx * best * sign;
+    out.z = tz + rz * best * sign;
+  }
+  return true;
+}
+
+/** Maximum wrist bend away from the forearm, radians (~52°). Past this a wrist reads as broken. */
+export const WRIST_BEND_LIMIT = 0.9;
+
+/**
+ * Direction the hand should point: from the wrist toward the grip point, limited to `limit`
+ * radians away from the forearm's own direction. Writes a unit vector into `out` and returns
+ * false only when one of the inputs is degenerate (no direction to solve).
+ *
+ * Why this exists: the imported body's forearm is aimed with a shortest-arc rotation, which leaves
+ * the hand's *twist* to the clip. A grip is a point, so the clip's hand can end up pointing
+ * anywhere — fingers through the gun, knuckles through the wrist. Aiming the hand itself keeps it
+ * on the thing it is holding, and the bend limit stops the correction from folding the wrist
+ * backwards.
+ */
+export function wristAimDirection(
+  wrist: Vec3,
+  grip: Vec3,
+  forearm: Vec3,
+  limit: number,
+  out: GripPoint
+): boolean {
+  let tx = finite(grip.x) - finite(wrist.x);
+  let ty = finite(grip.y) - finite(wrist.y);
+  let tz = finite(grip.z) - finite(wrist.z);
+  let targetLength = Math.sqrt(tx * tx + ty * ty + tz * tz);
+  let fx = finite(forearm.x);
+  let fy = finite(forearm.y);
+  let fz = finite(forearm.z);
+  let foreLength = Math.sqrt(fx * fx + fy * fy + fz * fz);
+  if (!(targetLength > EPS) || !(foreLength > EPS)) {
+    out.x = 0;
+    out.y = 0;
+    out.z = 0;
+    return false;
+  }
+  tx /= targetLength;
+  ty /= targetLength;
+  tz /= targetLength;
+  fx /= foreLength;
+  fy /= foreLength;
+  fz /= foreLength;
+
+  const dot = Math.min(Math.max(fx * tx + fy * ty + fz * tz, -1), 1);
+  const angle = Math.acos(dot);
+  const max = Math.max(finite(limit), 0);
+  if (angle <= max) {
+    out.x = tx;
+    out.y = ty;
+    out.z = tz;
+    return true;
+  }
+  if (max <= 0) {
+    out.x = fx;
+    out.y = fy;
+    out.z = fz;
+    return true;
+  }
+
+  // Rotate the forearm direction toward the target by exactly `max`: Rodrigues about the
+  // unit axis perpendicular to both. A degenerate cross (the target is straight behind) has
+  // no shortest arc, so the forearm itself is the safest answer.
+  let axx = fy * tz - fz * ty;
+  let axy = fz * tx - fx * tz;
+  let axz = fx * ty - fy * tx;
+  const axisLength = Math.sqrt(axx * axx + axy * axy + axz * axz);
+  if (!(axisLength > EPS)) {
+    out.x = fx;
+    out.y = fy;
+    out.z = fz;
+    return true;
+  }
+  axx /= axisLength;
+  axy /= axisLength;
+  axz /= axisLength;
+  const cos = Math.cos(max);
+  const sin = Math.sin(max);
+  const crossX = axy * fz - axz * fy;
+  const crossY = axz * fx - axx * fz;
+  const crossZ = axx * fy - axy * fx;
+  out.x = fx * cos + crossX * sin;
+  out.y = fy * cos + crossY * sin;
+  out.z = fz * cos + crossZ * sin;
+  return true;
 }
 
 /** Largest torso twist toward the aim, radians (~52°). Beyond this the character has to step. */

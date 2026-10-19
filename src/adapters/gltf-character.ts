@@ -34,12 +34,16 @@ import {
 import { GaitDriver } from '../core/character-pose.ts';
 import {
   CARRY_HAND_SPREAD,
+  DEFAULT_TORSO_CLEARANCE,
   ElbowPole,
   MAX_AIM_TWIST,
+  WRIST_BEND_LIMIT,
   aimYawOf,
   clampGripTarget,
+  clampOutsideTorso,
   clampTwist,
   splitGrip,
+  wristAimDirection,
   type GripPoint
 } from '../core/arm-ik.ts';
 import type { Vec3 } from '../core/vec3.ts';
@@ -63,6 +67,13 @@ const CARRY_BLEND_RATE = 12;
 const MIN_AXIS = 1e-4;
 /** How fast the elbow's bending plane may turn (rad/s), so a fast aim sweeps instead of flipping. */
 const POLE_TURN_RATE = 8;
+/**
+ * How fast the wrist may swing toward its grip (rad/s). The forearm is aimed instantly (the hand
+ * *position* is the target the harness measures), but the hand's orientation is rate-limited: a
+ * fast camera sweep has to rotate a wrist, not snap it. 24 rad/s is a little over one full turn
+ * per 0.26 s — fast enough to keep up with the aim, slow enough that no frame teleports.
+ */
+const WRIST_TURN_RATE = 24;
 /** Share of the aim twist carried by each spine bone (Mixamo has Spine, Spine1, Spine2). */
 const TWIST_SHARES = [0.35, 0.65] as const;
 /** How fast the chest turns toward the aim (1/s), and how fast it returns. */
@@ -76,6 +87,11 @@ interface ArmChain {
   readonly elbow: THREE.Object3D;
   /** Hand bone: its origin is the wrist. */
   readonly wrist: THREE.Object3D;
+  /**
+   * A finger bone whose position gives the hand's own forward axis (wrist → fingers). Null when
+   * the rig has no finger bones, in which case the wrist is left to the clip rather than guessed.
+   */
+  readonly fingers: THREE.Object3D | null;
 }
 
 export interface GltfCharacterOptions {
@@ -182,6 +198,11 @@ export class GltfCharacterBody implements PlayerBody {
   private readonly vFore = new THREE.Vector3();
   private readonly vDir = new THREE.Vector3();
   private readonly vTarget = new THREE.Vector3();
+  private readonly vSafe = new THREE.Vector3();
+  private readonly vWristDir = new THREE.Vector3();
+  private readonly vHandTip = new THREE.Vector3();
+  private readonly vFingerL = new THREE.Vector3();
+  private readonly vFingerR = new THREE.Vector3();
   private readonly vUp = new THREE.Vector3(0, 1, 0);
   private readonly qDelta = new THREE.Quaternion();
   private readonly qBlend = new THREE.Quaternion();
@@ -263,8 +284,20 @@ export class GltfCharacterBody implements PlayerBody {
     }
 
     // 5. The carry IK chain, when the rig has the bones for it.
-    const left = this.arm(bones, ['leftarm'], ['leftforearm'], ['lefthand']);
-    const right = this.arm(bones, ['rightarm'], ['rightforearm'], ['righthand']);
+    const left = this.arm(
+      bones,
+      ['leftarm'],
+      ['leftforearm'],
+      ['lefthand'],
+      ['lefthandmiddle1', 'lefthandindex1']
+    );
+    const right = this.arm(
+      bones,
+      ['rightarm'],
+      ['rightforearm'],
+      ['righthand'],
+      ['righthandmiddle1', 'righthandindex1']
+    );
     this.arms = left === null || right === null ? null : { left, right };
 
     // 6. The spine chain the aim twist writes to: the upper two spine bones, so the torso bends
@@ -428,6 +461,12 @@ export class GltfCharacterBody implements PlayerBody {
     const handR = this.arms?.right.wrist ?? null;
     const worldL = handL === null ? null : handL.getWorldPosition(this.vShoulder);
     const worldR = handR === null ? null : handR.getWorldPosition(this.vWrist);
+    const fingerL = this.arms?.left.fingers ?? null;
+    const fingerR = this.arms?.right.fingers ?? null;
+    const tipL = fingerL === null ? null : fingerL.getWorldPosition(this.vFingerL);
+    const tipR = fingerR === null ? null : fingerR.getWorldPosition(this.vFingerR);
+    const forwardL = worldL === null || tipL === null ? undefined : directionBetween(worldL, tipL);
+    const forwardR = worldR === null || tipR === null ? undefined : directionBetween(worldR, tipR);
     return {
       body: 'gltf',
       bones: this.boneCount,
@@ -442,7 +481,9 @@ export class GltfCharacterBody implements PlayerBody {
           ? { x: this.lastHold.x, y: this.lastHold.y, z: this.lastHold.z }
           : null,
       handL: worldL === null ? undefined : { x: worldL.x, y: worldL.y, z: worldL.z },
-      handR: worldR === null ? undefined : { x: worldR.x, y: worldR.y, z: worldR.z }
+      handR: worldR === null ? undefined : { x: worldR.x, y: worldR.y, z: worldR.z },
+      handLForward: forwardL,
+      handRForward: forwardR
     };
   }
 
@@ -470,13 +511,21 @@ export class GltfCharacterBody implements PlayerBody {
     bones: readonly THREE.Bone[],
     upper: readonly string[],
     elbow: readonly string[],
-    wrist: readonly string[]
+    wrist: readonly string[],
+    fingers: readonly string[]
   ): ArmChain | null {
     const upperBone = findBone(bones, upper);
     const elbowBone = findBone(bones, elbow);
     const wristBone = findBone(bones, wrist);
     if (upperBone === null || elbowBone === null || wristBone === null) return null;
-    return { upper: upperBone, elbow: elbowBone, wrist: wristBone };
+    // Middle finger first (its knuckle is closest to the hand's long axis), then the index.
+    // Names are per side, so the right arm can never read the left hand's fingers.
+    return {
+      upper: upperBone,
+      elbow: elbowBone,
+      wrist: wristBone,
+      fingers: findBone(bones, fingers)
+    };
   }
 
   /**
@@ -509,10 +558,21 @@ export class GltfCharacterBody implements PlayerBody {
     const reach = upperLength + foreLength;
     if (!(reach > 0) || !(upperLength > 0) || !(foreLength > 0)) return;
 
-    // The grip point, clamped into what this arm can actually span (direction preserved).
+    // Keep the grip out of the body first, then clamp into what this arm can span (direction
+    // preserved). Order matters: the torso is a fixed volume, so pushing a hand out of it and
+    // *then* clamping to reach keeps the solve inside both constraints instead of trading one
+    // for the other.
+    clampOutsideTorso(
+      this.object.position,
+      this.bodyRightX,
+      this.bodyRightZ,
+      target,
+      DEFAULT_TORSO_CLEARANCE,
+      this.vSafe
+    );
     const distance = clampGripTarget(
       this.vShoulder,
-      target,
+      this.vSafe,
       Math.abs(upperLength - foreLength) + 1e-3,
       reach - 1e-3,
       this.vClamped
@@ -566,6 +626,45 @@ export class GltfCharacterBody implements PlayerBody {
     const desiredFore = unitInto(this.vDir.subVectors(this.vClamped, this.vElbow));
     this.rotateBoneWorld(chain.elbow, currentFore, desiredFore, blend);
     chain.elbow.updateMatrixWorld(true);
+
+    // The hand, last: the forearm solve leaves its twist to the clip, so a hand can point at the
+    // shoulder while its palm faces the wrong way. Aim the wrist at the grip point it is holding
+    // (bounded to a wrist's real bend), rate-limited so a camera flick sweeps it rather than
+    // snapping it. Without this the imported body's fingers spin through the gun and the body.
+    this.orientWrist(chain, this.vClamped, blend, dt);
+  }
+
+  /**
+   * Point the hand at its grip, with a wrist's bend limit and a bounded angular rate. Reads the
+   * finger bone's world position to know which way the hand currently points; a rig with no
+   * finger bones is left alone rather than guessed at.
+   */
+  private orientWrist(chain: ArmChain, target: Vec3, blend: number, dt: number): void {
+    if (chain.fingers === null) return;
+    chain.wrist.getWorldPosition(this.vWrist);
+    chain.fingers.getWorldPosition(this.vHandTip);
+    chain.elbow.getWorldPosition(this.vElbow);
+
+    // A finger bone sitting on the wrist gives no axis; do not invent one.
+    if (this.vHandTip.distanceToSquared(this.vWrist) < MIN_AXIS * MIN_AXIS) return;
+    const current = unitInto(this.vUpper.subVectors(this.vHandTip, this.vWrist));
+    const forearm = unitInto(this.vFore.subVectors(this.vWrist, this.vElbow));
+    if (!wristAimDirection(this.vWrist, target, forearm, WRIST_BEND_LIMIT, this.vWristDir)) {
+      return;
+    }
+
+    const dot = Math.min(Math.max(
+      current.x * this.vWristDir.x + current.y * this.vWristDir.y + current.z * this.vWristDir.z,
+      -1
+    ), 1);
+    const angle = Math.acos(dot);
+    // Rate limit in *angle*, not in blend: a big correction waits its turn instead of completing
+    // in one frame at any dt.
+    const allowed = angle > 1e-5 ? (WRIST_TURN_RATE * Math.max(dt, 0)) / angle : 1;
+    const k = Math.min(Math.max(blend, 0), allowed, 1);
+    if (k <= 0) return;
+    this.rotateBoneWorld(chain.wrist, current, this.vWristDir, k);
+    chain.wrist.updateMatrixWorld(true);
   }
 
   /**
@@ -641,6 +740,19 @@ export class GltfCharacterBody implements PlayerBody {
     parent.getWorldQuaternion(this.qParent);
     bone.quaternion.copy(this.qParent.invert()).multiply(this.qWorld);
   }
+}
+
+/** Unit direction from `from` to `to`, or undefined when they coincide (no axis to report). */
+function directionBetween(
+  from: THREE.Vector3,
+  to: THREE.Vector3
+): { readonly x: number; readonly y: number; readonly z: number } | undefined {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dz = to.z - from.z;
+  const length = Math.hypot(dx, dy, dz);
+  if (!(length > 1e-5)) return undefined;
+  return { x: dx / length, y: dy / length, z: dz / length };
 }
 
 /** Normalise in place; a degenerate vector becomes +Z so a solve can never write a NaN bone. */

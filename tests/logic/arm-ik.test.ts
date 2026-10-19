@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CARRY_HAND_SPREAD,
+  DEFAULT_TORSO_CLEARANCE,
   ElbowPole,
+  WRIST_BEND_LIMIT,
   aimYawOf,
   clampGripTarget,
+  clampOutsideTorso,
   clampTwist,
   splitGrip,
   wrapAngle,
+  wristAimDirection,
   type GripPoint
 } from '../../src/core/arm-ik.ts';
 
@@ -89,6 +93,98 @@ describe('splitGrip — two hands bracket a part', () => {
     splitGrip(point(1, 2, 3), 0, 4, 0.2, left, right);
     expect(left.z).toBeCloseTo(3 - 0.2, 6);
     expect(right.z).toBeCloseTo(3 + 0.2, 6);
+  });
+});
+
+describe('clampOutsideTorso — a reach never passes through the body', () => {
+  // Facing -Z (yaw 0): right is +X, forward is -Z.
+  const FEET = point(0, 0, 0);
+  const CLEARANCE = DEFAULT_TORSO_CLEARANCE;
+
+  it('leaves a grip in front of the chest exactly where it is', () => {
+    const out = point(0, 0, 0);
+    const moved = clampOutsideTorso(FEET, 1, 0, point(0.04, 1.42, -0.18), CLEARANCE, out);
+    expect(moved).toBe(false);
+    expect(out.x).toBeCloseTo(0.04, 6);
+    expect(out.z).toBeCloseTo(-0.18, 6);
+  });
+
+  it('pushes a hand that has ended up in the chest out through the front face', () => {
+    const out = point(0, 0, 0);
+    // Barely inside the front face and left of centre: the shortest exit is forward.
+    const moved = clampOutsideTorso(FEET, 1, 0, point(0.02, 1.3, -0.12), CLEARANCE, out);
+    expect(moved).toBe(true);
+    expect(out.z).toBeCloseTo(-CLEARANCE.halfDepth, 6);
+    expect(out.x).toBeCloseTo(0.02, 6);
+    expect(out.y).toBeCloseTo(1.3, 6);
+  });
+
+  it('exits through the nearest face for a point deep on one side', () => {
+    const out = point(0, 0, 0);
+    const moved = clampOutsideTorso(FEET, 1, 0, point(0.18, 1.2, -0.02), CLEARANCE, out);
+    expect(moved).toBe(true);
+    expect(out.x).toBeCloseTo(CLEARANCE.halfWidth, 6);
+    expect(out.z).toBeCloseTo(-0.02, 6);
+  });
+
+  it('follows the character’s facing, not the world axes', () => {
+    // Facing +X: right is +Z, forward is +X. A point 0.10 m along +X is inside the 0.14 m deep
+    // torso and must exit through the front (+X), not through a world-axis side face.
+    const pushed = point(0, 0, 0);
+    expect(clampOutsideTorso(FEET, 0, 1, point(0.1, 1.2, 0), CLEARANCE, pushed)).toBe(true);
+    expect(pushed.x).toBeCloseTo(CLEARANCE.halfDepth, 6);
+    expect(pushed.z).toBeCloseTo(0, 6);
+
+    // The same offset in world +Z is the body's *right*, and 0.10 m is inside its 0.20 m width:
+    // it must move, which a world-axis test would have got wrong.
+    const lateral = point(0, 0, 0);
+    expect(clampOutsideTorso(FEET, 0, 1, point(0, 1.2, 0.1), CLEARANCE, lateral)).toBe(true);
+    expect(lateral.z).toBeCloseTo(CLEARANCE.halfWidth, 6);
+  });
+
+  it('ignores hands below and above the torso, and a degenerate body axis', () => {
+    const low = point(0, 0, 0);
+    expect(clampOutsideTorso(FEET, 1, 0, point(0, 0.3, 0), CLEARANCE, low)).toBe(false);
+    expect(low.y).toBeCloseTo(0.3, 6);
+
+    const noAxis = point(0, 0, 0);
+    expect(clampOutsideTorso(FEET, 0, 0, point(0, 1.2, -0.05), CLEARANCE, noAxis)).toBe(false);
+    expect(noAxis.z).toBeCloseTo(-0.05, 6);
+  });
+});
+
+describe('wristAimDirection — the hand points at its grip, with a bounded bend', () => {
+  it('points straight at a reachable grip', () => {
+    const out = point(0, 0, 0);
+    const ok = wristAimDirection(point(0.2, 1.4, 0), point(0.2, 1.4, -0.3), { x: 0, y: 0, z: -1 }, WRIST_BEND_LIMIT, out);
+    expect(ok).toBe(true);
+    expect(out.x).toBeCloseTo(0, 6);
+    expect(out.y).toBeCloseTo(0, 6);
+    expect(out.z).toBeCloseTo(-1, 6);
+  });
+
+  it('clamps a grip behind the palm to the wrist’s bend limit', () => {
+    const out = point(0, 0, 0);
+    // The forearm points forward; the grip sits diagonally behind the wrist. The wrist may
+    // rotate only WRIST_BEND_LIMIT away from the forearm, so the hand cannot fold backwards.
+    const ok = wristAimDirection(point(0, 1.4, 0), point(1, 1.4, 1), { x: 0, y: 0, z: -1 }, WRIST_BEND_LIMIT, out);
+    expect(ok).toBe(true);
+    expect(Math.acos(-out.z)).toBeCloseTo(WRIST_BEND_LIMIT, 6);
+    expect(Math.hypot(out.x, out.y, out.z)).toBeCloseTo(1, 6);
+  });
+
+  it('holds the forearm for a grip exactly behind the palm (no shortest arc)', () => {
+    const out = point(0, 0, 0);
+    const ok = wristAimDirection(point(0, 1.4, 0), point(0, 1.4, 1), { x: 0, y: 0, z: -1 }, WRIST_BEND_LIMIT, out);
+    expect(ok).toBe(true);
+    expect(out.z).toBeCloseTo(-1, 6);
+  });
+
+  it('holds the forearm direction for a degenerate grip or forearm', () => {
+    const out = point(0, 0, 0);
+    expect(wristAimDirection(point(0, 1, 0), point(0, 1, 0), { x: 0, y: 0, z: -1 }, 0.9, out)).toBe(false);
+    expect(wristAimDirection(point(0, 1, 0), point(0, 0, 0), { x: 0, y: 0, z: 0 }, 0.9, out)).toBe(false);
+    expect(Number.isFinite(out.x) && Number.isFinite(out.y) && Number.isFinite(out.z)).toBe(true);
   });
 });
 

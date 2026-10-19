@@ -91,6 +91,13 @@ export interface CharacterFacts {
   /** World-space hand positions, when the port draws a body with hands. */
   readonly handL?: { readonly x: number; readonly y: number; readonly z: number } | undefined;
   readonly handR?: { readonly x: number; readonly y: number; readonly z: number } | undefined;
+  /**
+   * Unit direction each hand points (wrist → fingers), when the body can measure one. The `arms`
+   * harness scenario reads this to prove a grip orients the hand at the thing it holds instead of
+   * letting the clip spin it; a body with no finger bones simply omits it.
+   */
+  readonly handLForward?: { readonly x: number; readonly y: number; readonly z: number } | undefined;
+  readonly handRForward?: { readonly x: number; readonly y: number; readonly z: number } | undefined;
   /** True while the hands are driven onto a grip target. */
   readonly holding?: boolean | undefined;
   /** World-space grip target the hands are driven onto, or null when the hands are free. */
