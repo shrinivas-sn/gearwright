@@ -1089,31 +1089,40 @@ async function scenarioBoot(cdp) {
   // so the read-out was an unstyled list: "the boxes and the slots don't fit" was literally
   // true. Pin the fix in layout terms — a real panel, and every visible slot chip a real box
   // that sits *inside* that panel. Absent when the weapon system is composed off (`?guns=0`).
-  const weaponLayout = await evaluate(
-    cdp,
-    `(() => {
-      const panel = document.querySelector('.gw-hud-weapon');
-      if (panel === null) return null;
-      if (getComputedStyle(panel).display === 'none') return null;
-      const p = panel.getBoundingClientRect();
-      const chips = [...panel.querySelectorAll('.gw-hud-weapon-slots > li')]
-        .filter((li) => !li.classList.contains('gw-hud-hidden'))
-        .map((li) => {
-          const b = li.getBoundingClientRect();
-          return {
-            text: li.textContent,
-            width: b.width,
-            height: b.height,
-            inside:
-              b.left >= p.left - 1 && b.right <= p.right + 1 && b.top >= p.top - 1 && b.bottom <= p.bottom + 1
-          };
-        });
-      return {
-        panel: { width: p.width, height: p.height, left: p.left, right: p.right, top: p.top, bottom: p.bottom },
-        chips
-      };
-    })()`
-  );
+  const readWeaponLayout = () =>
+    evaluate(
+      cdp,
+      `(() => {
+        const panel = document.querySelector('.gw-hud-weapon');
+        if (panel === null) return null;
+        if (getComputedStyle(panel).display === 'none') return null;
+        const p = panel.getBoundingClientRect();
+        const chips = [...panel.querySelectorAll('.gw-hud-weapon-slots > li')]
+          .filter((li) => !li.classList.contains('gw-hud-hidden'))
+          .map((li) => {
+            const b = li.getBoundingClientRect();
+            return {
+              text: li.textContent,
+              width: b.width,
+              height: b.height,
+              inside:
+                b.left >= p.left - 1 && b.right <= p.right + 1 && b.top >= p.top - 1 && b.bottom <= p.bottom + 1
+            };
+          });
+        return {
+          panel: { width: p.width, height: p.height, left: p.left, right: p.right, top: p.top, bottom: p.bottom },
+          chips
+        };
+      })()`
+    );
+  // The panel exists in the template before the first HUD render, so the chips can legitimately
+  // be empty for a frame or two. Poll instead of racing the first `present()`; a real "no chips"
+  // state still fails after the window closes.
+  let weaponLayout = await readWeaponLayout();
+  for (let attempt = 0; attempt < 8 && weaponLayout !== null && weaponLayout.chips.length === 0; attempt += 1) {
+    await sleep(250);
+    weaponLayout = await readWeaponLayout();
+  }
   report.data.weaponLayout = weaponLayout;
   if (weaponLayout !== null) {
     if (!(weaponLayout.panel.width > 100 && weaponLayout.panel.height > 40)) {
