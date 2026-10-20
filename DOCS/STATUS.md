@@ -1,11 +1,31 @@
 # Project Status — Gearwright
 
-**Branch:** `main` | **Date:** 2026-10-19 | **Phase:** Post-Overhaul · feel + fit pass
-**Worktree:** `E:\gearwright` · **Status:** `DOCS/STATUS.md` (index `DOCS/README.md`; log + numbers `DOCS/WORK/2026-10-19/WORK.md`; previous pass `DOCS/WORK/2026-10-18/WORK.md`; text moved out `DOCS/WORK/archive.md`)
+**Branch:** `main` | **Date:** 2026-10-20 | **Phase:** Post-Overhaul · carry-distance pass
+**Worktree:** `E:\gearwright` · **Status:** `DOCS/STATUS.md` (index `DOCS/README.md`; log + numbers `DOCS/WORK/2026-10-20/WORK.md`; previous pass `DOCS/WORK/2026-10-19/WORK.md`; text moved out `DOCS/WORK/archive.md`)
 **Live:** https://shrinivas-sn.github.io/gearwright/ · **Repository:** https://github.com/shrinivas-sn/gearwright
 
 ## Shipped state
 
+- **A carried part is held in the hands, at the distance its own size needs (20/10).** The fixed
+  1.35 m hold is gone: `carryHoldDistance` gives a part `carryReach` (0.42 m — the imported body's
+  measured 0.464 m arm, elbows bent) plus its plan-view **circumradius**, clamped to [0.55, 1.35]. A
+  gear is held at 0.84 m, a valve 0.74, a crate 0.99, the BM-1 dynamo 1.28. The hands now grip the
+  part's **near face** (`carryGripPoint`, computed by the L4 presenter and carried on
+  `CarryableRenderState.grip`), measured **live** at 0.18 / 0.23 m from that face — the previous
+  centre-based target left them ~0.8 m short of any surface. Carry height moved to the chest
+  (1.05 → 1.20 m), which is where the hands are.
+- **The 18/10 rejection of a short hold was a harness artefact, and the geometry now says so.**
+  Measured against the shipped content with the real capsule and colliders: the *nearest standable
+  stance* to any socket is 0.93 m (P1/P2's mesh mounts, between the shafts), 0.73 for shaft mounts,
+  0.35 for almost everything else — and the dock predicate is a **1.3 m** centre radius plus a
+  padded-box overlap, so a 0.74 m hold still lands inside every socket's volume. `maxHoldRange`
+  never came into it. `dockInto` only ever stood 1.2–2.3 m from a socket, so the rejected 0.72 m hold
+  could not put a part in range from any vantage it tried.
+- **A carried part is lifted over low geometry instead of being abandoned against it (20/10, found
+  live).** With the part brought in, B2's valve stalled at **y = 0.55 on the governor's 0.5 m
+  plinth** (`blocked: true`) and was dropped once the player walked on: the follow only moved in a
+  straight line, so every chunk toward the hold crossed the plinth. It now lifts by the remaining
+  vertical component and retries the horizontal move; a ceiling still refuses (box-checked).
 - **The hands stay on the gun and out of the body (19/10, the reported "hands rotate and clash inside
   the body").** The imported body used to aim only the forearm, leaving the hand's own direction to
   the clip — so the *position* was right and the fingers still pointed through the gun or the chest.
@@ -50,36 +70,38 @@
 
 ## Verification
 
-- **Typecheck** clean · **Tests** 63 files / **805** (792 at HEAD) · **Build** clean: `three` 624.62 kB (gzip 158.35), `app` 291.36 kB (gzip 85.62) — **+1.57 kB raw / +0.65 kB gzip** for this pass; weapon HUD CSS 11.85 kB (gzip 2.69).
+- **Typecheck** clean · **Tests** 64 files / **826** (805 at HEAD) · **Build** clean: `three` 624.62 kB (gzip 158.35), `app` 293.28 kB (gzip 86.15) — **+1.92 kB raw / +0.53 kB gzip** for this pass; weapon HUD CSS 11.85 kB (gzip 2.69).
+- **20/10 live:** `hold` (dev) **`problems: []`** — hands dot 0.953 / 0.935 at 0.573 / 0.486 m, **0.182 / 0.225 m from the grip face**; `dock` (dev) **`problems: []`**, docked on the **first** attempt, `dropped: false`; `arms` (dev) **`problems: []`** — walking 0.0001 m hand step, 0.0000 m grip error, `handTurnRate` **5.24** (gate 12), `insideBody` **0**; `boot --production` **`problems: []`**, body `gltf` 49 bones / 11 376 triangles, `walkSpeed 4`; `guns --production` **`problems: []`**, five slots fire (8 / 11 / 1 / 1 / 1).
+- **New this pass:** `tests/logic/carry-reach.test.ts` (15 — the derived distance per shipped part size, capsule clearance in every yaw, the circumradius bound, the near-face point including the top face, inside-the-box and non-finite input) and a **shipped-socket dock guard** (2 — every socket × every accepted part, dockable through the game's own predicate from a stance the real capsule can stand in; the second test proves the guard fails at a 2 m reach, so it cannot pass vacuously). Plus the lift-over regression (verified to fail without the fix) and three presenter grip tests.
 - **Live (real Chrome):** `boot --production` (exit 0, **`problems: []`**, body `gltf` 49 bones / 11 376 triangles, `walkSpeed 4`, weapon panel **300 × 119 px** with five **72–83 px** slot chips all inside it) and **`arms`** (dev; standing 0.0000 m muzzle drift / 0.0000 m hand step / 0.0000 m grip error; walking 0.0001 m step / 0.0000 m grip error, ≤0.0001 m body-relative spread, **`handTurnRate` 4.07 rad/s** against a 12 gate, **`insideBody` 0**) green after the wrist/torso changes. The 18/10 pass's `guns --production` and `hold` figures still stand (this pass touched neither the weapon simulation nor the carry target).
 - **New this pass:** `CharacterFacts` carries optional `handLForward`/`handRForward` (wrist → fingers, unit), and the `arms` scenario now turns that into two measured gates: worst hand angular rate while walking (12 rad/s; a clip-driven hand runs at the 24 rad/s wrist limit) and a body-relative torso-box count that must stay 0.
 - **`branch` (dev, whole curve in one session): unconfirmed.** Its first run on this code stalled at P2 because the hop teleported to a flat `y = 0.01` over unsupported spots — survivable only while the physics bug above held the player up. `hopTo` now stands the player on the height the level has under the target (`__probe.standingHeightAt`), and the confirming run was **stopped after ~30 min without finishing** (a clean-profile run at HEAD took ~12 min: branch A and B `Complete`, hub stage 2, both clue plates restored after the reload). So the curve is proven at HEAD but **not yet on this pass's code** — and the hop change itself is now a suspect for the extra time (it adds one async collider query per 0.4 m hop step).
 
 ## Next up (start here)
 
-1. **The carry distance needs its own pass — the rig-side fix is in, the tuning attempt was
-   rejected.** A carried part is still floated 1.35 m from a 0.46 m arm, and the value that arm can
-   actually span (`holdDistance` 0.72 / `holdHeight` 1.22) was tried on 18/10: `hold` stayed green
-   but **`dock` went red** ("the held part was soft-detached mid-carry" — a part 0.63 m closer sits
-   inside the machinery it is aimed into, so a blocked follow drifts past `maxHoldRange`). Reverted;
-   `dock` re-run green with the new rig. The next pass has to read the docking geometry (part size,
-   socket clearance) instead of moving the number.
-2. **Watch the arms in motion on the live link** (`?log=1`): fire a burst (the hands should stay on
+1. **Watch the arms in motion on the live link** (`?log=1`): fire a burst (the hands should stay on
    the gun through the recoil kick), walk with a part, and turn the camera hard — the elbows should
    sweep, never flip, and the wrists should turn *with* the gun (the 19/10 `orientWrist` solve).
    Also check the new weapon panel at the top-right in a real window: the slot chips must wrap
    inside it, and the ammo/state line must stay readable over a bright lab surface.
-3. **Confirm the `branch` curve end-to-end** (`node scripts/browser-check.mjs branch`, dev) — the
-   one unproven gate, unchanged from the 17/10 pass. Time-box it (a clean-profile run took ~12 min)
-   and if it overruns, instrument the hop before assuming a game defect; read a failing pair's
-   `hopTrace` first.
-4. **A decision for the snap-assist/SlotJudge reward-punish pass** — the name has no spec in the
+2. **Confirm the `branch` curve end-to-end** (`node scripts/browser-check.mjs branch`, dev) — the
+   one unproven gate, unchanged from the 17/10 pass and **not** re-run on 20/10 (the `dock` and
+   `hold` scenarios, which exercise the carry most, were). Time-box it (a clean-profile run took
+   ~12 min); if it overruns, instrument the hop before assuming a game defect — a failing pair's
+   `hopTrace` now records each part's pose and its `blocked` flag, so a stalled carry is visible
+   instead of inferred from the gap.
+3. **A decision for the snap-assist/SlotJudge reward-punish pass** — the name has no spec in the
    repo, so the thresholds and what "reward" versus "punish" mean need stating before any code —
    then **Branch C** and the **reward-material consumer**.
-5. `PLAN.md` now carries the hand & arm motion pass at the top; its Phase list is landed, and the
-   carry-distance decision above is what closes it.
+4. `PLAN.md` has been **deleted**: both passes it carried (locomotion + weapons, hand & arm motion)
+   are closed, and the carry-distance decision it named as its closing item landed on 20/10. The
+   record lives in `DOCS/WORK/2026-10-16/` and `DOCS/WORK/2026-10-18/`.
 
-**Limits:** `arms` measures the *presented* mount, because that is what the hands follow — the
+**Limits:** the carry geometry is measured with the *standing* capsule on the room floor at `y = 0`;
+no shipped socket is on a raised platform, but a future one would need `standingHeightAt` in that
+check. `hold`'s proximity gate is 0.25 m from the grip face — a hand is 0.17 m from it by
+construction (`splitGrip`), so it measures "the arm reached the part", not millimetre contact.
+`arms` measures the *presented* mount, because that is what the hands follow — the
 simulation's own muzzle leads it by up to one fixed step (≤0.06 m at a run) by design, and reading
 the wrong one is what made the first measurement of this pass report a phantom 0.14 m error. Carry
 scenarios (`dock`, `branch`) need the **dev server** (a production build serves no TypeScript for the harness's route planner, so they correctly report `inconclusive`). The harness's hop needs a floor under its target; over a genuine hole it falls back to `y = 0.01` (straight line + rollback, as before).

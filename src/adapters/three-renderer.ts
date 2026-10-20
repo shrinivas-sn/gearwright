@@ -215,8 +215,15 @@ export class ThreeRenderer implements RenderPort {
   /** The focused object's point, kept from `setFocusMarker` so the head can look at it. */
   private readonly focusPoint = { x: 0, y: 0, z: 0 };
   private hasFocusPoint = false;
-  /** Where the held part is, remembered from `setCarryables` (the grip target). */
+  /** Where the held part is, remembered from `setCarryables` (its centre). */
   private readonly heldPartCenter = { x: 0, y: 0, z: 0 };
+  /**
+   * The point on the held part's surface nearest the body — what the hands actually close on.
+   * Written by `setCarryables` (the same frame the part moves) and handed to the body as its
+   * grip target. Aiming the IK at the *centre* made the hands stop wherever the arms ran out:
+   * for anything bigger than a hand, the middle of a part is behind its own front face.
+   */
+  private readonly heldPartGrip = { x: 0, y: 0, z: 0 };
   private holding = false;
   /**
    * Last drawn weapon's grip, remembered from `setWeaponView` for the body's IK. `setWeaponView`
@@ -576,7 +583,7 @@ export class ThreeRenderer implements RenderPort {
     update.grounded = state.grounded;
     update.carrying = this.holding;
     update.dt = dt;
-    update.holdTarget = this.holding ? this.heldPartCenter : null;
+    update.holdTarget = this.holding ? this.heldPartGrip : null;
     update.weaponGrip = !this.holding && this.weaponDrawn ? this.weaponGripPair : null;
     // Copied into one mutable buffer: the rig keeps no reference to the caller's snapshot.
     const ground = state.footGroundY;
@@ -647,12 +654,22 @@ export class ThreeRenderer implements RenderPort {
       visual.material.emissive.setHex(state.held ? 0x6b4d12 : powered ? 0x2f7a2f : state.attached ? 0x1c4a1c : 0x1f3f39);
       visual.material.emissiveIntensity = state.held ? 0.85 : powered ? 0.9 : 0.3;
       visual.mesh.visible = true;
-      // The player's hands grip whatever this call says is held.
+      // The player's hands grip whatever this call says is held — on its near face, not at its
+      // centre, so the arms close on the part instead of reaching through it.
       if (state.held) {
         anyHeld = true;
         this.heldPartCenter.x = center.x;
         this.heldPartCenter.y = center.y;
         this.heldPartCenter.z = center.z;
+        if (state.grip !== undefined) {
+          this.heldPartGrip.x = state.grip.x;
+          this.heldPartGrip.y = state.grip.y;
+          this.heldPartGrip.z = state.grip.z;
+        } else {
+          this.heldPartGrip.x = center.x;
+          this.heldPartGrip.y = center.y;
+          this.heldPartGrip.z = center.z;
+        }
       }
     }
     this.holding = anyHeld;

@@ -6,7 +6,12 @@ import { HUB_STAGE_DEFINITIONS } from '../../src/data/hub-stages.ts';
 import { MACHINE_DEFINITIONS } from '../../src/data/machines.ts';
 import { PUZZLE_DEFINITIONS } from '../../src/data/puzzles/index.ts';
 import { REWARD_DEFINITIONS } from '../../src/data/rewards.ts';
-import { SOCKET_DEFINITIONS } from '../../src/data/sockets.ts';
+import { SOCKET_DEFINITIONS, socketDefinitionOf } from '../../src/data/sockets.ts';
+import { assignedPose } from '../../src/game-state/snap-rules.ts';
+import { DEFAULT_SNAP_TUNING } from '../../src/gameplay/snap-system.ts';
+import { carryHoldDistance } from '../../src/core/arm-ik.ts';
+import { rotatedHalfExtents } from '../../src/core/geometry.ts';
+import { DEFAULT_MANIPULATION_TUNING } from '../../src/gameplay/manipulation-system.ts';
 import { ComponentRegistry } from '../../src/game-state/component-registry.ts';
 import { ProgressionSystem } from '../../src/game-state/progression-system.ts';
 import {
@@ -303,6 +308,117 @@ describe('shipped level — PLAN T4.4', () => {
       }
       expect(Math.hypot(waypoint.x - feet.x, waypoint.z - feet.z), `reached z=${waypoint.z}`).toBeLessThan(0.1);
     }
+  });
+
+  /**
+   * CARRY GEOMETRY (19/10/2026) — a socket is only a socket if a carried part can reach it.
+   *
+   * The carry used to hold every part at one fixed 1.35 m, which nothing on the body can span: the
+   * hands clamped at their reach and the part floated ~0.9 m beyond them for the whole carry. The
+   * fix (a hold derived from the part's own size, `carryHoldDistance`) was rejected once already,
+   * on a `dock` run that failed — and the failure was a harness artefact: `dockInto` only ever
+   * stands 1.2–2.3 m from a socket, so the shorter part never got into the socket's volume.
+   *
+   * This is the check that settles it on geometry instead of on a run. For every shipped socket
+   * and every part it accepts: stand where the player's **real capsule** can stand, hold the part
+   * at the distance the carry actually uses, and require the *game's own* dock predicate — a
+   * padded box overlapping the socket volume (`SnapSystem.select`) and a centre within
+   * `detectRadius`. It fails on a socket placed somewhere the player cannot get near enough, which
+   * is the real constraint a short carry introduces, and it names the pair when it does.
+   */
+  /**
+   * The pairs the dock predicate rejects for a given hand reach — the body of the check below,
+   * so the "teeth" case can run the identical predicate at an absurd reach.
+   */
+  const undockablePairs = (reach: number): string[] => {
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([...SHIPPED_WORLD.colliders, ...hubColliders(branchState)]);
+    physics.setSocketVolumes(
+      SHIPPED_SOCKETS.map((socket) => ({
+        id: socket.id,
+        min: vec3(
+          socket.pose.center.x - socket.halfExtents.x,
+          socket.pose.center.y - socket.halfExtents.y,
+          socket.pose.center.z - socket.halfExtents.z
+        ),
+        max: vec3(
+          socket.pose.center.x + socket.halfExtents.x,
+          socket.pose.center.y + socket.halfExtents.y,
+          socket.pose.center.z + socket.halfExtents.z
+        )
+      }))
+    );
+
+    const capsule = DEFAULT_PLAYER_TUNING.capsule;
+    const tuning = DEFAULT_MANIPULATION_TUNING;
+    const padding = DEFAULT_SNAP_TUNING.detectionPadding;
+    const failures: string[] = [];
+
+    for (const socket of SHIPPED_SOCKETS) {
+      const definition = socketDefinitionOf(socket.defId);
+      if (definition === null) continue;
+      const assigned = assignedPose(socket, definition);
+      const parts = SHIPPED_CARRYABLES.filter((binding) =>
+        binding.definition.tags.some((tag) => definition.accepts.includes(tag))
+      );
+      if (parts.length === 0) continue;
+
+      // Where can the player actually stand, on the floor, facing this socket?
+      const stances: Array<{ x: number; z: number; ux: number; uz: number }> = [];
+      for (let s = 0; s < 36; s += 1) {
+        const angle = (s / 36) * Math.PI * 2;
+        const ux = Math.sin(angle);
+        const uz = Math.cos(angle);
+        for (let d = 0.35; d <= 2.0001; d += 0.1) {
+          const x = assigned.center.x - ux * d;
+          const z = assigned.center.z - uz * d;
+          if (physics.isPoseValid(vec3(x, 0.002, z), capsule)) {
+            stances.push({ x, z, ux, uz });
+            break;
+          }
+        }
+      }
+      // A socket the player cannot stand near at all is undockable for every part.
+      if (stances.length === 0) failures.push(`${socket.id}: no standable stance within 2 m`);
+
+      for (const binding of parts) {
+        const half = binding.definition.halfExtents;
+        const hold = carryHoldDistance(half, reach, tuning.holdDistanceMin, tuning.holdDistanceMax);
+        const turned = rotatedHalfExtents(half, assigned.yaw, vec3());
+        const dockable = stances.some((stance) => {
+          const cx = stance.x + stance.ux * hold;
+          const cz = stance.z + stance.uz * hold;
+          const cy = 0.002 + tuning.holdHeight;
+          const distance = Math.hypot(
+            cx - assigned.center.x,
+            cy - assigned.center.y,
+            cz - assigned.center.z
+          );
+          if (distance > DEFAULT_SNAP_TUNING.detectRadius) return false;
+          return physics
+            .overlapSocketVolumes(
+              vec3(cx - turned.x - padding, cy - turned.y - padding, cz - turned.z - padding),
+              vec3(cx + turned.x + padding, cy + turned.y + padding, cz + turned.z + padding)
+            )
+            .includes(socket.id);
+        });
+        if (!dockable) {
+          failures.push(`${socket.id} <- ${binding.instanceId} (hold ${hold.toFixed(2)} m)`);
+        }
+      }
+    }
+
+    return failures;
+  };
+
+  it('lets the player dock every shipped socket with the part held where the hands can reach it', () => {
+    expect(undockablePairs(DEFAULT_MANIPULATION_TUNING.carryReach)).toEqual([]);
+  });
+
+  it('fails that check when the hold is pushed out of reach (the check has teeth)', () => {
+    // A 2 m reach would float every part metres past the player's own stance: if this came back
+    // empty the guard above would be proving nothing.
+    expect(undockablePairs(2).length).toBeGreaterThan(0);
   });
 
   it('never places an enabled interaction target inside static geometry', () => {

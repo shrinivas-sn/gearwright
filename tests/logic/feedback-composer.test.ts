@@ -496,3 +496,37 @@ describe('FeedbackComposer — weapon cues (weapons pass)', () => {
     expect(audio.cues).toEqual([]);
   });
 });
+
+describe('FeedbackComposer — the carried grip (19/10/2026)', () => {
+  const PLAYER = { x: -6.2, y: 0.07, z: -1.5 };
+
+  it('hands the renderer the near face of a held part, not its centre', () => {
+    const render = new RecordingRenderPort();
+    const composer = new FeedbackComposer(render);
+    // `attached: false` is a held snapshot: the gear is loose and in the player's hands.
+    const view: FeedbackView = { ...viewOf(makeWorld({ attached: false })), playerPosition: () => PLAYER };
+    composer.update(DT, [], view);
+    composer.present();
+
+    // The gear is 0.3 m thick and 2 m in front of the player, so the face they can touch is
+    // 0.3 m from its centre — the centre would ask the arm to reach through the part.
+    expect(stateOf(render, 'gear-a').grip).toEqual({ x: -6.2, y: 0.07, z: 1.2 });
+  });
+
+  it('falls back to the centre when no player position is available', () => {
+    const render = new RecordingRenderPort();
+    const composer = new FeedbackComposer(render);
+    composer.update(DT, [], viewOf(makeWorld({ attached: false })));
+    composer.present();
+    expect(stateOf(render, 'gear-a').grip).toEqual({ x: -6.2, y: 0.07, z: 1.5 });
+  });
+
+  it('leaves a docked part gripped at its own centre (nobody is holding it)', () => {
+    const render = new RecordingRenderPort();
+    const composer = new FeedbackComposer(render);
+    const view: FeedbackView = { ...viewOf(makeWorld({ attached: true })), playerPosition: () => PLAYER };
+    composer.update(DT, [], view);
+    composer.present();
+    expect(stateOf(render, 'gear-a').grip).toEqual({ x: -8, y: 1.2, z: 0 });
+  });
+});

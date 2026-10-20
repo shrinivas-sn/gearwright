@@ -117,6 +117,98 @@ export function splitGrip(
 }
 
 /**
+ * How far in front of the torso anchor a carried part's **centre** must sit so that its near
+ * face lands inside a two-handed grip.
+ *
+ * The old carry used one fixed distance (1.35 m) for every part, which no arm can span: the
+ * hands clamped at their reach and the part floated ~0.9 m beyond the fingers for the whole
+ * carry — it read as telekinesis, and it is what "the hands move oddly" looked like from the
+ * outside. The distance is now the part's own size plus the reach the body has with its elbows
+ * bent, so the hands close on the surface of a gear and on the surface of a boiler alike.
+ *
+ * The part's plan-view **circumradius** (half-diagonal, `hypot(hx, hz)`) is used rather than the
+ * extent along the current aim line. That is the one number that bounds the box in *every* yaw —
+ * the largest half extent does not, because a box turned 45° presents its corner, which sticks out
+ * `hypot(hx, hz)` — so the value is **rotation-invariant**: turning a part in your hands (the
+ * `Q`/`F` rotate) never lunges it toward or away from the chest, and no orientation can put a
+ * corner through the player's own capsule.
+ *
+ * `minDistance` guards a very thin part (a plate's 0.05 m half extent would otherwise sit inside
+ * the body); `maxDistance` keeps the deal the old constant made — nothing is ever carried further
+ * out than that — so a large part is clamped, never floated.
+ */
+export function carryHoldDistance(
+  halfExtents: { readonly x: number; readonly z: number },
+  reach: number,
+  minDistance: number,
+  maxDistance: number
+): number {
+  const min = Math.max(finite(minDistance), 0);
+  const max = Math.max(finite(maxDistance), min);
+  const footprint = Math.hypot(finite(halfExtents.x), finite(halfExtents.z));
+  const wanted = Math.max(finite(reach), 0) + footprint;
+  return Math.min(Math.max(wanted, min), max);
+}
+
+/**
+ * The point on a yaw-rotated box's surface nearest `from` — the face a carried part presents to
+ * the hands, writing into `out`. Returns the distance from the box's centre to that face (0 for a
+ * degenerate input, which callers treat as "no grip").
+ *
+ * The carry hands the rig the part's *centre* today, and a rig can only pull a hand toward a
+ * point: aiming at the middle of a gear is aiming at the far side of it through its own body, so
+ * the hands stopped wherever the arms ran out instead of closing on the part. The near face is
+ * the support point of the box along the ray from the player — the same ray a person would put
+ * their hands on.
+ *
+ * Pure numbers: the box is only ever yawed (the game's one rotation axis), so this is a ray-exit
+ * distance in the box's own frame and a rigid rotation back out.
+ */
+export function carryGripPoint(
+  center: Vec3,
+  halfExtents: { readonly x: number; readonly y: number; readonly z: number },
+  yaw: number,
+  from: Vec3,
+  out: GripPoint
+): number {
+  const cx = finite(center.x);
+  const cy = finite(center.y);
+  const cz = finite(center.z);
+  out.x = cx;
+  out.y = cy;
+  out.z = cz;
+
+  let dx = finite(from.x) - cx;
+  let dy = finite(from.y) - cy;
+  let dz = finite(from.z) - cz;
+  const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (!(length > EPS)) return 0;
+  dx /= length;
+  dy /= length;
+  dz /= length;
+
+  // Into the box's frame (`rotation.y = yaw`, the renderer's own convention), then back out: the
+  // rotation is rigid, so the exit parameter is the same number in both frames.
+  const cos = Math.cos(finite(yaw));
+  const sin = Math.sin(finite(yaw));
+  const lx = cos * dx - sin * dz;
+  const ly = dy;
+  const lz = sin * dx + cos * dz;
+
+  let exit = Number.POSITIVE_INFINITY;
+  if (Math.abs(lx) > EPS) exit = Math.min(exit, Math.abs(finite(halfExtents.x)) / Math.abs(lx));
+  if (Math.abs(ly) > EPS) exit = Math.min(exit, Math.abs(finite(halfExtents.y)) / Math.abs(ly));
+  if (Math.abs(lz) > EPS) exit = Math.min(exit, Math.abs(finite(halfExtents.z)) / Math.abs(lz));
+  if (!Number.isFinite(exit) || !(exit > 0)) return 0;
+
+  const reach = Math.min(exit, length);
+  out.x = cx + dx * reach;
+  out.y = cy + dy * reach;
+  out.z = cz + dz * reach;
+  return reach;
+}
+
+/**
  * The torso volume a hand is not allowed to enter, in the body's own frame. Deliberately a box
  * rather than a cylinder: a person is wider across the shoulders (±0.20 m) than deep (0.14 m),
  * and a cylinder that cleared the shoulders would push every normal two-handed grip off the gun.

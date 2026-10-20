@@ -24,6 +24,7 @@
  */
 
 import { vec3, vec3Set, type Vec3 } from '../core/vec3.ts';
+import { carryHoldDistance } from '../core/arm-ik.ts';
 import { rotatedHalfExtents } from '../core/geometry.ts';
 import {
   MASS_RANK,
@@ -103,9 +104,18 @@ export interface ManipulationActions {
 }
 
 export interface ManipulationTuning {
-  /** Metres in front of the player's torso anchor the object is held. */
-  readonly holdDistance: number;
-  /** Height above the player's feet of the hold anchor. */
+  /**
+   * Metres in front of the torso anchor that a **hand** can span with the elbows bent — the base
+   * of every hold distance. The object itself is held at `carryReach + its plan-view circumradius`,
+   * so its near face sits in the hands whatever its size and whichever way it is turned
+   * (`carryHoldDistance`).
+   */
+  readonly carryReach: number;
+  /** Smallest hold distance any part is given, whatever its size. */
+  readonly holdDistanceMin: number;
+  /** Largest hold distance any part is given, whatever its size. */
+  readonly holdDistanceMax: number;
+  /** Height above the player's feet of the hold anchor (a two-handed carry sits at the chest). */
   readonly holdHeight: number;
   /** Exponential convergence rate (1/s) of the object toward the hold pose. */
   readonly holdBlend: number;
@@ -138,15 +148,26 @@ export interface ManipulationTuning {
 }
 
 export const DEFAULT_MANIPULATION_TUNING: ManipulationTuning = {
-  // Hand-motion pass (18/10/2026): `holdDistance` was tried at 0.72 m / 1.22 m high, which is what
-  // the imported body's 0.464 m arm can actually reach — and the `dock` browser scenario went red
-  // ("the held part was soft-detached mid-carry"): a part floating 0.63 m closer sits inside the
-  // machinery it is being aimed into, so a blocked follow can no longer keep station and the part
-  // drifts past `maxHoldRange`. The carry read is therefore fixed on the *body* side — the arms
-  // bend onto the part at its own reach instead of locking straight — and this distance stays a
-  // gameplay decision with its own pass (part size vs. docking geometry), not a rig tweak.
-  holdDistance: 1.35,
-  holdHeight: 1.05,
+  // Carry-distance pass (19/10/2026). The fixed 1.35 m hold was rejected on 18/10 after `dock`
+  // went red, with the note that the distance needed "a pass that reads the docking geometry
+  // (part size, socket clearance) rather than the rig". That pass is now done, and it found the
+  // 18/10 verdict was a harness artefact: `dockInto` only ever stands 1.2–2.3 m from a socket, so
+  // a shorter hold never got the part inside the socket's volume. Measured against the shipped
+  // geometry instead (real capsule, real colliders, `tests/logic/carry-reach.test.ts`):
+  //   - the nearest standable stance to any socket is 0.93 m (P1/P2's mesh mounts, between the
+  //     shafts); every other socket allows 0.35–0.73 m;
+  //   - the snap predicate is a 1.3 m centre radius plus a padded-box overlap with the 0.8 m
+  //     trigger volume, so standing 0.93 m out still leaves the part inside the volume.
+  // So the hold is now derived from the part: its near face sits at `carryReach`, the reach the
+  // imported body's 0.464 m arm has left once the elbows bend for a two-handed grip. The old
+  // 1.35 m survives only as the ceiling, so nothing is ever carried further out than before.
+  carryReach: 0.42,
+  holdDistanceMin: 0.55,
+  holdDistanceMax: 1.35,
+  // Chest height on the 1.80 m body (shoulders 1.42 m): a two-handed carry sits level with the
+  // hands, not at the waist. The shipped sockets sit at 0.8–1.2 m and their volumes are ±0.4 m,
+  // so this height still engages every one of them (the vertical offset is at most 0.40 m).
+  holdHeight: 1.2,
   // Carry-feel pass (17/10/2026). The blend is the *lag* of the carried part: for a
   // target moving at `v`, the steady-state gap is `v / (1 - e^(-holdBlend·dt))`, so at
   // 14 the part trailed a running player by ~0.56 m — it read as dragging a boat
@@ -1095,6 +1116,20 @@ export class ManipulationSystem {
     return true;
   }
 
+  /**
+   * The carry distance for *this* part: its near face in the hands (see `carryHoldDistance`).
+   * A part's own size decides it, so a gear and a boiler are both held where an arm can reach —
+   * the fixed constant this replaces could only ever suit one of them.
+   */
+  private holdDistanceFor(record: CarryableRecord): number {
+    return carryHoldDistance(
+      record.binding.definition.halfExtents,
+      this.tuning.carryReach,
+      this.tuning.holdDistanceMin,
+      this.tuning.holdDistanceMax
+    );
+  }
+
   private followHold(record: CarryableRecord, dt: number, input: ManipulationStepInput): void {
     const { position, cameraYaw } = input.player;
     const anchorX = position.x;
@@ -1104,9 +1139,10 @@ export class ManipulationSystem {
     // the view, anchored to the player so it never flies off when the player spins.
     const forwardX = -Math.sin(cameraYaw);
     const forwardZ = -Math.cos(cameraYaw);
-    let desiredX = anchorX + forwardX * this.tuning.holdDistance;
+    const holdDistance = this.holdDistanceFor(record);
+    let desiredX = anchorX + forwardX * holdDistance;
     let desiredY = anchorY;
-    let desiredZ = anchorZ + forwardZ * this.tuning.holdDistance;
+    let desiredZ = anchorZ + forwardZ * holdDistance;
     let desiredYaw: number | null = null;
 
     // Snap assist (ARCH §21.2 "assist, never force"): proportional to proximity and
@@ -1159,32 +1195,30 @@ export class ManipulationSystem {
     const degenerate = hit !== null && hit.distance <= SKIN;
     const allowed = hit !== null && !degenerate ? Math.max(0, hit.distance - SKIN) : travel;
 
-    // Advance in chunks of at most half the part's own thickness, and keep the last
-    // chunk that is free of geometry. The sphere sweep above only guards the sphere
-    // inscribed in the part's box, so a flat part sliding edge-on (a plate, a valve
-    // cover) could otherwise cross a thin wall between two box checks; the full move is
-    // the first candidate, so an unobstructed follow still costs exactly one box query.
-    const baseX = record.pose.center.x;
-    const baseY = record.pose.center.y;
-    const baseZ = record.pose.center.z;
-    const chunkLimit = Math.max(HOLD_CHUNK_MIN, probeRadius * 0.5);
-    const chunks = allowed > chunkLimit ? Math.ceil(allowed / chunkLimit) : 1;
+    let advanced = this.advanceAlong(record, dirX, dirY, dirZ, allowed);
 
-    let advanced = -1;
-    for (let index = 1; index <= chunks; index += 1) {
-      const distance = (allowed * index) / chunks;
-      this.scratchCandidate.center.x = baseX + dirX * distance;
-      this.scratchCandidate.center.y = baseY + dirY * distance;
-      this.scratchCandidate.center.z = baseZ + dirZ * distance;
-      this.scratchCandidate.yaw = record.pose.yaw;
-      this.boxFor(record, this.scratchCandidate.yaw, this.scratchBox, this.scratchCandidate.center);
-      if (this.physics.isBoxBlocked(this.scratchBox.min, this.scratchBox.max)) break;
-      advanced = distance;
+    // **A carried part is lifted over low geometry, not abandoned against it.** The follow is
+    // a straight line, so a part that drifts to chest height beside a 0.5 m plinth used to
+    // stop dead: the very next chunk in the direction of the hold crossed the plinth, every
+    // chunk failed, and the part was left behind while the player walked on — which then
+    // soft-detached it (EC-MAN-07). The 19/10 carry-distance pass found this live: B2's valve
+    // stalled at y = 0.55 on the governor's plinth with `blocked: true` and was dropped. The
+    // long fixed hold had masked it by keeping the part's arc away from the machinery.
+    //
+    // Lifting first is what a person does, and it is always legal in this world: the hold is
+    // chest-high, so there is nothing above a plinth to lift into (and the box check still
+    // refuses it if there is). The horizontal move is then retried from the lifted pose.
+    if (advanced <= 0 && dy > 0) {
+      const lift = this.advanceAlong(record, 0, 1, 0, Math.abs(dy));
+      if (lift > 0) {
+        record.pose.center.y += lift;
+        advanced = this.advanceAlong(record, dirX, dirY, dirZ, allowed);
+      }
     }
 
-    if (advanced < 0) {
-      // Nowhere to go: hold the previous (valid) pose instead of embedding. The player
-      // walking on then grows the hold range, which soft-detaches cleanly.
+    if (advanced <= 0) {
+      // Nowhere to go even upward: hold the previous (valid) pose instead of embedding. The
+      // player walking on then grows the hold range, which soft-detaches cleanly.
       this.blocked = true;
       record.blocked = true;
       return;
@@ -1199,10 +1233,53 @@ export class ManipulationSystem {
 
     if (desiredYaw !== null) this.tryYaw(record, desiredYaw);
 
-    record.pose.center.x = baseX + dirX * advanced;
-    record.pose.center.y = baseY + dirY * advanced;
-    record.pose.center.z = baseZ + dirZ * advanced;
+    record.pose.center.x += dirX * advanced;
+    record.pose.center.y += dirY * advanced;
+    record.pose.center.z += dirZ * advanced;
     this.publishRecord(record, false);
+  }
+
+  /**
+   * Move the held part along a unit direction in chunks of at most half its own thickness,
+   * keeping the last chunk that is free of geometry. Returns the distance advanced (0 when the
+   * very first chunk is blocked, never negative).
+   *
+   * The sphere sweep in `followHold` only guards the sphere inscribed in the part's box, so a
+   * flat part sliding edge-on (a plate, a valve cover) could otherwise cross a thin wall between
+   * two box checks; the full move is the first candidate, so an unobstructed follow still costs
+   * exactly one box query.
+   */
+  private advanceAlong(
+    record: CarryableRecord,
+    dirX: number,
+    dirY: number,
+    dirZ: number,
+    travel: number
+  ): number {
+    if (!(travel > 0)) return 0;
+    const probeRadius = Math.min(
+      record.binding.definition.halfExtents.x,
+      record.binding.definition.halfExtents.y,
+      record.binding.definition.halfExtents.z
+    );
+    const baseX = record.pose.center.x;
+    const baseY = record.pose.center.y;
+    const baseZ = record.pose.center.z;
+    const chunkLimit = Math.max(HOLD_CHUNK_MIN, probeRadius * 0.5);
+    const chunks = travel > chunkLimit ? Math.ceil(travel / chunkLimit) : 1;
+
+    let advanced = 0;
+    for (let index = 1; index <= chunks; index += 1) {
+      const distance = (travel * index) / chunks;
+      this.scratchCandidate.center.x = baseX + dirX * distance;
+      this.scratchCandidate.center.y = baseY + dirY * distance;
+      this.scratchCandidate.center.z = baseZ + dirZ * distance;
+      this.scratchCandidate.yaw = record.pose.yaw;
+      this.boxFor(record, this.scratchCandidate.yaw, this.scratchBox, this.scratchCandidate.center);
+      if (this.physics.isBoxBlocked(this.scratchBox.min, this.scratchBox.max)) break;
+      advanced = distance;
+    }
+    return advanced;
   }
 
   private poseBlocked(record: CarryableRecord, pose: Pose): boolean {

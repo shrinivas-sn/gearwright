@@ -195,7 +195,9 @@ function buildFeedbackView(
   manipulation: ManipulationSystem,
   snap: SnapSystem,
   graph: MachineGraph,
-  content: MachineContent
+  content: MachineContent,
+  /** Where the body stands — the direction a held part's grip face is measured from. */
+  playerPosition: () => Vec3 | null
 ): FeedbackView {
   const machineOfSocket = new Map<string, string>();
   for (const socket of content.sockets) {
@@ -223,6 +225,7 @@ function buildFeedbackView(
 
   return {
     carryables: () => manipulation.snapshots(),
+    playerPosition,
     poseOf,
     attachedPoseOf: (componentId) => snap.attachedPose(componentId),
     machineOf: (componentId) => {
@@ -1017,7 +1020,7 @@ function boot(): void {
   applySettings();
 
   const composer = new FeedbackComposer(renderPort, {}, audio);
-  const feedbackView = buildFeedbackView(manipulation, snap, graph, content);
+  const feedbackView = buildFeedbackView(manipulation, snap, graph, content, () => player.snapshot().position);
   // §29.3's reveal timing (duration + cooldown) is presentation, so it lives in an L4
   // presenter next to the feedback composer — the composition adds no state owner.
   const scanner = new ScannerOverlay(renderPort);

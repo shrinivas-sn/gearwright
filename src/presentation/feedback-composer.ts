@@ -47,6 +47,7 @@ import type { WeaponStepResult } from '../gameplay/weapon-system.ts';
 import type { WeaponClass } from '../data/weapons.ts';
 import type { CarryableSnapshot } from '../gameplay/manipulation-system.ts';
 import type { Vec3 } from '../core/vec3.ts';
+import { carryGripPoint } from '../core/arm-ik.ts';
 import { clamp01, lerp, lerpAngle } from '../core/interp.ts';
 import type {
   CarryableRenderState,
@@ -78,6 +79,12 @@ export interface FeedbackView {
   readonly machineAnchorOf: (machineId: string) => Vec3 | null;
   /** Visual shape per component (PLAN T5.2); absent = every part is a box. */
   readonly visualOf?: ((componentId: string) => 'box' | 'gear' | 'pipe') | undefined;
+  /**
+   * Where the player's body stands. Used only to find the near face of a held part — the point
+   * the hands close on — so the render state carries a grip target rather than the part's
+   * centre. Presentation only: nothing is read back into a system.
+   */
+  readonly playerPosition?: (() => Vec3 | null) | undefined;
 }
 
 export interface FeedbackTuning {
@@ -111,6 +118,8 @@ interface MutableCarryableState {
   attached: boolean;
   visual: 'box' | 'gear' | 'pipe';
   powered: boolean;
+  /** The point on this part's surface nearest the player (its grip); the centre when not held. */
+  grip: { x: number; y: number; z: number };
   prevX: number;
   prevY: number;
   prevZ: number;
@@ -168,6 +177,11 @@ export class FeedbackComposer {
   private readonly stateById = new Map<string, MutableCarryableState>();
   private readonly presented: MutableCarryableState[] = [];
   private readonly presentedById = new Map<string, MutableCarryableState>();
+  /** Last step's player position, read from the view (§32 catch-up: `present` gets no view). */
+  private readonly playerScratch = { x: 0, y: 0, z: 0 };
+  /** The same point at an arbitrary height — the hands' own level (no per-frame allocation). */
+  private readonly playerLevel = { x: 0, y: 0, z: 0 };
+  private hasPlayer = false;
   private readonly scratchPulse: { point: Vec3; kind: FeedbackPulseKind; strength: number } = {
     point: { x: 0, y: 0, z: 0 },
     kind: 'attach',
@@ -192,6 +206,15 @@ export class FeedbackComposer {
     // A non-finite or negative delta is zero elapsed time, so a bad frame can neither
     // shorten the pulse nor open the retrigger window early (the scanner's rule too).
     this.elapsed += Number.isFinite(dt) && dt > 0 ? dt : 0;
+    // The carry grip needs to know which way "toward the player" is; a view without a player
+    // position (headless or a body-less composition) simply leaves the grip at each centre.
+    const player = view.playerPosition?.() ?? null;
+    this.hasPlayer = player !== null;
+    if (player !== null) {
+      this.playerScratch.x = player.x;
+      this.playerScratch.y = player.y;
+      this.playerScratch.z = player.z;
+    }
     for (const intent of intents) this.applyIntent(intent, view);
 
     if (this.pulse !== null) {
@@ -226,6 +249,22 @@ export class FeedbackComposer {
       out.attached = state.attached;
       out.visual = state.visual;
       out.powered = state.powered;
+      // The hands grip the part's near face, not its centre: aiming a hand at the middle of a
+      // part asks the arm to reach *through* it, so the carry read as holding a ghost 0.9 m out.
+      if (state.held && this.hasPlayer) {
+        // Measured at the part's own height, not from the player's feet: a ray from a standing
+        // player's origin up to a chest-height part points mostly *down*, and the nearest face
+        // of a flat gear is then its underside (the first version of this handed the hands the
+        // gear's bottom edge, 0.07 m below its middle). The hands work level with what they hold.
+        this.playerLevel.x = this.playerScratch.x;
+        this.playerLevel.y = out.center.y;
+        this.playerLevel.z = this.playerScratch.z;
+        carryGripPoint(out.center, out.halfExtents, out.yaw, this.playerLevel, out.grip);
+      } else {
+        out.grip.x = out.center.x;
+        out.grip.y = out.center.y;
+        out.grip.z = out.center.z;
+      }
       this.presented.push(out);
     }
     this.render.setCarryables(this.presented as ReadonlyArray<CarryableRenderState>);
@@ -423,6 +462,7 @@ export class FeedbackComposer {
       attached: false,
       visual: 'box',
       powered: false,
+      grip: { x: 0, y: 0, z: 0 },
       prevX: 0,
       prevY: 0,
       prevZ: 0,
@@ -449,6 +489,7 @@ export class FeedbackComposer {
       attached: false,
       visual: 'box',
       powered: false,
+      grip: { x: 0, y: 0, z: 0 },
       prevX: 0,
       prevY: 0,
       prevZ: 0,

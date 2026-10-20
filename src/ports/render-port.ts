@@ -139,6 +139,13 @@ export interface CarryableRenderState {
   readonly visual?: 'box' | 'gear' | 'pipe' | undefined;
   /** Part of a machine that is running right now (glow). Absent = false. */
   readonly powered?: boolean | undefined;
+  /**
+   * The point on this part's surface nearest the player, when it is held — where the hands
+   * close on it. The presenter computes it (§32 layer 4) because it already owns the
+   * interpolated pose the hands must match; absent = the centre, which is only right for a
+   * part small enough to grip in one hand.
+   */
+  readonly grip?: { readonly x: number; readonly y: number; readonly z: number } | undefined;
 }
 
 /**

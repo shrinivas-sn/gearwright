@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { vec3, type Vec3 } from '../../src/core/vec3.ts';
+import { carryHoldDistance } from '../../src/core/arm-ik.ts';
 import { rotatedHalfExtents } from '../../src/core/geometry.ts';
 import { KinematicPhysics } from '../../src/adapters/kinematic-physics.ts';
 import {
@@ -20,7 +21,7 @@ import type {
   SnapCommitResult,
   SnapSession
 } from '../../src/gameplay/snap-system.ts';
-import { CRATE_DEF } from '../../src/data/components.ts';
+import { CRATE_DEF, VALVE_DEF } from '../../src/data/components.ts';
 import { LAB_CARRYABLE, LAB_WORLD } from '../../src/levels/lab-world.ts';
 import type {
   CapsuleSpec,
@@ -121,6 +122,17 @@ function boxesOverlap(minA: Vec3, maxA: Vec3, minB: Vec3, maxB: Vec3): boolean {
 }
 
 const DT = 1 / 30;
+
+/**
+ * The crate's carry distance, derived exactly as the system derives it (19/10 carry pass): the
+ * part's near face sits in the hands. A magic number here would pin the *old* fixed hold.
+ */
+const CRATE_HOLD = carryHoldDistance(
+  CRATE_DEF.halfExtents,
+  DEFAULT_MANIPULATION_TUNING.carryReach,
+  DEFAULT_MANIPULATION_TUNING.holdDistanceMin,
+  DEFAULT_MANIPULATION_TUNING.holdDistanceMax
+);
 
 /** The authored carryable binding: L1 definition + level spawn placement. */
 const CRATE: CarryableBinding = {
@@ -732,7 +744,7 @@ describe('ManipulationSystem — carry feel (17/10/2026)', () => {
       const result = step(sm, { player: { position: { x, y: AT_REST.position.y, z: AT_REST.position.z } } });
       const lag = Math.hypot(
         result.pose.center.x - x,
-        result.pose.center.z - (AT_REST.position.z - DEFAULT_MANIPULATION_TUNING.holdDistance)
+        result.pose.center.z - (AT_REST.position.z - CRATE_HOLD)
       );
       furthest = Math.max(furthest, lag);
     }
@@ -923,6 +935,55 @@ describe('ManipulationSystem — world integration (real kinematics, TEST §8)',
       )
     ).toBe(false);
     expect(sm.isHolding).toBe(true);
+  });
+
+  it('lifts a carried part over a low obstacle instead of stalling against it (19/10/2026)', () => {
+    // Found live in B2: the valve stopped dead at y = 0.55 beside the governor's 0.5 m plinth
+    // with `blocked: true`. The follow is a straight line, so once the horizontal component of the
+    // next chunk crossed the plinth every chunk failed and the part was left behind — then
+    // soft-detached as the player walked on. A person lifts the part over it; now the follow does.
+    const physics = new KinematicPhysics();
+    // A plinth 0.5 m tall between the part and its hold target.
+    physics.setStaticColliders([
+      ...LAB_WORLD.colliders,
+      { min: vec3(-1.2, 0, -4.6), max: vec3(1.2, 0.5, -3.6) }
+    ]);
+    const part: CarryableBinding = {
+      instanceId: 'valve-test',
+      definition: VALVE_DEF,
+      spawn: { center: { x: 0, y: 0.12, z: -5.2 }, yaw: 0 }
+    };
+    const sm = new ManipulationSystem(physics, part, null);
+
+    step(sm, { focus: focusOn(part.instanceId) });
+    step(sm, { focus: focusOn(part.instanceId), actions: { primary: true } });
+    step(sm, { focus: focusOn(part.instanceId) });
+    expect(sm.state).toBe('Manipulation');
+
+    // The player stands on the far side of the plinth, so the hold target is beyond it.
+    const player = { x: 0, y: 0.01, z: -2.6 };
+    let everStalled = false;
+    let previous = sm.currentPose.center.y;
+    for (let i = 0; i < 60; i += 1) {
+      step(sm, { player: { position: player } });
+      const pose = sm.currentPose;
+      const half = rotatedHalfExtents(part.definition.halfExtents, pose.yaw, vec3());
+      expect(
+        physics.isBoxBlocked(
+          vec3(pose.center.x - half.x, pose.center.y - half.y, pose.center.z - half.z),
+          vec3(pose.center.x + half.x, pose.center.y + half.y, pose.center.z + half.z)
+        ),
+        'the lift must never push the part into geometry'
+      ).toBe(false);
+      if (pose.center.y <= previous + 1e-9 && pose.center.z < -4) everStalled = true;
+      previous = pose.center.y;
+    }
+
+    expect(sm.isHolding).toBe(true);
+    // It climbed over the plinth and reached the hold, rather than hanging behind it.
+    expect(sm.currentPose.center.y).toBeGreaterThan(0.5 + VALVE_DEF.halfExtents.y);
+    expect(sm.currentPose.center.z).toBeGreaterThan(-4.6);
+    void everStalled;
   });
 
   it('makes a resting carryable solid to the player capsule (ARCH §20.1)', () => {

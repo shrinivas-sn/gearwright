@@ -553,6 +553,7 @@ window.__probe = {
     const sample = (hop) => {
       const pose = dev.manipulation.currentPose;
       const player = dev.player.snapshot().position;
+      const yaw = dev.camera.currentYaw;
       trace.push({
         hop,
         held: dev.manipulation.heldId ?? null,
@@ -562,7 +563,21 @@ window.__probe = {
             : Number(
                 Math.hypot(pose.center.x - player.x, pose.center.y - player.y, pose.center.z - player.z).toFixed(2)
               ),
-        player: { x: Number(player.x.toFixed(2)), y: Number(player.y.toFixed(2)), z: Number(player.z.toFixed(2)) }
+        // The part's own pose and the hold target the follow is chasing: a part that stops
+        // moving while the player walks is a blocked follow, and only these two make that
+        // readable from the trace instead of inferred from the gap.
+        part:
+          pose === null || pose === undefined
+            ? null
+            : {
+                x: Number(pose.center.x.toFixed(2)),
+                y: Number(pose.center.y.toFixed(2)),
+                z: Number(pose.center.z.toFixed(2))
+              },
+        blocked:
+          (dev.manipulation.snapshots() ?? []).find((row) => row.id === dev.manipulation.heldId)?.blocked ?? null,
+        player: { x: Number(player.x.toFixed(2)), y: Number(player.y.toFixed(2)), z: Number(player.z.toFixed(2)) },
+        yaw: Number(yaw.toFixed(2))
       });
     };
     // Route through the level's own free space. The straight line is the fallback when no
@@ -938,6 +953,17 @@ async function boot(cdp, url = BASE) {
   await sleep(1500);
 }
 
+/**
+ * Console lines this harness has always documented as expected noise. Kept to *exactly* these two
+ * (both recorded in `DOCS/STATUS.md` since the 16/10 weapons pass): ANGLE's shader-precision note
+ * and the browser's autoplay refusal before the first gesture. Everything else is still a problem.
+ *
+ * They are filtered here rather than in the docs because the harness counted them as failures, so
+ * `boot --production` could never truthfully report `problems: []` on a machine whose driver emits
+ * X4122 — which made the clean gate unreachable rather than clean.
+ */
+const KNOWN_CONSOLE_NOISE = [/warning X4122/, /AudioContext was not allowed to start/];
+
 function drainConsole(cdp) {
   for (const event of cdp.events.splice(0, cdp.events.length)) {
     if (event.method === 'Runtime.consoleAPICalled') {
@@ -945,7 +971,10 @@ function drainConsole(cdp) {
       const text = event.params.args
         .map((arg) => arg.value ?? arg.description ?? arg.type)
         .join(' ');
-      if (type === 'error' || type === 'warning') report.problems.push(`console.${type}: ${text}`);
+      const expected = KNOWN_CONSOLE_NOISE.some((pattern) => pattern.test(text));
+      if (!expected && (type === 'error' || type === 'warning')) {
+        report.problems.push(`console.${type}: ${text}`);
+      }
       report.logs.push(`${type}: ${text}`);
     } else if (event.method === 'Runtime.exceptionThrown') {
       const details = event.params.exceptionDetails;
@@ -1301,7 +1330,12 @@ async function dockInto(cdp, socket, part = null) {
   };
   for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
     const length = Math.hypot(dx, dz);
-    for (const back of [1.5, 1.2, 1.9, 2.3]) {
+    // The standoffs are a *coverage* list, not a tuning knob. 1.2 and 1.5 first (they are the
+    // vantages the shipped sockets were proven from), then 0.9 — a standoff a player at arm's
+    // length actually uses — and two long ones. The 19/10 carry pass found that this list was the
+    // whole of the 18/10 `dock` failure: a shorter hold was rejected because no vantage under
+    // 1.2 m was ever tried, not because the part could not reach the socket.
+    for (const back of [1.5, 1.2, 1.9, 0.9, 2.3, 0.7]) {
       const px = socket.center.x + (dx / length) * back;
       const pz = socket.center.z + (dz / length) * back;
       const yaw = Math.atan2(-(socket.center.x - px), -(socket.center.z - pz));
@@ -2355,11 +2389,12 @@ async function main() {
         cdp,
         '({ state: window.__gearwrightDev.manipulation.state, held: window.__gearwrightDev.manipulation.heldId, yaw: window.__gearwrightDev.manipulation.currentPose.yaw })'
       );
-      // Hands toward the held part: the carry pose floats the part 1.35 m ahead of the torso
-      // while the arms only reach ~0.56 m, so the IK clamps at full extension along the reach
-      // direction. The gate asserts the *reach shape* (alignment + extension), yaw-independent,
-      // not the raw distance — and it is body-agnostic on purpose: the imported humanoid solves
-      // its own two-bone IK onto the same hold target, so the same assertion covers both bodies
+      // Hands toward the held part. Since the 19/10 carry pass the hold distance is derived from
+      // the part's own size (near face at the hands) and the body is handed that *face*, not the
+      // part's centre, so this gate now checks contact as well as shape: each hand must be
+      // extended along the chest → part line (dot > 0.9), out from the body (> 0.4 m), and within
+      // a hand's width of the point it grips. Body-agnostic on purpose: the imported humanoid
+      // solves its own two-bone IK onto the same target, so one assertion covers both
       // (`grip.body` records which one was measured).
       await sleep(700);
       const grip = await evaluate(cdp, 'window.__probe.character()');
@@ -2373,11 +2408,9 @@ async function main() {
       } else if (grip.handL === undefined || grip.handR === undefined) {
         report.problems.push('hold: the body reports no hand positions');
       } else {
-        // Reach shape, not proximity: the carry pose floats the part 1.35 m ahead of the torso
-        // while the arms only reach 0.56 m, so the analytic IK clamps at full extension along
-        // the reach direction. The gate asserts *alignment* (each hand extended along the
-        // chest → part direction, dot > 0.9) and *extension* (> 0.4 m, not hanging at the
-        // sides) — yaw-independent, so it holds whatever way the player faces.
+        // Alignment and extension, both yaw-independent: each hand must lie along the chest →
+        // grip direction (dot > 0.9) and stand out from the body (> 0.4 m, not hanging at the
+        // sides). `surface` adds the proximity the carry could not deliver before the 19/10 pass.
         const chest = { x: grip.x, y: grip.y + 1.45, z: grip.z };
         const toPart = { x: grip.hold.x - chest.x, y: grip.hold.y - chest.y, z: grip.hold.z - chest.z };
         const partLen = Math.hypot(toPart.x, toPart.y, toPart.z);
@@ -2392,14 +2425,26 @@ async function main() {
         };
         const left = check(grip.handL);
         const right = check(grip.handR);
+        // How far each hand sits from the grip point the body was handed. `splitGrip` puts the
+        // hands 0.17 m either side of it, so a hand that is touching the part measures ~0.17 m;
+        // anything over 0.25 m means the arm could not close on the part it is carrying.
+        const surface = (hand) =>
+          Math.hypot(hand.x - grip.hold.x, hand.y - grip.hold.y, hand.z - grip.hold.z);
+        const onSurface = { left: Number(surface(grip.handL).toFixed(3)), right: Number(surface(grip.handR).toFixed(3)) };
         report.data.hold.reach = {
           body: grip.body ?? 'unknown',
           left: { dot: Number(left.dot.toFixed(3)), length: Number(left.handLen.toFixed(3)) },
-          right: { dot: Number(right.dot.toFixed(3)), length: Number(right.handLen.toFixed(3)) }
+          right: { dot: Number(right.dot.toFixed(3)), length: Number(right.handLen.toFixed(3)) },
+          surface: onSurface
         };
         if (!(left.dot > 0.9 && right.dot > 0.9 && left.handLen > 0.4 && right.handLen > 0.4)) {
           report.problems.push(
             `hold: hands (${grip.body ?? 'unknown'} body) not extended toward the held part (left dot ${left.dot.toFixed(2)} @ ${left.handLen.toFixed(2)} m, right dot ${right.dot.toFixed(2)} @ ${right.handLen.toFixed(2)} m)`
+          );
+        }
+        if (!(onSurface.left <= 0.25 && onSurface.right <= 0.25)) {
+          report.problems.push(
+            `hold: hands (${grip.body ?? 'unknown'} body) are not on the carried part (left ${onSurface.left} m, right ${onSurface.right} m from its grip point)`
           );
         }
       }
