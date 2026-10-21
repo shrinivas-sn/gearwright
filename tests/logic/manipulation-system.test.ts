@@ -21,8 +21,9 @@ import type {
   SnapCommitResult,
   SnapSession
 } from '../../src/gameplay/snap-system.ts';
-import { CRATE_DEF, VALVE_DEF } from '../../src/data/components.ts';
+import { CRATE_DEF, GEAR_DEF, VALVE_DEF } from '../../src/data/components.ts';
 import { LAB_CARRYABLE, LAB_WORLD } from '../../src/levels/lab-world.ts';
+import { P1_WORLD } from '../../src/levels/branch-a.ts';
 import type {
   CapsuleSpec,
   InteractionHit,
@@ -984,6 +985,56 @@ describe('ManipulationSystem — world integration (real kinematics, TEST §8)',
     expect(sm.currentPose.center.y).toBeGreaterThan(0.5 + VALVE_DEF.halfExtents.y);
     expect(sm.currentPose.center.z).toBeGreaterThan(-4.6);
     void everStalled;
+  });
+
+  it('slides a carried part along geometry instead of wedging it on a corner (21/10/2026)', () => {
+    // Found live, playing the branch curve: carrying P1's gear from the far side of the mesh
+    // mount, the part reached the machine and stopped dead with `blocked: true` while the
+    // player walked on — then soft-detached. The follow is one straight line, so the diagonal
+    // to the hold target clipped the corner of a bearing block (`MACHINE_BOXES`, 1.02–1.38 m —
+    // exactly the height of the hands' carry) on every chunk: it could not go forward, and it
+    // could not go around, even though sliding along x alone was free the whole way. A person
+    // slides the part along the bearing; now the follow does.
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([
+      ...P1_WORLD.colliders,
+      // A pedestal under the part's start pose, so the grab is of a resting part (the pose is
+      // the one the live run reported when the gear wedged: x −7.66, y 1.20, z −1.05).
+      { min: vec3(-7.95, 0, -1.35), max: vec3(-7.35, 1.13, -0.75) }
+    ]);
+    const part: CarryableBinding = {
+      instanceId: 'gear-wedge',
+      definition: GEAR_DEF,
+      spawn: { center: { x: -7.66, y: 1.2, z: -1.05 }, yaw: 0 }
+    };
+    const sm = new ManipulationSystem(physics, part, null);
+
+    step(sm, { focus: focusOn(part.instanceId) });
+    step(sm, { focus: focusOn(part.instanceId), actions: { primary: true } });
+    step(sm, { focus: focusOn(part.instanceId) });
+    expect(sm.state).toBe('Manipulation');
+
+    // The player stands in the aisle facing the mount; the hold target is (−7.34, 1.20, 0),
+    // i.e. the part must travel +x and +z — diagonally into the bearing's corner.
+    const player = { x: -6.5, y: 0.01, z: 0 };
+    const cameraYaw = Math.PI / 2; // forward = (−1, 0)
+    for (let i = 0; i < 60; i += 1) {
+      step(sm, { player: { position: player, cameraYaw } });
+      const pose = sm.currentPose;
+      const half = rotatedHalfExtents(part.definition.halfExtents, pose.yaw, vec3());
+      expect(
+        physics.isBoxBlocked(
+          vec3(pose.center.x - half.x, pose.center.y - half.y, pose.center.z - half.z),
+          vec3(pose.center.x + half.x, pose.center.y + half.y, pose.center.z + half.z)
+        ),
+        'sliding must never push the part into geometry'
+      ).toBe(false);
+    }
+
+    expect(sm.isHolding).toBe(true);
+    // It came around the bearing to the hold instead of stalling ~1 m short of it.
+    expect(sm.currentPose.center.z).toBeCloseTo(0, 1);
+    expect(sm.currentPose.center.x).toBeCloseTo(-7.34, 1);
   });
 
   it('makes a resting carryable solid to the player capsule (ARCH §20.1)', () => {

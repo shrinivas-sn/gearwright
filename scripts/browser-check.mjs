@@ -984,9 +984,13 @@ function drainConsole(cdp) {
       if (entry.level === 'error' || entry.level === 'warning') {
         // The URL matters: an unattributed 404 in a check cannot be acted on, and one did
         // show up here before this was added.
-        report.problems.push(
-          `log.${entry.level}: ${entry.text}${entry.url ? ` <- ${entry.url}` : ''}`
-        );
+        const text = `log.${entry.level}: ${entry.text}${entry.url ? ` <- ${entry.url}` : ''}`;
+        // The same two documented lines arrive on *both* channels — the autoplay refusal is a
+        // console warning *and* a browser log entry — and the filter above only knew the console
+        // one. A clean `branch` run (21/10/2026) therefore ended with two "problems" that the
+        // docs have always listed as expected noise.
+        if (KNOWN_CONSOLE_NOISE.some((pattern) => pattern.test(entry.text))) report.logs.push(text);
+        else report.problems.push(text);
       } else {
         report.logs.push(`log.${entry.level}: ${entry.text}`);
       }
@@ -1906,21 +1910,35 @@ async function scenarioBranch(cdp) {
   const playPair = async (label, puzzleId, partId, socketId, parts, sockets) => {
     const part = parts.find((entry) => entry.id === partId);
     const socket = sockets.find((entry) => entry.id === socketId);
-    const log = [];
+    const tries = [];
+    log(`[pair] ${label}`);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const before = report.logs.length;
       const grab = await grabPart(cdp, part);
+      // This scenario runs for a quarter of an hour on a good day, so report as it goes. A
+      // silent run can only be judged when it finishes, which is useless when it is the first
+      // pair that fails: the diagnosis is in `attempts`, and that used to be written once at
+      // the very end.
+      log(`  attempt ${attempt}: grab ${grab.focus}${grab.held === undefined ? '' : ` (held ${grab.held})`}`);
       const dock = await dockInto(cdp, socket, part);
       await sleep(900); // three confirmed steps is the §25 stable window
       drainConsole(cdp);
       const fresh = report.logs.slice(before).join('\n');
       const completed = puzzleId !== null && new RegExp(`\\[reward\\] ${puzzleId}:`).test(fresh);
-      log.push({ attempt, held: grab.held, dropped: dock.dropped === true, attempts: dock.attempts });
+      const rolledBack = (dock.attempts ?? []).filter((entry) => /rolled back/.test(entry)).length;
+      // The pairs before a branch's reward run have no puzzle of their own (`null`): for those,
+      // the run's own criterion is "the part stayed in hand", not "a reward fired".
+      const settled = completed || (puzzleId === null && dock.dropped !== true);
+      log(
+        `  attempt ${attempt}: ${completed ? 'completed' : settled ? 'docked' : 'NOT completed'} | socket ${dock.hud?.socket?.text ?? '?'}${dock.dropped === true ? ' | hold lost' : ''}${rolledBack > 0 ? ` | ${rolledBack} hop(s) rolled back` : ''}`
+      );
+      if (!settled) for (const entry of dock.attempts) log(`      ${entry}`);
+      tries.push({ attempt, held: grab.held, dropped: dock.dropped === true, attempts: dock.attempts });
       if (completed || (puzzleId === null && dock.dropped !== true)) {
         return {
           label,
           grab,
-          log,
+          log: tries,
           socketAfter: (await evaluate(cdp, 'window.__probe.hud()')).socket?.text ?? null,
           completed: true,
           saved: /\[save\] autosave written/.test(fresh),
@@ -1930,8 +1948,8 @@ async function scenarioBranch(cdp) {
     }
     return {
       label,
-      grab: log[log.length - 1],
-      log,
+      grab: tries[tries.length - 1],
+      log: tries,
       socketAfter: (await evaluate(cdp, 'window.__probe.hud()')).socket?.text ?? null,
       completed: false,
       saved: false,
@@ -2124,6 +2142,16 @@ async function scenarioB2Audit(cdp) {
 }
 
 async function main() {
+  // Every run starts from a clean profile, because the game autosaves into it. The profile is
+  // also deleted on the way out, but a run that is killed (a timeout, Ctrl-C, a stuck scenario)
+  // leaves the autosave behind — and the next run then boots into *that* world: gear-a lying
+  // under the shafts where the previous run dropped it, so its first grab is unfocusable and a
+  // real defect is indistinguishable from stale state. Observed on 21/10/2026.
+  try {
+    rmSync(PROFILE, { recursive: true, force: true });
+  } catch {
+    /* chrome may still hold files; the run will reuse whatever it can */
+  }
   mkdirSync(PROFILE, { recursive: true });
   if (URL_ARG === null) {
     if (PRODUCTION) {

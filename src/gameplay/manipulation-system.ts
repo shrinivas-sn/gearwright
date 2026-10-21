@@ -1217,8 +1217,33 @@ export class ManipulationSystem {
     }
 
     if (advanced <= 0) {
-      // Nowhere to go even upward: hold the previous (valid) pose instead of embedding. The
-      // player walking on then grows the hold range, which soft-detaches cleanly.
+      // **A carried part slides along geometry instead of wedging on a corner.** Found live on
+      // 21/10/2026 playing the branch curve: carrying P1's gear past the mesh mount's bearing
+      // block (1.02–1.38 m — exactly the carry height), the diagonal to the hold target clipped
+      // the block's corner on every chunk. The part could not advance and could not go around,
+      // even though sliding along x alone was free the whole way — so it stalled a metre short
+      // while the player walked on, and then soft-detached. Lifting (above) handles a low
+      // obstacle ahead; this handles a corner beside the path, and is what a person does: the
+      // part drags along the machine instead of catching on it. Each axis move is still
+      // chunk-checked, so a slide can never embed the part either.
+      const slideX = dx !== 0 ? this.advanceAlong(record, Math.sign(dx), 0, 0, Math.abs(dx)) : 0;
+      const slideZ = dz !== 0 ? this.advanceAlong(record, 0, 0, Math.sign(dz), Math.abs(dz)) : 0;
+      if (slideX > 0 || slideZ > 0) {
+        record.pose.center.x += Math.sign(dx) * slideX;
+        record.pose.center.z += Math.sign(dz) * slideZ;
+        // Still a refusal of the direction the hold asked for — the tint and the block flag say
+        // so honestly — but the part keeps pace with the player instead of being left behind.
+        this.blocked = true;
+        record.blocked = true;
+        this.publishRecord(record, false);
+        return;
+      }
+    }
+
+    if (advanced <= 0) {
+      // Nowhere to go even upward, and neither axis alone is free: hold the previous (valid)
+      // pose instead of embedding. The player walking on then grows the hold range, which
+      // soft-detaches cleanly.
       this.blocked = true;
       record.blocked = true;
       return;

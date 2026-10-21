@@ -1,11 +1,30 @@
 # Project Status — Gearwright
 
-**Branch:** `main` | **Date:** 2026-10-20 | **Phase:** Post-Overhaul · carry-distance pass
-**Worktree:** `E:\gearwright` · **Status:** `DOCS/STATUS.md` (index `DOCS/README.md`; log + numbers `DOCS/WORK/2026-10-20/WORK.md`; previous pass `DOCS/WORK/2026-10-19/WORK.md`; text moved out `DOCS/WORK/archive.md`)
+**Branch:** `main` | **Date:** 2026-10-21 | **Phase:** Post-Overhaul · branch curve confirmed
+**Worktree:** `E:\gearwright` · **Status:** `DOCS/STATUS.md` (index `DOCS/README.md`; log + numbers `DOCS/WORK/2026-10-21/WORK.md`; previous pass `DOCS/WORK/2026-10-20/WORK.md`; text moved out `DOCS/WORK/archive.md`)
 **Live:** https://shrinivas-sn.github.io/gearwright/ · **Repository:** https://github.com/shrinivas-sn/gearwright
 
 ## Shipped state
 
+- **The whole Branch A→B curve is played, green, in one session (21/10).** `branch` (dev, clean
+  profile) exits 0 with **`problems: []`**: **10/10** part→socket pairs dock, **every one on its
+  first attempt**; BM-1 and BM-2 each fire their 5/5 burst (reward, branch Complete, hub
+  `stage/pressure-online` → `stage/regulator-awake`, clue plate awake, autosave); both plates are
+  discovered; the reload restores the autosave, **2/2 clues**, **8 staged actions** and hub stage 2.
+  This closes the gate carried since 17/10.
+- **A carried part slides along geometry instead of wedging on a corner (21/10, found live).** P1's
+  bearing blocks occupy **y 1.02–1.38 m — exactly the 1.20 m carry height** — so carrying the gear
+  to the mesh mount from the far side made the straight-line follow clip a bearing's **corner** on
+  every chunk: it stalled at `blocked: true` a metre short and soft-detached as the player walked
+  on, even though **sliding along x alone was free the whole way**. `followHold` now moves on x and
+  z separately when the direct path is blocked (after the lift-over retry), each axis still
+  chunk-checked so a slide can never embed the part. A regression test runs the **real P1
+  colliders** from the live wedge pose (-7.66, 1.20, -1.05) and fails without the fix.
+- **The harness no longer lies about a restarted run (21/10).** A killed run never reaches cleanup,
+  so its Chrome profile survives — and the game's autosave lives in it: the next run booted the
+  *previous* run's world (`gear-a` under the shafts, P1's first grab `NOT FOCUSABLE`). The profile
+  is now deleted at the start of every run. The long scenario also reports each pair as it plays
+  (and names "docked" for the pairs before a reward, which have no puzzle of their own).
 - **A carried part is held in the hands, at the distance its own size needs (20/10).** The fixed
   1.35 m hold is gone: `carryHoldDistance` gives a part `carryReach` (0.42 m — the imported body's
   measured 0.464 m arm, elbows bent) plus its plan-view **circumradius**, clamped to [0.55, 1.35]. A
@@ -70,7 +89,8 @@
 
 ## Verification
 
-- **Typecheck** clean · **Tests** 64 files / **826** (805 at HEAD) · **Build** clean: `three` 624.62 kB (gzip 158.35), `app` 293.28 kB (gzip 86.15) — **+1.92 kB raw / +0.53 kB gzip** for this pass; weapon HUD CSS 11.85 kB (gzip 2.69).
+- **Typecheck** clean · **Tests** 64 files / **827** (826 at the previous commit) · **Build** clean: `three` 624.62 kB (gzip 158.35), `app` 293.56 kB (gzip 86.24) — **+0.28 kB raw / +0.09 kB gzip** for this pass; weapon HUD CSS 11.85 kB (gzip 2.69).
+- **21/10 `branch` (dev, clean profile): exit 0, `problems: []`** — 10/10 pairs docked on the **first** attempt (`dropped: false` throughout), BM-1 burst 5/5, BM-2 burst 5/5, both clue plates discovered, reload restores autosave / 2/2 clues / 8 staged actions / hub stage 2, end state `branchA: Complete, branchB: Complete, hubStage: 2`.
 - **20/10 live:** `hold` (dev) **`problems: []`** — hands dot 0.953 / 0.935 at 0.573 / 0.486 m, **0.182 / 0.225 m from the grip face**; `dock` (dev) **`problems: []`**, docked on the **first** attempt, `dropped: false`; `arms` (dev) **`problems: []`** — walking 0.0001 m hand step, 0.0000 m grip error, `handTurnRate` **5.24** (gate 12), `insideBody` **0**; `boot --production` **`problems: []`**, body `gltf` 49 bones / 11 376 triangles, `walkSpeed 4`; `guns --production` **`problems: []`**, five slots fire (8 / 11 / 1 / 1 / 1).
 - **New this pass:** `tests/logic/carry-reach.test.ts` (15 — the derived distance per shipped part size, capsule clearance in every yaw, the circumradius bound, the near-face point including the top face, inside-the-box and non-finite input) and a **shipped-socket dock guard** (2 — every socket × every accepted part, dockable through the game's own predicate from a stance the real capsule can stand in; the second test proves the guard fails at a 2 m reach, so it cannot pass vacuously). Plus the lift-over regression (verified to fail without the fix) and three presenter grip tests.
 - **Live (real Chrome):** `boot --production` (exit 0, **`problems: []`**, body `gltf` 49 bones / 11 376 triangles, `walkSpeed 4`, weapon panel **300 × 119 px** with five **72–83 px** slot chips all inside it) and **`arms`** (dev; standing 0.0000 m muzzle drift / 0.0000 m hand step / 0.0000 m grip error; walking 0.0001 m step / 0.0000 m grip error, ≤0.0001 m body-relative spread, **`handTurnRate` 4.07 rad/s** against a 12 gate, **`insideBody` 0**) green after the wrist/torso changes. The 18/10 pass's `guns --production` and `hold` figures still stand (this pass touched neither the weapon simulation nor the carry target).
@@ -84,18 +104,15 @@
    sweep, never flip, and the wrists should turn *with* the gun (the 19/10 `orientWrist` solve).
    Also check the new weapon panel at the top-right in a real window: the slot chips must wrap
    inside it, and the ammo/state line must stay readable over a bright lab surface.
-2. **Confirm the `branch` curve end-to-end** (`node scripts/browser-check.mjs branch`, dev) — the
-   one unproven gate, unchanged from the 17/10 pass and **not** re-run on 20/10 (the `dock` and
-   `hold` scenarios, which exercise the carry most, were). Time-box it (a clean-profile run took
-   ~12 min); if it overruns, instrument the hop before assuming a game defect — a failing pair's
-   `hopTrace` now records each part's pose and its `blocked` flag, so a stalled carry is visible
-   instead of inferred from the gap.
-3. **A decision for the snap-assist/SlotJudge reward-punish pass** — the name has no spec in the
+2. **A decision for the snap-assist/SlotJudge reward-punish pass** — the name has no spec in the
    repo, so the thresholds and what "reward" versus "punish" mean need stating before any code —
    then **Branch C** and the **reward-material consumer**.
+3. **Optional hygiene:** `hold`, `dock`, `arms`, `boot`, `guns` were not re-run on 21/10 (the only
+   gameplay change is the follow's blocked branch, exercised hardest by `branch`). They are cheap
+   — run them before the next release claim rather than treating their 20/10 numbers as fresh.
 4. `PLAN.md` has been **deleted**: both passes it carried (locomotion + weapons, hand & arm motion)
-   are closed, and the carry-distance decision it named as its closing item landed on 20/10. The
-   record lives in `DOCS/WORK/2026-10-16/` and `DOCS/WORK/2026-10-18/`.
+   are closed, the carry-distance decision landed on 20/10, and the `branch` gate it left open was
+   closed on 21/10. The record lives in `DOCS/WORK/2026-10-16/`, `2026-10-18/` and `2026-10-21/`.
 
 **Limits:** the carry geometry is measured with the *standing* capsule on the room floor at `y = 0`;
 no shipped socket is on a raised platform, but a future one would need `standingHeightAt` in that
@@ -104,4 +121,4 @@ construction (`splitGrip`), so it measures "the arm reached the part", not milli
 `arms` measures the *presented* mount, because that is what the hands follow — the
 simulation's own muzzle leads it by up to one fixed step (≤0.06 m at a run) by design, and reading
 the wrong one is what made the first measurement of this pass report a phantom 0.14 m error. Carry
-scenarios (`dock`, `branch`) need the **dev server** (a production build serves no TypeScript for the harness's route planner, so they correctly report `inconclusive`). The harness's hop needs a floor under its target; over a genuine hole it falls back to `y = 0.01` (straight line + rollback, as before).
+scenarios (`dock`, `branch`) need the **dev server** (a production build serves no TypeScript for the harness's route planner, so they correctly report `inconclusive`). The harness's hop needs a floor under its target; over a genuine hole it falls back to `y = 0.01` (straight line + rollback, as before). A carried part now **slides** along geometry it cannot pass, so the follow keeps pace around corners — but it still has no pathfinding: a part yanked across a machine in one teleport-sized step can slide a long way round, which is what `branch`'s hop-and-wait exercises. A **killed** run leaves its Chrome profile behind unless the harness is allowed to clean up — deleted at the start of every run since 21/10.
