@@ -1,124 +1,98 @@
 # Project Status — Gearwright
 
-**Branch:** `main` | **Date:** 2026-10-21 | **Phase:** Post-Overhaul · branch curve confirmed
-**Worktree:** `E:\gearwright` · **Status:** `DOCS/STATUS.md` (index `DOCS/README.md`; log + numbers `DOCS/WORK/2026-10-21/WORK.md`; previous pass `DOCS/WORK/2026-10-20/WORK.md`; text moved out `DOCS/WORK/archive.md`)
+**Branch:** `main` | **Date:** 2026-10-22 | **Phase:** Post-Overhaul · Branch C shipped (three branches)
+**Worktree:** `E:\gearwright` · **Status:** `DOCS/STATUS.md` (index `DOCS/README.md`; log + numbers `DOCS/WORK/2026-10-22/WORK.md`; previous pass `DOCS/WORK/2026-10-21/WORK.md`; text moved out `DOCS/WORK/archive.md`)
 **Live:** https://shrinivas-sn.github.io/gearwright/ · **Repository:** https://github.com/shrinivas-sn/gearwright
 
 ## Shipped state
 
-- **The whole Branch A→B curve is played, green, in one session (21/10).** `branch` (dev, clean
-  profile) exits 0 with **`problems: []`**: **10/10** part→socket pairs dock, **every one on its
-  first attempt**; BM-1 and BM-2 each fire their 5/5 burst (reward, branch Complete, hub
-  `stage/pressure-online` → `stage/regulator-awake`, clue plate awake, autosave); both plates are
-  discovered; the reload restores the autosave, **2/2 clues**, **8 staged actions** and hub stage 2.
-  This closes the gate carried since 17/10.
-- **A carried part slides along geometry instead of wedging on a corner (21/10, found live).** P1's
-  bearing blocks occupy **y 1.02–1.38 m — exactly the 1.20 m carry height** — so carrying the gear
-  to the mesh mount from the far side made the straight-line follow clip a bearing's **corner** on
-  every chunk: it stalled at `blocked: true` a metre short and soft-detached as the player walked
-  on, even though **sliding along x alone was free the whole way**. `followHold` now moves on x and
-  z separately when the direct path is blocked (after the lift-over retry), each axis still
-  chunk-checked so a slide can never embed the part. A regression test runs the **real P1
-  colliders** from the live wedge pose (-7.66, 1.20, -1.05) and fails without the fix.
-- **The harness no longer lies about a restarted run (21/10).** A killed run never reaches cleanup,
-  so its Chrome profile survives — and the game's autosave lives in it: the next run booted the
-  *previous* run's world (`gear-a` under the shafts, P1's first grab `NOT FOCUSABLE`). The profile
-  is now deleted at the start of every run. The long scenario also reports each pair as it plays
-  (and names "docked" for the pairs before a reward, which have no puzzle of their own).
-- **A carried part is held in the hands, at the distance its own size needs (20/10).** The fixed
-  1.35 m hold is gone: `carryHoldDistance` gives a part `carryReach` (0.42 m — the imported body's
-  measured 0.464 m arm, elbows bent) plus its plan-view **circumradius**, clamped to [0.55, 1.35]. A
-  gear is held at 0.84 m, a valve 0.74, a crate 0.99, the BM-1 dynamo 1.28. The hands now grip the
-  part's **near face** (`carryGripPoint`, computed by the L4 presenter and carried on
-  `CarryableRenderState.grip`), measured **live** at 0.18 / 0.23 m from that face — the previous
-  centre-based target left them ~0.8 m short of any surface. Carry height moved to the chest
-  (1.05 → 1.20 m), which is where the hands are.
-- **The 18/10 rejection of a short hold was a harness artefact, and the geometry now says so.**
-  Measured against the shipped content with the real capsule and colliders: the *nearest standable
-  stance* to any socket is 0.93 m (P1/P2's mesh mounts, between the shafts), 0.73 for shaft mounts,
-  0.35 for almost everything else — and the dock predicate is a **1.3 m** centre radius plus a
-  padded-box overlap, so a 0.74 m hold still lands inside every socket's volume. `maxHoldRange`
-  never came into it. `dockInto` only ever stood 1.2–2.3 m from a socket, so the rejected 0.72 m hold
-  could not put a part in range from any vantage it tried.
-- **A carried part is lifted over low geometry instead of being abandoned against it (20/10, found
-  live).** With the part brought in, B2's valve stalled at **y = 0.55 on the governor's 0.5 m
-  plinth** (`blocked: true`) and was dropped once the player walked on: the follow only moved in a
-  straight line, so every chunk toward the hold crossed the plinth. It now lifts by the remaining
-  vertical component and retries the horizontal move; a ceiling still refuses (box-checked).
-- **The hands stay on the gun and out of the body (19/10, the reported "hands rotate and clash inside
-  the body").** The imported body used to aim only the forearm, leaving the hand's own direction to
-  the clip — so the *position* was right and the fingers still pointed through the gun or the chest.
-  Each arm now resolves a finger bone and `orientWrist` turns the hand back onto the forearm's line
-  with `clampTurnDirection`, at most 24 rad/s (`core/arm-ik.ts`). A new `clampOutsideTorso` pushes a grip target out of an
-  oriented chest box (0.20 × 0.14 m, 0.8–1.62 m) **before** the reach clamp, so an aim swung behind
-  the character cannot drag a forearm through the ribcage; ordinary grips are copied through
-  untouched, pinned by tests.
-- **Locomotion at the top of the range and the camera caught up (19/10, "slow and not smooth").**
-  Walk **4.0 m/s**, run **8.0 m/s**, acceleration **55 ms**, deceleration **45 ms**, turn
-  **18 rad/s** — the top of ARCH §16's workshop range. The camera follow went 14/18 → **20/26**,
-  cutting the positional trail from ~70 ms to ~50 ms (at 8 m/s the body used to slide forward under
-  the eye before the camera caught up).
-- **The weapon HUD is styled (19/10).** The weapons pass shipped the markup with no CSS: the block
-  rendered as an unstyled list. It now has a top-right surface, tabular ammo, a written
-  READY/RELOADING/refusal line, a closing ADS reticle, and **slot chips sized to their own labels**
-  (they wrap rather than overflow).
-- **Slots are drawn at the size of what goes in them (19/10).** Socket markers used the level's
-  0.4 m trigger volume, so a pipe port was an 0.8 m cube. `acceptedFootprint()` (tags → component
-  definitions) sizes the drawn marker to the accepted part + 0.04 m. The snap query still uses the
-  authored trigger volume, so docking is unchanged.
-- **The hands are on the gun now (18/10, the reported "broken hand movements").** Five causes, all
-  fixed at the source: the weapon mount was **reading the rendered hand** every step (a closed loop
-  that walked the arm forward until its reach clamp locked it straight); the body was drawn at the
-  **interpolated** position while the gun and its grip came from the **simulated** one a frame later
-  (6–12 cm of trail at a run); the grip points were **outside the imported body's arm reach** (its
-  shoulder-to-wrist is 0.464 m — the fore-end sat 0.48 m from the left shoulder, so the supporting
-  arm was clamped all session); the procedural rig solved from its **rest** shoulder and ignored the
-  hips/spine the gait rotates; and the imported body's **elbow plane flipped** because it was read
-  off the current clip near full extension. The gun is now a pure function of stance + aim
-  (`core/weapon-mount.ts`), the grip targets are clamped into each arm's reach with their direction
-  kept (`core/arm-ik.ts`), each arm owns a rate-limited `ElbowPole`, a carried part is held at two
-  points ±0.17 m apart, and the torso **squares up to the aim** (BR-style twist on both bodies).
-- **Measured, not eyeballed:** a new `arms` browser scenario reports muzzle drift **0.0000 m** and
-  hand step **0.0000 m** while standing, and **0.0001 m** with **0.0000 m** grip error while walking.
-  The same scenario on the previous code read **0.119 m** of body-relative hand movement at a walk
-  and a left hand **0.185 m** off its grip.
-- **Gravity works off a ledge (17/10, real defect).** `KinematicPhysics` reported `supported` for a pose with nothing under it, so walking off a platform glued the player to their altitude (a 1 m/s descent that never accelerated) and let them **hop from mid-air**; the flag was OR-accumulated across sub-steps too, so a move crossing a ledge claimed ground after leaving it. The support query now answers "nothing underfoot" honestly, and the flag describes the pose actually reached. 5 new tests, each verified to fail against the old code.
-- **Carry feel (17/10, the tune `PLAN.md` left owed).** Hold blend 14 → 30 (trail behind a running player ~0.33 m, was ~0.56), rotate 2.2 → 3.4 rad/s (quarter turn 0.46 s, was 0.71), travel cap 8 → 9 m/s; the carried advance is carved into chunks half the part's own thickness, so it cannot jump a thin beam at any step size. **A carrying player can run now** — the input map read `run` hard-false while carrying — and the composition scales a carried walk 0.6 (3.6 → 2.16 m/s) and a carried run 0.85 (7.4 → 6.29 m/s).
-- **Shooting: a sandbox weapon range (16/10, ADR-020)** — six weapons, authored recoil patterns, spread/bloom, magazines + reloads, ADS, crouch, pooled simulated bullets; `?guns=0` = the pre-pass game. The drawn weapon's **two-handed grip** landed in `73d0aa7`.
-- Still unbuilt: **Branch C (Great Crucible)** and **a consumer for the reward materials (§28)**. Earlier passes (Branch B, the imported rigged body): `DOCS/README.md`.
+- **Branch C — "Great Crucible" — ships.** The third branch, built on the §6 expansion path with no
+  core change: a room behind the hall's north wall (east of the Steam Works), four machines, four
+  puzzles, four rewards, a third clue plate, hints and staged actions. It is **gated behind Branch
+  B** (`requiresBranches: [A, B]`), and completing it reaches the stage data had always carried:
+  `stage/crucible-restored`.
+- **Its new teaching is a ceiling.** Every earlier machine wanted a connection; C's want *not too
+  much of one*, and it is the first content to use `safety: 'overpressure'` as a **player-visible
+  objective** rather than a latent warning.
+  - **C1 "Tuyere"** — two parallel blast ports: one open valve reads 1 and lights the tuyere; two
+    read 2 and trip the 1.5 ceiling; a shut-off valve fits, conducts nothing and jams. Three failure
+    modes with three different reasons.
+  - **C2 "Quench"** — the combining beat: the vessel must turn **clockwise** (plain gear vs idler)
+    *and* be fed from exactly one of two quench ports.
+  - **C3 "Slag Run"** — the open-ended beat: one furnace, two consumers, three routes. **A+B** and
+    **C alone** both complete; **A+C** / **B+C** stack a run on the cross-run and over-pressure.
+  - **CM-3 "Great Crucible"** — the third staged machine (ADR-018): assembly → three priming lines
+    (any order) → an ordered pour, with the branch's direction lesson folded in.
+- **An arithmetic fact caught by the suite.** A cross-run's two declared links share one bridge, and
+  `MachineGraph` sums the carrier **at the bridge** — so C3's route C alone reads **2** per consumer
+  (exactly what P3's cross-run does). C3's ceiling is therefore **2.5**, which accepts the
+  cross-run's own value and refuses stacking another run on it (3). A 1.5 ceiling would have made
+  the one-part answer a failure.
+- **The hub's Branch C door moved from x = 6 to x = 12.** At x = 6 it opened into the Steam Works'
+  own floor — inside another branch's room. The Crucible sits east of the Steam Works, sharing its
+  east wall, and `levels/game-room.ts` now cuts both doorways as real gaps.
+- **The snap-assist / SlotJudge decision is stated, not guessed.** `DOCS/CONTEXT/SNAP-ASSIST.md`
+  pins the shipped behaviour (assist starts at 0.975 m, caps at 0.85, **orientation is not a gate**
+  — any realisable yaw attaches), defines reward/punish as feedback bands over distance and yaw, and
+  lists the four sign-off points. **No weight was changed**; changing it on a guess is the thing the
+  17/10 note refused.
+- **Two harness defects fixed while proving the new room.** `hopTo` used to stop after 0.4 m when
+  **empty-handed** (the step loop broke on `heldId === null`), so a "walk there" check could report
+  success while still at the spawn pose; and route planning could not see Branch C at all (Branch
+  B's colliders only, grid bounded at x = 9). Both fixed. A new **`crucible`** scenario lands the
+  player in the room and proves C1's ceiling live: first valve → `pressure 1`, no warnings; second
+  valve → `pressure 2`, `["overpressure"]`, nothing dropped.
+- **The `branch` curve still plays A→B end to end on this code** — 10/10 docks, both capstones,
+  both clue plates, and a reload that restores 2/3 clues (C's plate correctly asleep), 8 staged
+  actions and hub stage 2. Its assertion needed updating from `2/2` clues to `2/3`: the run plays
+  two branches, and the third plate belongs to a branch that is only `Available`.
+- **Baseline hygiene from 21/10 is settled.** `hold`, `dock`, `arms`, `boot`, `guns` re-ran on
+  `72efa4a` (start of this pass) and again on this pass's final code; both sets are `problems: []`
+  (`arms`: 0.0001 m hand step, 4.8 rad/s turn rate, 0 torso hits).
+- **Still unbuilt: a consumer for the reward materials (§28).** Materials are granted by all three
+  branches and consumed by nothing; the upgrade framework exists with an empty table.
 
 ## Verification
 
-- **Typecheck** clean · **Tests** 64 files / **827** (826 at the previous commit) · **Build** clean: `three` 624.62 kB (gzip 158.35), `app` 293.56 kB (gzip 86.24) — **+0.28 kB raw / +0.09 kB gzip** for this pass; weapon HUD CSS 11.85 kB (gzip 2.69).
-- **21/10 `branch` (dev, clean profile): exit 0, `problems: []`** — 10/10 pairs docked on the **first** attempt (`dropped: false` throughout), BM-1 burst 5/5, BM-2 burst 5/5, both clue plates discovered, reload restores autosave / 2/2 clues / 8 staged actions / hub stage 2, end state `branchA: Complete, branchB: Complete, hubStage: 2`.
-- **20/10 live:** `hold` (dev) **`problems: []`** — hands dot 0.953 / 0.935 at 0.573 / 0.486 m, **0.182 / 0.225 m from the grip face**; `dock` (dev) **`problems: []`**, docked on the **first** attempt, `dropped: false`; `arms` (dev) **`problems: []`** — walking 0.0001 m hand step, 0.0000 m grip error, `handTurnRate` **5.24** (gate 12), `insideBody` **0**; `boot --production` **`problems: []`**, body `gltf` 49 bones / 11 376 triangles, `walkSpeed 4`; `guns --production` **`problems: []`**, five slots fire (8 / 11 / 1 / 1 / 1).
-- **New this pass:** `tests/logic/carry-reach.test.ts` (15 — the derived distance per shipped part size, capsule clearance in every yaw, the circumradius bound, the near-face point including the top face, inside-the-box and non-finite input) and a **shipped-socket dock guard** (2 — every socket × every accepted part, dockable through the game's own predicate from a stance the real capsule can stand in; the second test proves the guard fails at a 2 m reach, so it cannot pass vacuously). Plus the lift-over regression (verified to fail without the fix) and three presenter grip tests.
-- **Live (real Chrome):** `boot --production` (exit 0, **`problems: []`**, body `gltf` 49 bones / 11 376 triangles, `walkSpeed 4`, weapon panel **300 × 119 px** with five **72–83 px** slot chips all inside it) and **`arms`** (dev; standing 0.0000 m muzzle drift / 0.0000 m hand step / 0.0000 m grip error; walking 0.0001 m step / 0.0000 m grip error, ≤0.0001 m body-relative spread, **`handTurnRate` 4.07 rad/s** against a 12 gate, **`insideBody` 0**) green after the wrist/torso changes. The 18/10 pass's `guns --production` and `hold` figures still stand (this pass touched neither the weapon simulation nor the carry target).
-- **New this pass:** `CharacterFacts` carries optional `handLForward`/`handRForward` (wrist → fingers, unit), and the `arms` scenario now turns that into two measured gates: worst hand angular rate while walking (12 rad/s; a clip-driven hand runs at the 24 rad/s wrist limit) and a body-relative torso-box count that must stay 0.
-- **`branch` (dev, whole curve in one session): unconfirmed.** Its first run on this code stalled at P2 because the hop teleported to a flat `y = 0.01` over unsupported spots — survivable only while the physics bug above held the player up. `hopTo` now stands the player on the height the level has under the target (`__probe.standingHeightAt`), and the confirming run was **stopped after ~30 min without finishing** (a clean-profile run at HEAD took ~12 min: branch A and B `Complete`, hub stage 2, both clue plates restored after the reload). So the curve is proven at HEAD but **not yet on this pass's code** — and the hop change itself is now a suspect for the extra time (it adds one async collider query per 0.4 m hop step).
+- **Typecheck** clean · **Tests** 65 files / **845** (827 at HEAD: +18 Branch C cases and the
+  content-coupling updates) · **Build** clean: `three` 624.62 kB (gzip 158.35), `app` 315.13 kB
+  (gzip 90.24) — **+21.57 kB raw / +4.00 kB gzip** for the whole branch; weapon HUD CSS unchanged.
+- **`crucible` (dev) — `problems: []`:** player stands on the new floor at (12.2, 24.4), `y =
+  0.002`, `grounded: true`; 3 parts / 2 sockets composed; first valve → `pressure 1`, `warnings:
+  []`, `running`, `dropped: false`; second valve → `pressure 2`, `warnings: ["overpressure"]`,
+  `dropped: false`; hub stage stays 0 (branch Locked on a fresh save) — the gate being honest.
+- **`boot --production` — `problems: []`**, imported body `gltf` (49 bones / 11 376 triangles).
+- **`branch` (dev, clean profile) — `problems: []`:** all 10 pairs docked on the **first** attempt,
+  BM-1 and BM-2 rewards applied (branches A and B Complete), both plates discovered, hub stage 2,
+  branch C `Available`; reload restores the autosave, **2/3 clues**, 8 staged actions and hub
+  stage 2.
+- **On this pass's final code:** `hold`, `dock`, `arms` and `boot`/`guns` (`--production`) all
+  `problems: []` — `arms` walking 0.0001 m hand step, `handTurnRate` 4.81 (gate 12), `insideBody`
+  0. These were also the 21/10 hygiene item; they now stand on the shipped three-branch build.
 
 ## Next up (start here)
 
-1. **Watch the arms in motion on the live link** (`?log=1`): fire a burst (the hands should stay on
-   the gun through the recoil kick), walk with a part, and turn the camera hard — the elbows should
-   sweep, never flip, and the wrists should turn *with* the gun (the 19/10 `orientWrist` solve).
-   Also check the new weapon panel at the top-right in a real window: the slot chips must wrap
-   inside it, and the ammo/state line must stay readable over a bright lab surface.
-2. **A decision for the snap-assist/SlotJudge reward-punish pass** — the name has no spec in the
-   repo, so the thresholds and what "reward" versus "punish" mean need stating before any code —
-   then **Branch C** and the **reward-material consumer**.
-3. **Optional hygiene:** `hold`, `dock`, `arms`, `boot`, `guns` were not re-run on 21/10 (the only
-   gameplay change is the follow's blocked branch, exercised hardest by `branch`). They are cheap
-   — run them before the next release claim rather than treating their 20/10 numbers as fresh.
-4. `PLAN.md` has been **deleted**: both passes it carried (locomotion + weapons, hand & arm motion)
-   are closed, the carry-distance decision landed on 20/10, and the `branch` gate it left open was
-   closed on 21/10. The record lives in `DOCS/WORK/2026-10-16/`, `2026-10-18/` and `2026-10-21/`.
+1. **A human eye on the Great Crucible** (`?log=1`): walk in from the hall with Branch C open, read
+   the three machines' frames (does the tuyere line read as one machine? does the C3 header read as
+   one source to two consumers?), and check the third plate's row on the Regulator's plinth — two
+   low plates either side of the column, one on it. The harness proves position and state, not
+   composition.
+2. **Sign off `DOCS/CONTEXT/SNAP-ASSIST.md`** — the four checklist items (band edges 0.45 m / 20° /
+   60°, whether punish is feedback-only, whether the ramp threshold moves to 0.35, whether the
+   reward pulse is presentation-only). Then it is a small, testable change.
+3. **The reward-material consumer (§28)** — the one thing every branch pays into and nothing reads.
+   This needs a decision first (what an upgrade *does*), so it is the next product question, not
+   the next commit.
+4. **A live scenario for C2 / C3 / CM-3.** `crucible` proves C1's ceiling and the room; the other
+   three machines are proven by the logic suite (`tests/logic/branch-c-crucible.test.ts`) but have
+   no browser walkthrough yet. Extending `crucible` is the cheap way — same helpers as `branch`.
 
-**Limits:** the carry geometry is measured with the *standing* capsule on the room floor at `y = 0`;
-no shipped socket is on a raised platform, but a future one would need `standingHeightAt` in that
-check. `hold`'s proximity gate is 0.25 m from the grip face — a hand is 0.17 m from it by
-construction (`splitGrip`), so it measures "the arm reached the part", not millimetre contact.
-`arms` measures the *presented* mount, because that is what the hands follow — the
-simulation's own muzzle leads it by up to one fixed step (≤0.06 m at a run) by design, and reading
-the wrong one is what made the first measurement of this pass report a phantom 0.14 m error. Carry
-scenarios (`dock`, `branch`) need the **dev server** (a production build serves no TypeScript for the harness's route planner, so they correctly report `inconclusive`). The harness's hop needs a floor under its target; over a genuine hole it falls back to `y = 0.01` (straight line + rollback, as before). A carried part now **slides** along geometry it cannot pass, so the follow keeps pace around corners — but it still has no pathfinding: a part yanked across a machine in one teleport-sized step can slide a long way round, which is what `branch`'s hop-and-wait exercises. A **killed** run leaves its Chrome profile behind unless the harness is allowed to clean up — deleted at the start of every run since 21/10.
+**Limits:** the harness's route planner takes every door as open, so it is a *room* tool, never a
+gate check — gating is proven by the boot log and the access-gate suite. `crucible` stands the
+player by direct teleport (route planning is not used for entry) and reads derived machine state,
+which exists while the branch is `Locked`; that is deliberate, and it means the scenario does not
+prove C1 *completes* on a fresh save (the `branch` run and the logic suite cover the puzzle side).
+Carry scenarios (`dock`, `branch`, `crucible`) need the **dev server** (a production build serves no
+TypeScript for the harness's route planner). The Crucible's room is roughly 15 × 12 m of floor with
+four machine framings; if a future machine needs more floor, the room's east wall is the only wall
+with room to move.

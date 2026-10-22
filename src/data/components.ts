@@ -297,6 +297,24 @@ export const GOVERNOR_DEF: ComponentDefinition = {
   grabbable: false
 };
 
+/**
+ * The Crucible's vessel (Branch C): the body a quench drive turns and the capstone's
+ * casting vessel. Like `GOVERNOR_DEF` it declares **no ports on purpose** — every one of its
+ * adjacencies is declared by its machine's links (`data/machines.ts`), so the vessel is a
+ * real component the requirements and outputs can name without conducting anything by
+ * itself, and the rule that the turning node and the pressure node stay separate is kept
+ * by naming two different components for the two carriers.
+ */
+export const CRUCIBLE_VESSEL_DEF: ComponentDefinition = {
+  id: 'def/crucible-vessel',
+  kind: 'fixed',
+  tags: [],
+  massClass: 'heavy',
+  allowedAxes: [],
+  halfExtents: { x: 0.55, y: 0.7, z: 0.55 },
+  grabbable: false
+};
+
 export const COMPONENT_DEFINITIONS: ReadonlyArray<ComponentDefinition> = [
   CRATE_DEF,
   PLATE_DEF,
@@ -316,7 +334,9 @@ export const COMPONENT_DEFINITIONS: ReadonlyArray<ComponentDefinition> = [
   // ADR-018 / M9 remainder — BM-1's dynamo.
   BM1_DYNAMO_DEF,
   // Branch B — B2's governor (the thermal branch's combining machine).
-  GOVERNOR_DEF
+  GOVERNOR_DEF,
+  // Branch C — the Crucible's vessel.
+  CRUCIBLE_VESSEL_DEF
 ];
 
 export function componentDefinitionOf(defId: string): ComponentDefinition | null {

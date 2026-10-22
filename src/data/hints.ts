@@ -76,7 +76,11 @@ export const CONCEPTUAL_HINTS: Readonly<Record<string, string>> = {
   bm1: 'Some machines ask to be brought up in order: build it, prime it, then drive it. Order is part of the mechanism.',
   b2: 'A machine can want two different things at once — motion and flow arrive by different parts, and the part carrying the drive decides which way the output turns.',
   b3: 'Two consumers can share one source. What matters is that pressure can reach each of them, that the runs actually conduct, and that one part may serve both runs at once.',
-  bm2: 'A big machine is brought up in order, like the last one: build it, prime every line it names, then open the throttle. The sequencing is part of the mechanism, not decoration.'
+  bm2: 'A big machine is brought up in order, like the last one: build it, prime every line it names, then open the throttle. The sequencing is part of the mechanism, not decoration.',
+  c1: 'A machine can be given too much as easily as too little. Ask how many feeds are arriving, not only whether one is — a vessel has a limit, and going past it is a failure the machine reports.',
+  c2: 'Two different things have to be right on this frame at once: the direction the drive turns, and how many feeds are reaching the vessel. A part can carry motion and still carry it the wrong way round.',
+  c3: 'One source, two consumers, and more than one honest arrangement. What matters is that each consumer is reached and that none is fed twice — one part may legitimately serve both runs.',
+  cm3: 'The biggest machine asks for everything at once: a drive turning the right way, a feed that conducts, and the whole thing brought up in order. Build it, prime every line it names, then pour.'
 };
 
 /** `p1`, `bm1` … — the lookup form of a puzzle id, so `P1`, `BM1` and `BM-1` all resolve. */

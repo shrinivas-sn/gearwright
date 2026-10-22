@@ -46,17 +46,21 @@ describe('Crucible Hall — the AccessGate reads branch state, never geometry (�
     expect(HUB_DOORS.map((door) => door.branchId)).toEqual([BRANCH_A_ID, BRANCH_B_ID, BRANCH_C_ID]);
 
     // §6 beat 5: A is the one open door at boot; B ships but is gated behind A's
-    // completion; C is still a sealed visual.
+    // completion; C ships too and is gated behind B's.
     expect(system.canEnter(BRANCH_A_ID)).toBe(true);
     expect(system.canEnter(BRANCH_B_ID)).toBe(false);
     expect(system.canEnter(BRANCH_C_ID)).toBe(false);
     // An unknown branch is not enterable either — a door cannot open onto nothing.
     expect(system.canEnter('branch/missing')).toBe(false);
 
-    // …and completing A opens B, still with no geometry involved.
+    // …and completing A opens B, still with no geometry involved, while C stays gated.
     system.update(['P1', 'P2', 'P3', 'BM-1']);
     expect(system.canEnter(BRANCH_B_ID)).toBe(true);
     expect(system.canEnter(BRANCH_C_ID)).toBe(false);
+
+    // Completing B opens the Crucible — the same rule, a third time, with no new code.
+    system.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2']);
+    expect(system.canEnter(BRANCH_C_ID)).toBe(true);
   });
 
   it('opens a branch door the moment its gating branch completes — with no change to hub.ts', () => {

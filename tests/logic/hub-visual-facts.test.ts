@@ -31,6 +31,7 @@ import type { LabWorldMesh } from '../../src/ports/render-port.ts';
 
 const REGULATOR_DORMANT = 0x6f7b86;
 const REGULATOR_WARMED = 0x6f9aa6; // stage 1: "Pressure Line Online"
+const REGULATOR_RESTORED = 0xd2b04f; // stage 3: "Crucible Restored"
 const SEALED_RED = 0x8a3b2f;
 const OPEN_TEAL = 0x5fb8a6;
 const STONE = 0x4a5057;
@@ -101,6 +102,26 @@ function column(meshes: ReadonlyArray<LabWorldMesh>): LabWorldMesh | undefined {
   return meshes.find((mesh) => mesh.min.y === 1 && mesh.max.y === 5);
 }
 
+/**
+ * A low plate: 1.0 m wide, y 0.45–0.9, flush on the plinth's front face (z = 14). The thermal
+ * and Crucible plates are the two of these (at x = -2.1 and x = 1.1), so colour facts about
+ * them have to be read by geometry — the hall's door posts are the same teal as a *read*
+ * plate, and the warmed column is the same gold as an *awake* one.
+ */
+function lowPlate(meshes: ReadonlyArray<LabWorldMesh>, minX: number): LabWorldMesh | undefined {
+  return meshes.find(
+    (mesh) =>
+      Math.abs(mesh.min.x - minX) < 1e-9 &&
+      Math.abs(mesh.max.x - (minX + 1.0)) < 1e-9 &&
+      Math.abs(mesh.min.y - 0.45) < 1e-9 &&
+      Math.abs(mesh.max.y - 0.9) < 1e-9 &&
+      Math.abs(mesh.max.z - 14) < 1e-9
+  );
+}
+
+const THERMAL_PLATE_X = -2.1;
+const CRUCIBLE_PLATE_X = 1.1;
+
 /** The clue plate: 1.2 m wide, y 2.0–2.55, flush on the column's front plane (z = 15). */
 function plate(meshes: ReadonlyArray<LabWorldMesh>): LabWorldMesh | undefined {
   return meshes.find(
@@ -145,12 +166,12 @@ describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', 
     const system = progression();
     const meshes = hubMeshes(stateReader(system), system.hubStageIndex, () => false);
 
-    expect(CLUE_DEFINITIONS).toHaveLength(2); // one plate per branch that ships a clue
+    expect(CLUE_DEFINITIONS).toHaveLength(3); // one plate per branch that ships a clue
     expect(plate(meshes)?.color).toBe(PLATE_DORMANT);
     expect(system.hasClue(CLUE_REGULATOR_PLATE)).toBe(false);
   });
 
-  it('completing Branch A: the Thermal Line opens, the slab stays for C, the A trunk and bus light gold, the column warms, the plate goes gold', () => {
+  it('completing Branch A: the Thermal Line opens, the Crucible stays gated, the A trunk and bus light gold, the column warms, the plate goes gold', () => {
     const system = progression();
     // Branch A is P1–P3 **and its final machine** (§7/OQ-3): the branch, the hub stage
     // and the clue all land when the dynamo runs, which is §6 beats 6–8 in order.
@@ -159,7 +180,9 @@ describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', 
 
     const meshes = hubMeshes(stateReader(system), system.hubStageIndex, (id) => system.hasClue(id));
 
-    // The only slab that remains is the still-sealed Branch C's — and still red.
+    // The only slab that remains is Branch C's — still gated behind B's completion, and
+    // still red. Gating is the same red slab as a build-time seal, so the hall cannot draw
+    // a door it would refuse (§26: the mesh is a function of `canEnter`).
     expect(slabs(meshes, HUB_DOORS[0]!.x)).toHaveLength(0);
     expect(slabs(meshes, HUB_DOORS[1]!.x)).toHaveLength(0);
     expect(slabs(meshes, HUB_DOORS[2]!.x)[0]!.color).toBe(SEALED_RED);
@@ -171,9 +194,51 @@ describe('Crucible Hall — the walkthrough colour facts, as data (§6, §26)', 
     expect(bus(meshes)?.color).toBe(TRUNK_GOLD);
     expect(column(meshes)?.color).toBe(REGULATOR_WARMED);
     expect(system.branchState(BRANCH_A_ID)).toBe('Complete');
-    // Branch B ships and is un-gated, so it is Available whatever A does; C is sealed.
+    // Branch B ships and is gated behind A, so it is Available now; C is gated behind B too.
     expect(system.branchState(BRANCH_B_ID)).toBe('Available');
     expect(system.branchState(BRANCH_C_ID)).toBe('Locked');
+  });
+
+  it('completing Branch B: the Crucible opens, its slab goes, but its trunk waits for C to complete', () => {
+    const system = progression();
+    system.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2']);
+    expect(system.branchState(BRANCH_B_ID)).toBe('Complete');
+    expect(system.branchState(BRANCH_C_ID)).toBe('Available');
+
+    const meshes = hubMeshes(stateReader(system), system.hubStageIndex, () => false);
+
+    // No slabs anywhere: all three doors are open.
+    for (const door of HUB_DOORS) expect(slabs(meshes, door.x)).toHaveLength(0);
+    // A trunk lights the door it reaches when that branch *completes* — so B's is gold and
+    // C's is still cold, even though C's door is now passable. Draw what progression says.
+    expect(trunk(meshes, HUB_DOORS[1]!.x)?.color).toBe(TRUNK_GOLD);
+    expect(trunk(meshes, HUB_DOORS[2]!.x)?.color).toBe(TRUNK_OFF);
+    // The stage is still "Regulator Awake": two plates awake (A's and B's), the Crucible's
+    // asleep until its own branch completes.
+    expect(system.hubStage.id).toBe('stage/regulator-awake');
+    expect(lowPlate(meshes, THERMAL_PLATE_X)?.color).toBe(PLATE_AWAKE_GOLD);
+    expect(lowPlate(meshes, CRUCIBLE_PLATE_X)?.color).toBe(PLATE_DORMANT);
+  });
+
+  it('completing Branch C: all three trunk lines and plates are lit, and the Regulator reaches its last stage', () => {
+    const system = progression();
+    system.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2', 'C1', 'C2', 'C3', 'CM-3']);
+    expect(system.branchState(BRANCH_C_ID)).toBe('Complete');
+    expect(system.hubStage.id).toBe('stage/crucible-restored');
+
+    const meshes = hubMeshes(stateReader(system), system.hubStageIndex, () => false);
+
+    for (const door of HUB_DOORS) {
+      expect(slabs(meshes, door.x), `${door.branchId} still has a slab`).toHaveLength(0);
+      expect(trunk(meshes, door.x)?.color, `${door.branchId} trunk`).toBe(TRUNK_GOLD);
+    }
+    expect(column(meshes)?.color).toBe(REGULATOR_RESTORED);
+    // All three story plates awake, none read: the column plate on the Regulator and the two
+    // low plates either side of it. Read by geometry, not by colour count (a door post is the
+    // same teal as a read plate).
+    expect(plate(meshes)?.color).toBe(PLATE_AWAKE_GOLD);
+    expect(lowPlate(meshes, THERMAL_PLATE_X)?.color).toBe(PLATE_AWAKE_GOLD);
+    expect(lowPlate(meshes, CRUCIBLE_PLATE_X)?.color).toBe(PLATE_AWAKE_GOLD);
   });
 
   it('the plate lifecycle is dark → gold → teal, driven by discovery alone (walkthrough steps 4–5)', () => {

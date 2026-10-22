@@ -44,7 +44,7 @@ export function branchContent(options: BranchContentOptions = {}): MachineConten
 }
 
 /**
- * The whole **shipped** content bundle (Branch A + Branch B), assembled exactly as
+ * The whole **shipped** content bundle (Branches A, B and C), assembled exactly as
  * `main.ts` assembles it. Suites that iterate `PUZZLE_DEFINITIONS` need this rather
  * than the Branch A fixture: a puzzle whose parts are not in the bundle has nothing
  * for a requirement to point at, which reads as a broken reveal rather than a missing

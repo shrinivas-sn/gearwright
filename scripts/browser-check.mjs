@@ -5,7 +5,7 @@
  * composition actually does: boot logs, HUD read-outs, focus acquisition from real
  * vantages, a played BM-1 sequence, console errors, and §36 budget numbers.
  *
- * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|arms|dock|bm1|branch|b2audit] [--production]
+ * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|arms|dock|crucible|bm1|branch|b2audit] [--production]
  */
 
 import { spawn } from 'node:child_process';
@@ -266,6 +266,16 @@ window.__probe = {
       loop: window.__gearwright ? window.__gearwright.snapshot().loop : null
     };
   },
+  /**
+   * The live derived machine state (ARCH §23.4). The Crucible's ceiling is a property of the
+   * *graph*, which exists whether or not §25 has unlocked the branch's puzzles — so a check
+   * can prove a machine's warnings before the player is allowed to play it.
+   */
+  machine: (machineId) => {
+    const dev = window.__gearwrightDev;
+    if (dev === undefined || dev === null || typeof dev.machineState !== 'function') return null;
+    return dev.machineState(machineId);
+  },
   hud: () => {
     const text = (selector) => {
       const element = document.querySelector(selector);
@@ -371,10 +381,14 @@ window.__probe = {
       const shipped = await import('/src/levels/shipped-content.ts');
       const hub = await import('/src/levels/hub.ts');
       const branchB = await import('/src/levels/branch-b.ts');
+      const branchC = await import('/src/levels/branch-c.ts');
       window.__probe.__colliders = [
         ...shipped.SHIPPED_WORLD.colliders,
         ...hub.hubColliders(() => 'Complete'),
-        ...branchB.BRANCH_B_WORLD.colliders
+        ...branchB.BRANCH_B_WORLD.colliders,
+        // Branch C's room sits east of the Steam Works; without its structure the planner
+        // would route the player through plinths and wall posts it cannot see.
+        ...branchC.BRANCH_C_WORLD.colliders
       ];
     } catch (error) {
       // A production build serves dist/, where the TypeScript sources do not exist — and
@@ -432,7 +446,10 @@ window.__probe = {
     const half = 0.36; // the player capsule's own half-width: what actually fits
     const step = 0.5;
     const minX = -9;
-    const maxX = 9;
+    // The grid reaches the Great Crucible's east wall (x = 24) as well as the hall and the
+    // Steam Works; the old 9 m bound made every vantage in Branch C fall back to a straight
+    // line, which teleports through whatever stands between (including a closed door).
+    const maxX = 25;
     const minZ = -20;
     const maxZ = 35;
     const nx = Math.round((maxX - minX) / step) + 1;
@@ -622,7 +639,11 @@ window.__probe = {
           return false;
         }
         lastGood = { x: now.x, z: now.z };
-        if (dev.manipulation.heldId === null || dev.manipulation.heldId === undefined) break;
+        // No early exit here: an *empty-handed* hop used to break out of the step loop after
+        // the first 0.4 m chunk, so a check that walked the player somewhere without carrying
+        // anything silently stayed near where it started (it reported entered/ok while still
+        // at the spawn pose). The wait loop above already handles a held part; the movement
+        // itself is the same either way.
       }
     }
     return true;
@@ -880,6 +901,11 @@ window.__probe = {
     if (branchB === null && window.__probe.sourceAvailable !== false) {
       try { branchB = await import('/src/levels/branch-b.ts'); } catch { /* optional */ }
     }
+    // Branch C is a second new room; the crucible scenario walks and docks in it.
+    let branchC = branch.C1_CARRYABLES === undefined ? null : branch;
+    if (branchC === null && window.__probe.sourceAvailable !== false) {
+      try { branchC = await import('/src/levels/branch-c.ts'); } catch { /* optional */ }
+    }
     const parts = (list) => list.map((c) => ({ id: c.instanceId, center: c.spawn.center, half: c.definition.halfExtents }));
     const sockets = (list) => list.map((s) => ({ id: s.id, center: s.pose.center, half: s.halfExtents }));
     return {
@@ -902,6 +928,15 @@ window.__probe = {
       bm2Parts: branchB ? parts(branchB.BM2_CARRYABLES) : [],
       bm2Sockets: branchB ? sockets(branchB.BM2_SOCKETS) : [],
       bm2Props: branchB ? branchB.BM2_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })) : [],
+      c1Parts: branchC ? parts(branchC.C1_CARRYABLES) : [],
+      c1Sockets: branchC ? sockets(branchC.C1_SOCKETS) : [],
+      c2Parts: branchC ? parts(branchC.C2_CARRYABLES) : [],
+      c2Sockets: branchC ? sockets(branchC.C2_SOCKETS) : [],
+      c3Parts: branchC ? parts(branchC.C3_CARRYABLES) : [],
+      c3Sockets: branchC ? sockets(branchC.C3_SOCKETS) : [],
+      cm3Parts: branchC ? parts(branchC.CM3_CARRYABLES) : [],
+      cm3Sockets: branchC ? sockets(branchC.CM3_SOCKETS) : [],
+      cm3Props: branchC ? branchC.CM3_PROPS.map((p) => ({ id: p.id, centerX: p.centerX })) : [],
       hubTargets
     };
   }
@@ -1558,6 +1593,103 @@ async function scenarioDock(cdp) {
 }
 
 /**
+ * THE GREAT CRUCIBLE, entered and played (22/10/2026).
+ *
+ * Branch C is new level geometry and four new machines, and no headless suite can tell whether
+ * the room behind the hall's east-north doorway is *walkable* or whether its sockets can be
+ * reached with a carried part. This check does both, and it proves the branch's new teaching
+ * live: C1's two blast ports read one feed and then **overpressure** on the machine graph as
+ * the second valve goes in. The puzzle stays `Locked` throughout on purpose — a fresh save has
+ * not completed A and B — which is itself the point: derived machine state exists independently
+ * of §25 gating, and the gate is honest about what the player may play.
+ */
+async function scenarioCrucible(cdp) {
+  const level = await evaluate(cdp, 'window.__probe.level()');
+  const valveA = (level.c1Parts ?? []).find((entry) => entry.id === 'valve-c1-1');
+  const valveB = (level.c1Parts ?? []).find((entry) => entry.id === 'valve-c1-2');
+  const socketA = (level.c1Sockets ?? []).find((entry) => entry.id === 'socket-c1-flow-a');
+  const socketB = (level.c1Sockets ?? []).find((entry) => entry.id === 'socket-c1-flow-b');
+  const machine = () => evaluate(cdp, "window.__probe.machine('C1-tuyere')");
+
+  report.data.crucible = {
+    parts: (level.c1Parts ?? []).length,
+    sockets: (level.c1Sockets ?? []).length
+  };
+  if (valveA === undefined || valveB === undefined || socketA === undefined || socketB === undefined) {
+    report.problems.push('crucible: the branch is not composed (no C1 parts/sockets in the probe)');
+    return;
+  }
+
+  // 1. Walk in: the doorway is a real gap at x = 12 and the new floor is walkable.
+  // The harness hop plans with every door taken as open, so this is a *room* check, not a
+  // gate check: whether a sealed Crucible keeps the player in the hall is the boot log's
+  // "branch-c=Locked (sealed)" plus the headless access-gate suite. What is proven here is
+  // that the floor beyond the doorway is walkable and the socket can be stood at.
+  // A direct teleport, then let the game's own physics settle: if the new floor were missing
+  // or mis-positioned the capsule would fall (y below the floor) or be resolved out of a
+  // collider. Route planning is deliberately not used here — it takes doors as open, so it
+  // could not tell a room check from a gate check.
+  await evaluate(cdp, 'window.__probe.teleport(12.2, 0.06, 24.4)');
+  await sleep(900);
+  const landed = await evaluate(cdp, 'window.__probe.state()');
+  report.data.crucible.entered = {
+    pos: landed.pos,
+    grounded: landed.grounded,
+    inRoom: landed.pos.x > 9 && landed.pos.z > 21 && landed.pos.y > -0.2
+  };
+  if (!report.data.crucible.entered.inRoom || landed.grounded !== true) {
+    report.problems.push(
+      `crucible: the new room does not hold the player up at (12.2, 24.4) — ${JSON.stringify(landed.pos)}, grounded=${landed.grounded}`
+    );
+  }
+
+  // 2. One open valve: the tuyere lights and the machine is not over-fed.
+  const grabA = await grabPart(cdp, valveA);
+  const dockA = await dockInto(cdp, socketA, valveA);
+  await sleep(900);
+  const first = await machine();
+  report.data.crucible.first = {
+    grabA,
+    dropped: dockA.dropped === true,
+    socket: dockA.hud?.socket?.text ?? null,
+    outputs: first?.outputs ?? [],
+    warnings: first?.warnings ?? [],
+    state: first?.state ?? null
+  };
+  if (dockA.dropped === true) {
+    report.problems.push('crucible: the first valve was soft-detached mid-carry');
+  } else if ((first?.outputs ?? []).length === 0) {
+    report.problems.push('crucible: one valve did not power the tuyere');
+  } else if ((first?.warnings ?? []).includes('overpressure')) {
+    report.problems.push('crucible: one feed already over-pressurised the tuyere');
+  }
+
+  // 3. A second open valve: the same machine now reports its ceiling. This is the branch's
+  //    whole teaching, read from the graph rather than inferred from the HUD.
+  const grabB = await grabPart(cdp, valveB);
+  const dockB = await dockInto(cdp, socketB, valveB);
+  await sleep(900);
+  const second = await machine();
+  report.data.crucible.second = {
+    grabB,
+    dropped: dockB.dropped === true,
+    socket: dockB.hud?.socket?.text ?? null,
+    outputs: second?.outputs ?? [],
+    warnings: second?.warnings ?? [],
+    state: second?.state ?? null
+  };
+  if (dockB.dropped === true) {
+    report.problems.push('crucible: the second valve was soft-detached mid-carry');
+  } else if (!(second?.warnings ?? []).includes('overpressure')) {
+    report.problems.push('crucible: two open feeds did not trip the tuyere ceiling');
+  }
+
+  // 4. The gate is honest: a fresh save cannot have C1 in progress, whatever the graph says.
+  report.data.crucible.progress = await evaluate(cdp, 'window.__probe.progress()');
+  drainConsole(cdp);
+}
+
+/**
  * THE WEAPONS PASS, played (16/10/2026).
  *
  * The headless suites prove the rules (fire modes, rpm, magazines, recoil patterns, the
@@ -2082,9 +2214,11 @@ async function scenarioBranch(cdp) {
   const reloadLogs = report.logs.slice(logsBeforeReload).join('\n');
   report.data.branchReload = {
     loaded: /\[save\] loaded autosave/.test(reloadLogs),
-    // Both branches are Complete by the end of the run, so both clues carry — the ids are
-    // the point, and the count is 2 of 2 (one plate per branch).
-    cluesRestored: /\[clue\] 2\/2 clue\(s\) discovered: clue\/regulator-plate, clue\/thermal-plate/.test(reloadLogs),
+    // Both branches this run plays are Complete, so both of their clues carry. The count is
+    // now 2 of **3**: the Great Crucible's plate belongs to Branch C, whose branch is only
+    // `Available` at the end of an A→B run, so its clue staying asleep is correct — and the
+    // ids are the part that must match.
+    cluesRestored: /\[clue\] 2\/3 clue\(s\) discovered: clue\/regulator-plate, clue\/thermal-plate/.test(reloadLogs),
     // BM-1's four staged actions plus BM-2's four: the log is canonical, so a save that
     // ran both capstones restores eight.
     stagedRestored: /\[staged\] 8 staged action\(s\) restored/.test(reloadLogs),
@@ -2480,6 +2614,7 @@ async function main() {
     drainConsole(cdp);
   }
   if (SCENARIO === 'dock') await scenarioDock(cdp);
+  if (SCENARIO === 'crucible') await scenarioCrucible(cdp);
   if (SCENARIO === 'guns') await scenarioGuns(cdp);
   if (SCENARIO === 'bm1') await scenarioBm1(cdp);
   if (SCENARIO === 'branch') await scenarioBranch(cdp);

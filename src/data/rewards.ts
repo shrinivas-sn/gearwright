@@ -36,6 +36,15 @@ export const MILESTONE_B3_BYPASS = 'milestone/b3-bypass';
 /** Branch B — BM-2 "Steam Engine" (the thermal branch's staged capstone). */
 export const MILESTONE_BM2_STEAM_ENGINE = 'milestone/bm2-steam-engine';
 
+/** Branch C — C1 "Tuyere" (the Crucible's entry machine). */
+export const MILESTONE_C1_TUYERE = 'milestone/c1-tuyere';
+/** Branch C — C2 "Quench" (the Crucible's combining machine). */
+export const MILESTONE_C2_QUENCH = 'milestone/c2-quench';
+/** Branch C — C3 "Slag Run" (the Crucible's open-ended problem). */
+export const MILESTONE_C3_SLAG_RUN = 'milestone/c3-slag-run';
+/** Branch C — CM-3 "Great Crucible" (the Crucible's staged capstone). */
+export const MILESTONE_CM3_GREAT_CRUCIBLE = 'milestone/cm3-great-crucible';
+
 export const REWARD_DEFINITIONS: ReadonlyArray<RewardDefinition> = [
   {
     id: MILESTONE_P1_FIRST_MESH,
@@ -107,6 +116,47 @@ export const REWARD_DEFINITIONS: ReadonlyArray<RewardDefinition> = [
     materials: [
       { kind: 'brass', amount: 3 },
       { kind: 'alloy', amount: 1 },
+      { kind: 'sealant', amount: 1 }
+    ],
+    blueprints: []
+  },
+  {
+    // Branch C pays in the same materials vocabulary as A and B (§27.2 rule 5): a third
+    // branch must not invent a resource kind to feel bigger, and the MVP keeps its one
+    // blueprint on P2.
+    id: MILESTONE_C1_TUYERE,
+    title: 'Tuyere',
+    materials: [
+      { kind: 'scrap', amount: 2 },
+      { kind: 'alloy', amount: 1 }
+    ],
+    blueprints: []
+  },
+  {
+    id: MILESTONE_C2_QUENCH,
+    title: 'Quench',
+    materials: [
+      { kind: 'brass', amount: 2 },
+      { kind: 'sealant', amount: 1 }
+    ],
+    blueprints: []
+  },
+  {
+    id: MILESTONE_C3_SLAG_RUN,
+    title: 'Slag Run',
+    materials: [
+      { kind: 'scrap', amount: 2 },
+      { kind: 'alloy', amount: 2 }
+    ],
+    blueprints: []
+  },
+  {
+    // The Crucible's capstone pays like the other two staged machines — materials only.
+    id: MILESTONE_CM3_GREAT_CRUCIBLE,
+    title: 'Great Crucible',
+    materials: [
+      { kind: 'brass', amount: 3 },
+      { kind: 'alloy', amount: 2 },
       { kind: 'sealant', amount: 1 }
     ],
     blueprints: []

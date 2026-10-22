@@ -13,11 +13,28 @@ import { B2_PUZZLE } from './b2.ts';
 import { B3_PUZZLE } from './b3.ts';
 import { BM1_PUZZLE } from './bm1.ts';
 import { BM2_PUZZLE } from './bm2.ts';
+import { C1_PUZZLE } from './c1.ts';
+import { C2_PUZZLE } from './c2.ts';
+import { C3_PUZZLE } from './c3.ts';
+import { CM3_PUZZLE } from './cm3.ts';
 import { P1_PUZZLE } from './p1.ts';
 import { P2_PUZZLE } from './p2.ts';
 import { P3_PUZZLE } from './p3.ts';
 
-export { B1_PUZZLE, B2_PUZZLE, B3_PUZZLE, BM1_PUZZLE, BM2_PUZZLE, P1_PUZZLE, P2_PUZZLE, P3_PUZZLE };
+export {
+  B1_PUZZLE,
+  B2_PUZZLE,
+  B3_PUZZLE,
+  BM1_PUZZLE,
+  BM2_PUZZLE,
+  C1_PUZZLE,
+  C2_PUZZLE,
+  C3_PUZZLE,
+  CM3_PUZZLE,
+  P1_PUZZLE,
+  P2_PUZZLE,
+  P3_PUZZLE
+};
 
 export const PUZZLE_DEFINITIONS: ReadonlyArray<PuzzleDefinition> = [
   P1_PUZZLE,
@@ -30,5 +47,11 @@ export const PUZZLE_DEFINITIONS: ReadonlyArray<PuzzleDefinition> = [
   B1_PUZZLE,
   B2_PUZZLE,
   B3_PUZZLE,
-  BM2_PUZZLE
+  BM2_PUZZLE,
+  // Branch C — the Crucible's entry, combining and open-ended machines, then its staged
+  // capstone (the order its objective line walks them in).
+  C1_PUZZLE,
+  C2_PUZZLE,
+  C3_PUZZLE,
+  CM3_PUZZLE
 ];

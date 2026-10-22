@@ -27,8 +27,14 @@ const BOXES: ReadonlyArray<RoomBox> = [
   // North wall, west of the Branch B doorway (the door is at x = 0, opening ±1.0;
   // the gap is cut 1.3 wide so the door's posts clear the wall face).
   { min: [-21, 0, 20], max: [-1.3, 4, 21], color: ROOM_WALL },
-  // North wall, east of the doorway.
-  { min: [1.3, 0, 20], max: [21, 4, 21], color: ROOM_WALL },
+  // North wall, east of the Branch B doorway and west of the Branch C one (the Crucible's
+  // door is at x = 12, opening ±1.0; the gap is cut 1.3 wide so its posts clear the wall).
+  { min: [1.3, 0, 20], max: [10.7, 4, 21], color: ROOM_WALL },
+  // North wall, east of the Branch C doorway (it runs past the hall's east wall to serve as
+  // the Crucible room's south wall).
+  { min: [13.3, 0, 20], max: [25, 4, 21], color: ROOM_WALL },
+  // Lintel over the Branch C doorway, above the 3.2 m door height.
+  { min: [10.7, 3.2, 20], max: [13.3, 4, 21], color: ROOM_WALL },
   // Lintel over the doorway, above the 3.2 m door height.
   { min: [-1.3, 3.2, 20], max: [1.3, 4, 21], color: ROOM_WALL },
   { min: [-21, 0, -20], max: [-20, 4, 20], color: ROOM_WALL },

@@ -41,12 +41,29 @@ export const BM2_PRIMING_ACTIONS: ReadonlyArray<string> = [
 /** BM-2's activation: the throttle lever, thrown *after* priming (ADR-018). */
 export const BM2_ENGAGE_ACTION = 'bm2/engage';
 
+/**
+ * CM-3's three priming lines (Branch C's staged capstone). Same shape as BM-1's and BM-2's:
+ * **order-flexible** coverage, so the stage is a small open problem rather than a lock. The
+ * Crucible names its own lines — blast, quench and slag — because a branch's content should
+ * read as its own machine, not as a relabelled copy of the last one.
+ */
+export const CM3_PRIMING_ACTIONS: ReadonlyArray<string> = [
+  'cm3/prime-blast',
+  'cm3/prime-quench',
+  'cm3/prime-slag'
+];
+
+/** CM-3's activation: the pour lever, thrown *after* priming (ADR-018). */
+export const CM3_ENGAGE_ACTION = 'cm3/engage';
+
 /** Every staged action the game ships — the composition's allow-list. */
 export const STAGED_ACTIONS: ReadonlyArray<string> = [
   ...BM1_PRIMING_ACTIONS,
   BM1_ENGAGE_ACTION,
   ...BM2_PRIMING_ACTIONS,
-  BM2_ENGAGE_ACTION
+  BM2_ENGAGE_ACTION,
+  ...CM3_PRIMING_ACTIONS,
+  CM3_ENGAGE_ACTION
 ];
 
 /** True when an interaction target is a staged action the history must record. */

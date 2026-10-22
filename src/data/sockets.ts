@@ -310,6 +310,123 @@ export const B3_ROUTE_C_DEF: SocketDefinition = {
   id: 'def/b3-route-c'
 };
 
+/* --- Branch C "Great Crucible" -------------------------------------------- */
+
+/**
+ * C1's two blast ports: the branch's **entry** lesson, and the Crucible's own idiom.
+ *
+ * Both feed the same tuyere, so two seated open valves push the output past the machine's
+ * ceiling and trip `overpressure` — the first shipped puzzle where the *safe* answer is to
+ * leave a port empty. A shut-off valve in either port still blocks (and jams) as everywhere
+ * else, so the puzzle has a right count *and* a right kind of part, read from two different
+ * declared facts rather than from geometry.
+ */
+export const C1_FLOW_A_DEF: SocketDefinition = {
+  id: 'def/c1-flow-a',
+  machineId: 'C1-tuyere',
+  ownerComponentId: 'c1-header',
+  socketKind: 'pipe-port',
+  accepts: ['pipe'],
+  portDirection: 'in',
+  carrier: 'pressure',
+  snapYaw: 0
+};
+
+/** C1's second blast port: same reusable definition shape, other placement. */
+export const C1_FLOW_B_DEF: SocketDefinition = {
+  ...C1_FLOW_A_DEF,
+  id: 'def/c1-flow-b'
+};
+
+/**
+ * C2's drive mount (the combining machine): a gear-mount the crank's motion is bridged
+ * through. Accepts `plate` as well as `gear`, keeping §21.4's "fits, cannot bridge" lesson
+ * in every machine of the branch.
+ */
+export const C2_DRIVE_MOUNT_DEF: SocketDefinition = {
+  id: 'def/c2-drive-mount',
+  machineId: 'C2-quench',
+  ownerComponentId: 'c2-vessel',
+  socketKind: 'gear-mount',
+  accepts: ['gear', 'plate'],
+  portDirection: 'in',
+  carrier: 'rotation',
+  snapYaw: 0
+};
+
+/** C2's two quench feeds: parallel pressure runs, so the ceiling applies to the drive's machine too. */
+export const C2_FEED_A_DEF: SocketDefinition = {
+  id: 'def/c2-feed-a',
+  machineId: 'C2-quench',
+  ownerComponentId: 'c2-gauge',
+  socketKind: 'pipe-port',
+  accepts: ['pipe'],
+  portDirection: 'in',
+  carrier: 'pressure',
+  snapYaw: 0
+};
+
+/** C2's second quench feed. */
+export const C2_FEED_B_DEF: SocketDefinition = {
+  ...C2_FEED_A_DEF,
+  id: 'def/c2-feed-b'
+};
+
+/**
+ * C3's three slag routes (the branch's open-ended beat). Same closed shape as P3's and B3's
+ * route ports: routing is declared by the machine's links, so no owner port is named.
+ *
+ * A reaches the casting floor, B the quench tank, and C reaches **both** — which, under the
+ * machine's ceiling, makes `C` alone and `A+B` the two accepted builds while `A+C`, `B+C`
+ * would double one consumer. The routes are data; the ceiling is the lesson.
+ */
+export const C3_ROUTE_A_DEF: SocketDefinition = {
+  id: 'def/c3-route-a',
+  machineId: 'C3-slag',
+  ownerComponentId: 'c3-header',
+  socketKind: 'pipe-port',
+  accepts: ['pipe'],
+  portDirection: 'in',
+  carrier: 'pressure',
+  snapYaw: 0
+};
+
+/** Route B: the run to the quench tank. */
+export const C3_ROUTE_B_DEF: SocketDefinition = {
+  ...C3_ROUTE_A_DEF,
+  id: 'def/c3-route-b'
+};
+
+/** Route C: the cross-run that reaches *both* consumers on its own. */
+export const C3_ROUTE_C_DEF: SocketDefinition = {
+  ...C3_ROUTE_A_DEF,
+  id: 'def/c3-route-c'
+};
+
+/** CM-3's drive mount: the capstone's gear-mount (accepts a plate that fits and cannot bridge). */
+export const CM3_DRIVE_MOUNT_DEF: SocketDefinition = {
+  id: 'def/cm3-drive-mount',
+  machineId: 'CM-3',
+  ownerComponentId: 'cm3-vessel',
+  socketKind: 'gear-mount',
+  accepts: ['gear', 'plate'],
+  portDirection: 'in',
+  carrier: 'rotation',
+  snapYaw: 0
+};
+
+/** CM-3's feed port: the pressure run from the furnace to the casting outlet. */
+export const CM3_FEED_PORT_DEF: SocketDefinition = {
+  id: 'def/cm3-feed-port',
+  machineId: 'CM-3',
+  ownerComponentId: 'cm3-outlet',
+  socketKind: 'pipe-port',
+  accepts: ['pipe'],
+  portDirection: 'in',
+  carrier: 'pressure',
+  snapYaw: 0
+};
+
 export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   DOCK_A_DEF,
   MOUNT_A_DEF,
@@ -338,7 +455,19 @@ export const SOCKET_DEFINITIONS: ReadonlyArray<SocketDefinition> = [
   // Branch B — B3's three route ports (the open-ended beat).
   B3_ROUTE_A_DEF,
   B3_ROUTE_B_DEF,
-  B3_ROUTE_C_DEF
+  B3_ROUTE_C_DEF,
+  // Branch C — C1's blast ports, C2's drive and quench feeds, C3's routes, CM-3's drive
+  // and feed.
+  C1_FLOW_A_DEF,
+  C1_FLOW_B_DEF,
+  C2_DRIVE_MOUNT_DEF,
+  C2_FEED_A_DEF,
+  C2_FEED_B_DEF,
+  C3_ROUTE_A_DEF,
+  C3_ROUTE_B_DEF,
+  C3_ROUTE_C_DEF,
+  CM3_DRIVE_MOUNT_DEF,
+  CM3_FEED_PORT_DEF
 ];
 
 export function socketDefinitionOf(defId: string): SocketDefinition | null {

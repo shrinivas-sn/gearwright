@@ -112,7 +112,12 @@ describe('BM-2 — the priming vocabulary and the activation order (ADR-018)', (
     history.append('bm2/prime-outlet');
     expect(evaluateBm2(graph, content, history).reasonCodes).not.toContain('bm2/primed');
 
-    expect([...(BM2_STEAM_ENGINE.primingActions ?? [])]).toEqual(STAGED_ACTIONS.slice(4, 7));
+    // BM-2's own vocabulary is *part of* the shipped allow-list, and every id it names is a
+    // staged action. Asserting membership rather than a slice index keeps this true when a
+    // later branch (Branch C's CM-3) appends its own staged actions to the same list.
+    expect(STAGED_ACTIONS).toEqual(
+      expect.arrayContaining([...(BM2_STEAM_ENGINE.primingActions ?? []), 'bm2/engage'])
+    );
     for (const action of STAGED_ACTIONS) expect(isStagedAction(action)).toBe(true);
   });
 
@@ -166,7 +171,12 @@ describe('BM-2 — the priming vocabulary and the activation order (ADR-018)', (
   });
 
   it('props and their visuals read the same log the validator reads (ADR-018)', () => {
-    expect(BM2_PROPS.map((prop) => prop.id)).toEqual([...STAGED_ACTIONS.slice(4)]);
+    // The props *are* the machine's declared staged actions, in the machine's own order —
+    // not a slice of the global allow-list, which other branches also write to.
+    expect(BM2_PROPS.map((prop) => prop.id)).toEqual([
+      ...(BM2_STEAM_ENGINE.primingActions ?? []),
+      'bm2/engage'
+    ]);
     expect(bm2PropInteractables(false).every((prop) => prop.enabled === false)).toBe(true);
     expect(bm2PropInteractables(true).every((prop) => prop.kind === 'prop')).toBe(true);
 

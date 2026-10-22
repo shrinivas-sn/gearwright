@@ -11,7 +11,7 @@
  */
 
 import type { MachineDefinition } from '../game-state/component-model.ts';
-import { BM1_PRIMING_ACTIONS, BM2_PRIMING_ACTIONS } from './actions.ts';
+import { BM1_PRIMING_ACTIONS, BM2_PRIMING_ACTIONS, CM3_PRIMING_ACTIONS } from './actions.ts';
 
 /**
  * P1 "First Mesh" — carry a gear into the mesh socket and the two shafts become one
@@ -412,6 +412,232 @@ export const B3_BYPASS_MACHINE: MachineDefinition = {
   maxOutput: 2.5
 };
 
+/* --- Branch C "Great Crucible" --------------------------------------------- */
+
+/**
+ * C1 "Tuyere" (Branch C) — the Crucible's **entry machine**, and the first shipped puzzle
+ * whose lesson is a *ceiling* rather than a connection.
+ *
+ *   - `link-c1-flow-a`  boiler → tuyere  (a valve in `socket-c1-flow-a`)
+ *   - `link-c1-flow-b`  boiler → tuyere  (a valve in `socket-c1-flow-b`)
+ *
+ * Both links reach the same output, so two open valves sum to 2 and trip `maxOutput` — the
+ * machine reports `overpressure`. One open valve gives exactly 1: enough to light the
+ * tuyere (`min: 1`) and under the ceiling. This is the branch's teaching beat: a machine can
+ * be **too** fed, and the safe answer is a counted one. A shut-off valve in either port is
+ * the branch's other near-miss, caught by `unjammed` and the connection predicate instead of
+ * by the ceiling, so the two failure modes have two different reasons.
+ */
+export const C1_TUYERE_MACHINE: MachineDefinition = {
+  id: 'C1-tuyere',
+  title: 'Tuyere',
+  rootNodes: [
+    { kind: 'component', id: 'c1-boiler' },
+    { kind: 'component', id: 'c1-header' },
+    { kind: 'component', id: 'c1-tuyere' }
+  ],
+  links: [
+    {
+      id: 'link-c1-flow-a',
+      viaSocketId: 'socket-c1-flow-a',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'c1-boiler' },
+      to: { kind: 'component', id: 'c1-tuyere' }
+    },
+    {
+      id: 'link-c1-flow-b',
+      viaSocketId: 'socket-c1-flow-b',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'c1-boiler' },
+      to: { kind: 'component', id: 'c1-tuyere' }
+    }
+  ],
+  outputs: [{ node: { kind: 'component', id: 'c1-tuyere' }, kind: 'pressure' }],
+  // One run is 1; both is 2. The ceiling between them is the whole entry lesson.
+  maxOutput: 1.5
+};
+
+/**
+ * C2 "Quench" (Branch C) — the Crucible's **combining machine** (§6 beat 3).
+ *
+ * It puts Branch A's direction lesson (a drive has a *sense*) and Branch C's own ceiling
+ * (a machine can be over-fed) on one frame:
+ *
+ *   - `link-c2-drive`  crank → vessel  (a gear in `socket-c2-drive`)
+ *   - `link-c2-feed-a` / `-b`  boiler → gauge  (a valve in each quench feed)
+ *
+ * The sense is not declared here: the crank's `drive` port seeds `cw`, a plain gear preserves
+ * it and an idler flips it — the same part-data rule P2 and B2 use, restated on the
+ * Crucible. The two feeds are parallel, so seating both trips the ceiling exactly as C1 does.
+ * The combination is the point: **right-handed drive, single feed.**
+ */
+export const C2_QUENCH_MACHINE: MachineDefinition = {
+  id: 'C2-quench',
+  title: 'Quench',
+  rootNodes: [
+    { kind: 'component', id: 'c2-crank' },
+    { kind: 'component', id: 'c2-vessel' },
+    { kind: 'component', id: 'c2-boiler' },
+    { kind: 'component', id: 'c2-gauge' }
+  ],
+  links: [
+    {
+      id: 'link-c2-drive',
+      viaSocketId: 'socket-c2-drive',
+      viaTags: ['gear'],
+      carrier: 'rotation',
+      from: { kind: 'component', id: 'c2-crank' },
+      to: { kind: 'component', id: 'c2-vessel' }
+    },
+    {
+      id: 'link-c2-feed-a',
+      viaSocketId: 'socket-c2-feed-a',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'c2-boiler' },
+      to: { kind: 'component', id: 'c2-gauge' }
+    },
+    {
+      id: 'link-c2-feed-b',
+      viaSocketId: 'socket-c2-feed-b',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'c2-boiler' },
+      to: { kind: 'component', id: 'c2-gauge' }
+    }
+  ],
+  outputs: [
+    { node: { kind: 'component', id: 'c2-vessel' }, kind: 'rotation' },
+    { node: { kind: 'component', id: 'c2-gauge' }, kind: 'pressure' }
+  ],
+  maxOutput: 1.5
+};
+
+/**
+ * C3 "Slag Run" (Branch C) — the Crucible's **open-ended problem** (§7 template beat 4).
+ *
+ * One furnace feeds two consumers (the casting floor and the quench tank) through a three-port
+ * header:
+ *
+ *   - `link-c3-route-a`  boiler → casting floor
+ *   - `link-c3-route-b`  boiler → quench tank
+ *   - `link-c3-route-c-cast` / `-quench`  boiler → **both**
+ *
+ * Route C is the branch's cross-run: one part satisfies both connections. Its declared links
+ * share one bridge, so — exactly as P3's cross-run does — the carrier sums at the bridge and
+ * each consumer reads **2** from that one part. The ceiling is what makes the beat *open*
+ * instead of a lock:
+ *
+ *   - `A+B`  → each consumer reads 1     (under the ceiling)
+ *   - `C`    → each consumer reads 2     (at the cross-run's own value, still under it)
+ *   - `A+C`  → one consumer reads 3      (over the ceiling)
+ *   - `B+C`  → one consumer reads 3      (over the ceiling)
+ *
+ * `maxOutput: 2.5` sits between those two groups on purpose: it accepts the cross-run as a
+ * complete answer and refuses stacking another run on top of it. Two genuinely different
+ * accepted builds, and the trap is the same one C1 taught — the player has to count the feeds,
+ * not just make the connections.
+ */
+export const C3_SLAG_MACHINE: MachineDefinition = {
+  id: 'C3-slag',
+  title: 'Slag Run',
+  rootNodes: [
+    { kind: 'component', id: 'c3-boiler' },
+    { kind: 'component', id: 'c3-header' },
+    { kind: 'component', id: 'c3-out-cast' },
+    { kind: 'component', id: 'c3-out-quench' }
+  ],
+  links: [
+    {
+      id: 'link-c3-route-a',
+      viaSocketId: 'socket-c3-route-a',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'c3-boiler' },
+      to: { kind: 'component', id: 'c3-out-cast' }
+    },
+    {
+      id: 'link-c3-route-b',
+      viaSocketId: 'socket-c3-route-b',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'c3-boiler' },
+      to: { kind: 'component', id: 'c3-out-quench' }
+    },
+    {
+      id: 'link-c3-route-c-cast',
+      viaSocketId: 'socket-c3-route-c',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'c3-boiler' },
+      to: { kind: 'component', id: 'c3-out-cast' }
+    },
+    {
+      id: 'link-c3-route-c-quench',
+      viaSocketId: 'socket-c3-route-c',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'c3-boiler' },
+      to: { kind: 'component', id: 'c3-out-quench' }
+    }
+  ],
+  outputs: [
+    { node: { kind: 'component', id: 'c3-out-cast' }, kind: 'pressure' },
+    { node: { kind: 'component', id: 'c3-out-quench' }, kind: 'pressure' }
+  ],
+  maxOutput: 2.5
+};
+
+/**
+ * CM-3 "Great Crucible" (Branch C) — the Crucible's staged final machine, and the third
+ * instance of ADR-018's assembly → priming → activation pattern. Deliberately the same
+ * *shape* as BM-1 and BM-2 (two carriers on two separate output nodes, three priming lines,
+ * one ordered activation) because a third branch proves the machinery generalises.
+ *
+ *   - `link-cm3-drive`  cm3-crank → cm3-vessel  (a gear in `socket-cm3-drive`)
+ *   - `link-cm3-feed`   cm3-boiler → cm3-outlet  (a pipe in `socket-cm3-feed`)
+ *
+ * The capstone adds the branch's two earlier lessons to the staged pattern: the drive must
+ * turn **clockwise** (so the plain gear is the answer and the idler is the near-miss), and
+ * the feed must stay unjammed (the shut-off valve fits the port and conducts nothing).
+ */
+export const CM3_GREAT_CRUCIBLE: MachineDefinition = {
+  id: 'CM-3',
+  title: 'Great Crucible',
+  rootNodes: [
+    { kind: 'component', id: 'cm3-crank' },
+    { kind: 'component', id: 'cm3-vessel' },
+    { kind: 'component', id: 'cm3-boiler' },
+    { kind: 'component', id: 'cm3-outlet' }
+  ],
+  links: [
+    {
+      id: 'link-cm3-drive',
+      viaSocketId: 'socket-cm3-drive',
+      viaTags: ['gear'],
+      carrier: 'rotation',
+      from: { kind: 'component', id: 'cm3-crank' },
+      to: { kind: 'component', id: 'cm3-vessel' }
+    },
+    {
+      id: 'link-cm3-feed',
+      viaSocketId: 'socket-cm3-feed',
+      viaTags: ['pipe'],
+      carrier: 'pressure',
+      from: { kind: 'component', id: 'cm3-boiler' },
+      to: { kind: 'component', id: 'cm3-outlet' }
+    }
+  ],
+  outputs: [
+    { node: { kind: 'component', id: 'cm3-vessel' }, kind: 'rotation' },
+    { node: { kind: 'component', id: 'cm3-outlet' }, kind: 'pressure' }
+  ],
+  maxOutput: 1.5,
+  primingActions: CM3_PRIMING_ACTIONS
+};
+
 export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   P1_MESH_MACHINE,
   // M8 — Branch A's second and third machines.
@@ -424,7 +650,12 @@ export const MACHINE_DEFINITIONS: ReadonlyArray<MachineDefinition> = [
   BM2_STEAM_ENGINE,
   // Branch B — B2's governor (the combining machine) and B3's bypass (the open-ended one).
   B2_GOVERNOR_MACHINE,
-  B3_BYPASS_MACHINE
+  B3_BYPASS_MACHINE,
+  // Branch C — the Crucible's entry, combining and open-ended machines, then its capstone.
+  C1_TUYERE_MACHINE,
+  C2_QUENCH_MACHINE,
+  C3_SLAG_MACHINE,
+  CM3_GREAT_CRUCIBLE
 ];
 
 export function machineDefinitionOf(machineId: string): MachineDefinition | null {

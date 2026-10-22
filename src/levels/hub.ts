@@ -2,9 +2,10 @@
  * LEVEL — Crucible Hall, the hub (ARCH §6, §40 `levels/`).
  *
  * The hub is where progression becomes *visible*: the Great Regulator (inactive and
- * only partially revealed in the MVP) sits at the centre, and Branch A's door
- * opens from the hall into the Pressure Gallery through the partition wall; B and C are sealed
- * on the north wall — Branch A playable, Branch B and C sealed visuals.
+ * only partially revealed in the MVP) sits at the centre, Branch A's door opens from the hall
+ * into the Pressure Gallery through the partition wall, and B and C open on the north wall
+ * into the Steam Works and the Great Crucible. A door whose branch is still `Locked` is drawn
+ * as a red slab; when its branch lands the slab goes away by itself.
  *
  * Two rules shape this file:
  *
@@ -22,7 +23,13 @@
  * advances.
  */
 
-import { CLUE_DEFINITIONS, CLUE_REGULATOR_PLATE, CLUE_THERMAL_PLATE, clueDefinitionOf } from '../data/clues.ts';
+import {
+  CLUE_CRUCIBLE_PLATE,
+  CLUE_DEFINITIONS,
+  CLUE_REGULATOR_PLATE,
+  CLUE_THERMAL_PLATE,
+  clueDefinitionOf
+} from '../data/clues.ts';
 import type { BranchState } from '../game-state/progression-system.ts';
 import type { Interactable } from '../gameplay/interaction-system.ts';
 import type { StaticCollider } from '../ports/physics-port.ts';
@@ -38,17 +45,23 @@ export interface HubDoor {
   readonly z: number;
 }
 
-/** Sealed doors B/C stand just in front of the north wall (z = 20). */
+/** Doors B/C stand just in front of the north wall (z = 20). */
 const DOOR_Z = 19.3;
 
 /**
- * The three branch doors (§6). Branch A's opens; B and C are the sealed visuals.
+ * The three branch doors (§6). A opens from the start, B once A completes, C once B does;
+ * whether each one is *passable* is copied from the branch state, never authored here.
  * Adding a branch is one entry here plus its content — the gate needs no change.
+ *
+ * C's doorway is east of B's (x = 12 against B's x = 0) because the two rooms share the north
+ * wall: the Crucible sits east of the Steam Works, and both doorways are real gaps cut in
+ * `levels/game-room.ts`. Putting C's door at the old x = 6 would have opened into the Steam
+ * Works' own east floor, inside another branch's room.
  */
 export const HUB_DOORS: ReadonlyArray<HubDoor> = [
   { id: 'door/branch-a', branchId: 'branch-a', title: 'Pressure Gallery', x: -6, z: 8.0 },
   { id: 'door/branch-b', branchId: 'branch-b', title: 'Thermal Line', x: 0, z: DOOR_Z },
-  { id: 'door/branch-c', branchId: 'branch-c', title: 'Branch C', x: 6, z: DOOR_Z }
+  { id: 'door/branch-c', branchId: 'branch-c', title: 'Great Crucible', x: 12, z: DOOR_Z }
 ];
 const DOOR_HALF_WIDTH = 1.0;
 const DOOR_POST_WIDTH = 0.2;
@@ -167,6 +180,15 @@ const PLATE_PLACEMENTS: Readonly<Record<string, PlatePlacement>> = {
     // the column (which begins at x = -1.2 above y = 1).
     box: { min: [-2.1, 0.45, 13.93], max: [-1.1, 0.9, 14.0] },
     touch: { min: [-2.2, 0.3, 13.68], max: [-1.0, 1.05, 13.99] }
+  },
+  [CLUE_CRUCIBLE_PLATE]: {
+    // The third plate mirrors the thermal one on the plinth's *right*, so the three story
+    // beats read as a row: two low on the plinth either side of the column, one on the
+    // column itself. Same flush-against-z=14 rule and the same "stop short of the collider"
+    // arithmetic: the plinth is solid, and a touch box that crossed z = 14 would make the
+    // clue silently unreadable (§18).
+    box: { min: [1.1, 0.45, 13.93], max: [2.1, 0.9, 14.0] },
+    touch: { min: [1.0, 0.3, 13.68], max: [2.2, 1.05, 13.99] }
   }
 };
 

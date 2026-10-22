@@ -109,6 +109,19 @@ import {
   bm2PropMeshes
 } from './levels/branch-b.ts';
 import {
+  C1_CARRYABLES,
+  C1_SOCKETS,
+  C2_CARRYABLES,
+  C2_SOCKETS,
+  C3_CARRYABLES,
+  C3_SOCKETS,
+  CM3_CARRYABLES,
+  CM3_SOCKETS,
+  CM3_PROPS,
+  cm3PropInteractables,
+  cm3PropMeshes
+} from './levels/branch-c.ts';
+import {
   SHIPPED_CARRYABLES,
   SHIPPED_COMPONENTS,
   SHIPPED_INITIAL_ATTACHMENTS,
@@ -887,7 +900,9 @@ function boot(): void {
     readonly meshes: (performed: (actionId: string) => boolean) => ReadonlyArray<LabWorldMesh>;
   }> = [
     { machineId: 'BM-1', interactables: bm1PropInteractables, meshes: bm1PropMeshes },
-    { machineId: 'BM-2', interactables: bm2PropInteractables, meshes: bm2PropMeshes }
+    { machineId: 'BM-2', interactables: bm2PropInteractables, meshes: bm2PropMeshes },
+    // Branch C's capstone — the third instance of the same rig shape (ADR-018, no code path).
+    { machineId: 'CM-3', interactables: cm3PropInteractables, meshes: cm3PropMeshes }
   ];
   /**
    * "Assembled" is structural: every declared output is present (a gear turns it, a pipe
@@ -1882,6 +1897,10 @@ function boot(): void {
       interaction,
       manipulation,
       progression,
+      // The live machine graph (ADR-018 / §23): the Crucible's proof reads *derived machine
+      // state*, which exists independently of a puzzle's §25 gating — so a check can prove a
+      // machine's ceiling before the branch has been unlocked. Dev-only, like everything here.
+      machineState: (machineId: string) => graph.machineState(machineId),
       // Read live, not snapshot at boot: the harness proves the player's body is built,
       // drawn and standing on the simulated position.
       character: () => renderPort.characterFacts?.() ?? null,
@@ -1931,7 +1950,16 @@ function boot(): void {
           B3_SOCKETS,
           BM2_CARRYABLES,
           BM2_SOCKETS,
-          BM2_PROPS
+          BM2_PROPS,
+          C1_CARRYABLES,
+          C1_SOCKETS,
+          C2_CARRYABLES,
+          C2_SOCKETS,
+          C3_CARRYABLES,
+          C3_SOCKETS,
+          CM3_CARRYABLES,
+          CM3_SOCKETS,
+          CM3_PROPS
         },
         hubInteractables
       }

@@ -33,6 +33,7 @@ import {
   P1_INITIAL_ATTACHMENTS
 } from '../../src/levels/branch-a.ts';
 import { BRANCH_B_COMPONENTS, BRANCH_B_SOCKETS } from '../../src/levels/branch-b.ts';
+import { BRANCH_C_COMPONENTS, BRANCH_C_SOCKETS } from '../../src/levels/branch-c.ts';
 import { p1Content } from './support/p1-mesh.ts';
 
 /**
@@ -473,6 +474,10 @@ describe('hint data — §29.1 naming and the §33.1 vocabulary', () => {
       'b3',
       'bm1',
       'bm2',
+      'c1',
+      'c2',
+      'c3',
+      'cm3',
       'p1',
       'p2',
       'p3'
@@ -482,7 +487,9 @@ describe('hint data — §29.1 naming and the §33.1 vocabulary', () => {
       ...BRANCH_A_COMPONENTS.map((component) => component.id),
       ...BRANCH_A_SOCKETS.map((socket) => socket.id),
       ...BRANCH_B_COMPONENTS.map((component) => component.id),
-      ...BRANCH_B_SOCKETS.map((socket) => socket.id)
+      ...BRANCH_B_SOCKETS.map((socket) => socket.id),
+      ...BRANCH_C_COMPONENTS.map((component) => component.id),
+      ...BRANCH_C_SOCKETS.map((socket) => socket.id)
     ];
     for (const nudge of Object.values(CONCEPTUAL_HINTS)) {
       expect(nudge.length).toBeGreaterThan(0);
@@ -499,6 +506,12 @@ describe('hint data — §29.1 naming and the §33.1 vocabulary', () => {
     expect(conceptualHintFor('B2')).toBe(CONCEPTUAL_HINTS['b2']);
     expect(conceptualHintFor('B3')).toBe(CONCEPTUAL_HINTS['b3']);
     expect(conceptualHintFor('BM-2')).toBe(CONCEPTUAL_HINTS['bm2']);
+    expect(conceptualHintFor('C1')).toBe(CONCEPTUAL_HINTS['c1']);
+    expect(conceptualHintFor('C2')).toBe(CONCEPTUAL_HINTS['c2']);
+    expect(conceptualHintFor('C3')).toBe(CONCEPTUAL_HINTS['c3']);
+    // `nudgeKey` strips punctuation, so the capstone resolves from either spelling.
+    expect(conceptualHintFor('CM-3')).toBe(CONCEPTUAL_HINTS['cm3']);
+    expect(conceptualHintFor('CM3')).toBe(CONCEPTUAL_HINTS['cm3']);
     expect(conceptualHintFor('')).toBeNull();
     expect(conceptualHintFor('not-a-puzzle')).toBeNull();
   });

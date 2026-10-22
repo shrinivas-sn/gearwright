@@ -13,7 +13,7 @@
  * (§26: "progression never inspects the world directly — it consumes events").
  */
 
-import { BRANCH_A_ID, BRANCH_B_ID } from './branches.ts';
+import { BRANCH_A_ID, BRANCH_B_ID, BRANCH_C_ID } from './branches.ts';
 
 export interface ClueDefinition {
   readonly id: string;
@@ -29,6 +29,9 @@ export const CLUE_REGULATOR_PLATE = 'clue/regulator-plate';
 
 /** Branch B's clue: the second plate, woken by the Thermal Line's completion. */
 export const CLUE_THERMAL_PLATE = 'clue/thermal-plate';
+
+/** Branch C's clue: the third plate, woken by the Great Crucible's completion. */
+export const CLUE_CRUCIBLE_PLATE = 'clue/crucible-plate';
 
 export const CLUE_DEFINITIONS: ReadonlyArray<ClueDefinition> = [
   {
@@ -46,6 +49,14 @@ export const CLUE_DEFINITIONS: ReadonlyArray<ClueDefinition> = [
     text:
       'A second plate, scorched along one edge, sits beside the first: ' +
       '“HEAT FOLLOWS PRESSURE. THEN THE CRUCIBLE WAKES.”'
+  },
+  {
+    id: CLUE_CRUCIBLE_PLATE,
+    title: 'Regulator Plate — “Count the Feeds”',
+    branchId: BRANCH_C_ID,
+    text:
+      'A third plate, its brass still bright from the pour, completes the row: ' +
+      '“THE CRUCIBLE TAKES WHAT IT IS GIVEN — COUNT THE FEEDS, AND IT WILL HOLD.”'
   }
 ];
 

@@ -7,10 +7,11 @@
  * "Branch gating is enforced by `AccessGate` reading `BranchState` — never by scene
  * geometry").
  *
- * §6's MVP: Branch A "Pressure Gallery" is playable; Branch B and C are "sealed,
- * visual". That seal is the `sealed` flag below — an explicit statement that the
- * branch has no content yet, so its door stays shut. When the content lands, only
- * this file changes.
+ * §6's MVP: Branch A "Pressure Gallery" was playable with B and C "sealed, visual".
+ * That seal is the `sealed` flag below — an explicit statement that a branch has no
+ * content yet, so its door stays shut. Both seals have since been lifted by content
+ * (B on 13/10, C on 22/10), each by editing only this file's branch entry plus its
+ * own data and level module.
  */
 
 import type { BranchDefinition } from '../game-state/progression-system.ts';
@@ -57,11 +58,25 @@ export const BRANCH_DEFINITIONS: ReadonlyArray<BranchDefinition> = [
     sealed: false
   },
   {
+    // §6 expansion path, third instance: Branch C "Great Crucible" is content — a branch
+    // definition, puzzle/reward data, a room behind the hall's east-north doorway and a hub
+    // stage that already existed (`stage/crucible-restored`). Its door opens because it is no
+    // longer `sealed` and its requirements are met; the AccessGate reads that state, never
+    // the geometry.
+    //
+    // `C1` is the entry machine (a tuyere that must be fed once, not twice — the branch's
+    // ceiling lesson), `C2` its combining machine (a right-handed drive *and* a single feed),
+    // `C3` its open-ended problem (one furnace, two consumers, three routes) and `CM-3` its
+    // staged final machine, so the branch completes only once the Crucible has run — the same
+    // order §6 gives every branch.
+    //
+    // §6's beat 5: the Great Crucible opens once the Thermal Line is Complete. The door and
+    // the puzzles both read this one line.
     id: BRANCH_C_ID,
-    title: 'Branch C',
-    puzzleIds: [],
-    requiresBranches: [],
-    sealed: true
+    title: 'Great Crucible',
+    puzzleIds: ['C1', 'C2', 'C3', 'CM-3'],
+    requiresBranches: [BRANCH_A_ID, BRANCH_B_ID],
+    sealed: false
   }
 ];
 

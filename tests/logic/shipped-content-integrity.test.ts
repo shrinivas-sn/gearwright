@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { BRANCH_A_ID, BRANCH_B_ID, BRANCH_DEFINITIONS } from '../../src/data/branches.ts';
+import { BRANCH_A_ID, BRANCH_B_ID, BRANCH_C_ID, BRANCH_DEFINITIONS } from '../../src/data/branches.ts';
 import { COMPONENT_DEFINITIONS } from '../../src/data/components.ts';
 import { HUB_STAGE_DEFINITIONS } from '../../src/data/hub-stages.ts';
 import { MACHINE_DEFINITIONS } from '../../src/data/machines.ts';
@@ -79,8 +79,13 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
       }
     }
 
-    // And the gate is satisfiable: completing the gating branch opens every puzzle.
+    // And the gate is satisfiable: completing every gating branch opens every puzzle. Branch
+    // C is gated behind B as well as A (§6 beat 5), so "after A" is not enough — and asserting
+    // that here is what catches a third branch wired behind a gate nothing can close.
     progression.update(['P1', 'P2', 'P3', 'BM-1']);
+    expect(progression.initialPuzzleState('C1'), 'C1 opened without Branch B').toBe('Locked');
+
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2']);
     for (const definition of PUZZLE_DEFINITIONS) {
       expect(
         progression.initialPuzzleState(definition.id),
@@ -201,7 +206,7 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
     const progression = shippedProgression();
 
     // §6 beat 5: the Thermal Line is gated behind the Pressure Gallery, so at boot it is
-    // sealed and its puzzles are `Locked`.
+    // gated (a red slab) and its puzzles are `Locked`.
     expect(progression.branchState(BRANCH_B_ID)).toBe('Locked');
     expect(progression.initialPuzzleState('B1')).toBe('Locked');
     for (const puzzleId of ['B1', 'B2', 'B3', 'BM-2']) {
@@ -228,6 +233,44 @@ describe('shipped content — every puzzle is reachable (§6, §7, §25, §26)',
     progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2']);
     expect(progression.branchState(BRANCH_B_ID)).toBe('Complete');
     expect(progression.hubStage.id).toBe('stage/regulator-awake');
+  });
+
+  it('opens Branch C only when Branch B completes, and completes it only once CM-3 has run', () => {
+    const progression = shippedProgression();
+
+    // §6 beat 5, third instance: the Great Crucible is gated behind the Thermal Line, so at
+    // boot it is sealed and every one of its puzzles is `Locked`.
+    expect(progression.branchState(BRANCH_C_ID)).toBe('Locked');
+    for (const puzzleId of ['C1', 'C2', 'C3', 'CM-3']) {
+      expect(progression.initialPuzzleState(puzzleId), `${puzzleId} at boot`).toBe('Locked');
+    }
+
+    // Completing Branch A is *not* enough: C requires A **and** B.
+    progression.update(['P1', 'P2', 'P3', 'BM-1']);
+    expect(progression.branchState(BRANCH_C_ID)).toBe('Locked');
+    expect(progression.initialPuzzleState('C1')).toBe('Locked');
+
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2']);
+    expect(progression.branchState(BRANCH_C_ID)).toBe('Available');
+    expect(progression.initialPuzzleState('C1')).not.toBe('Locked');
+    expect(progression.hubStage.id).toBe('stage/regulator-awake');
+
+    // Its entry machine alone is not completion: the combining machine (C2), the open-ended
+    // problem (C3) and the staged capstone (CM-3) must all run first, as in A and B.
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2', 'C1']);
+    expect(progression.branchState(BRANCH_C_ID)).toBe('InProgress');
+
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2', 'C1', 'C2']);
+    expect(progression.branchState(BRANCH_C_ID)).toBe('InProgress');
+
+    progression.update(['P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2', 'C1', 'C2', 'C3']);
+    expect(progression.branchState(BRANCH_C_ID)).toBe('InProgress');
+
+    progression.update([
+      'P1', 'P2', 'P3', 'BM-1', 'B1', 'B2', 'B3', 'BM-2', 'C1', 'C2', 'C3', 'CM-3'
+    ]);
+    expect(progression.branchState(BRANCH_C_ID)).toBe('Complete');
+    expect(progression.hubStage.id).toBe('stage/crucible-restored');
   });
 
   it('names real content from every branch and every hub stage', () => {
@@ -287,7 +330,7 @@ describe('shipped level — PLAN T4.4', () => {
   });
 
   it('lets the player walk through the Branch B doorway into the Steam Works', () => {
-    // Both shipping branches open; C stays sealed. This is the room behind the north
+    // Every branch open (so the door slabs are gone). This is the room behind the north
     // wall — the doorway is a real gap, and the floor beyond it is walkable.
     const openState = (): BranchState => 'Available';
     const physics = new KinematicPhysics();
@@ -307,6 +350,39 @@ describe('shipped level — PLAN T4.4', () => {
         feet = vec3(result.position.x, result.position.y, result.position.z);
       }
       expect(Math.hypot(waypoint.x - feet.x, waypoint.z - feet.z), `reached z=${waypoint.z}`).toBeLessThan(0.1);
+    }
+  });
+
+  it('lets the player walk through the Branch C doorway into the Great Crucible', () => {
+    // The Crucible is a second room behind the same north wall, east of the Steam Works, with
+    // its own doorway cut at x = 12 (`levels/game-room.ts`). This walks the real route from
+    // the spawn: past the Regulator, east along the hall, through the gap, onto the new floor.
+    const openState = (): BranchState => 'Available';
+    const physics = new KinematicPhysics();
+    physics.setStaticColliders([...SHIPPED_WORLD.colliders, ...hubColliders(openState)]);
+    const capsule = DEFAULT_PLAYER_TUNING.capsule;
+    let feet = vec3(SHIPPED_WORLD.spawn.x, SHIPPED_WORLD.spawn.y, SHIPPED_WORLD.spawn.z);
+    const out = vec3();
+    for (const waypoint of [
+      { x: -5, z: 18.5 },
+      { x: 5, z: 18.5 },
+      { x: 12, z: 18.5 },
+      { x: 12, z: 22 },
+      { x: 12, z: 26 }
+    ]) {
+      for (let i = 0; i < 800; i += 1) {
+        const dx = waypoint.x - feet.x;
+        const dz = waypoint.z - feet.z;
+        const distance = Math.hypot(dx, dz);
+        if (distance < 0.05) break;
+        const stepLength = Math.min(0.1, distance);
+        const result = physics.moveAndSlide(feet, vec3((dx / distance) * stepLength, -0.01, (dz / distance) * stepLength), capsule, out);
+        feet = vec3(result.position.x, result.position.y, result.position.z);
+      }
+      expect(
+        Math.hypot(waypoint.x - feet.x, waypoint.z - feet.z),
+        `reached (${waypoint.x}, ${waypoint.z})`
+      ).toBeLessThan(0.1);
     }
   });
 
