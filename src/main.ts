@@ -55,7 +55,7 @@ import { CLUE_DEFINITIONS, clueDefinitionOf } from './data/clues.ts';
 import { HUB_STAGE_DEFINITIONS } from './data/hub-stages.ts';
 import type { Pose } from './game-state/component-model.ts';
 import type { LabWorldMesh, ScannerOverlayTargetState } from './ports/render-port.ts';
-import { HUB_DOORS, cluePlateActive, hubColliders, hubInteractables, hubMeshes } from './levels/hub.ts';
+import { FORGE_INTERACTABLE_ID, HUB_DOORS, cluePlateActive, forgeInteractable, forgeMeshes, hubColliders, hubInteractables, hubMeshes } from './levels/hub.ts';
 import { FeedbackComposer, type FeedbackView } from './presentation/feedback-composer.ts';
 import { COMPONENT_DEFINITIONS, acceptedFootprint } from './data/components.ts';
 import { isStagedAction } from './data/actions.ts';
@@ -73,6 +73,8 @@ import { buildSettingsPanel } from './presentation/settings-panel.ts';
 import { loadSettings, saveSettings } from './adapters/settings-store.ts';
 import { HINT_LEVEL_DEFINITIONS, conceptualHintFor, reasonPlainText } from './data/hints.ts';
 import { MATERIAL_KINDS } from './game-state/inventory-system.ts';
+import { UpgradeSystem } from './game-state/upgrade-system.ts';
+import { UPGRADE_DEFINITIONS } from './data/upgrades.ts';
 import { isCompatible } from './game-state/snap-rules.ts';
 import type { ValidationReason } from './game-state/validator.ts';
 import type { SocketDefinition } from './game-state/component-model.ts';
@@ -319,6 +321,16 @@ function buildHudRenderer(deps: {
    * (`?guns=0`) — the composition reads the weapon system, the HUD only gets values.
    */
   weaponView: () => HudWeaponView | null;
+  /**
+   * ARCH §28 forged upgrades as [title, level, maxLevel] rows — one per upgrade the player
+   * has actually forged (level 0 rows are omitted, so an untouched save shows no block).
+   */
+  forgedUpgrades: () => ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly level: number;
+    readonly maxLevel: number;
+  }>;
 }): { render: () => void; puzzleOfComponent: (id: string) => PuzzleSystem | null } {
   const {
     hud,
@@ -331,6 +343,7 @@ function buildHudRenderer(deps: {
     input,
     puzzleSystems,
     inventory,
+    forgedUpgrades,
     isPuzzleComplete,
     discoveredClueIds,
     hasScannerBlueprint,
@@ -491,7 +504,8 @@ function buildHudRenderer(deps: {
       partsHeld: inventory.partIds.length,
       partsRequired: requiredParts,
       materials: MATERIAL_KINDS.map((kind) => ({ kind, count: inventory.materialCounts[kind] ?? 0 })),
-      blueprints: [...inventory.blueprintIds]
+      blueprints: [...inventory.blueprintIds],
+      upgrades: forgedUpgrades()
     };
 
     // --- hint affordance (§33.1 row 5, §29) ---
@@ -688,6 +702,32 @@ function boot(): void {
   };
   const interaction = new InteractionSystem(physics, [...SHIPPED_INTERACTABLES]);
 
+  // ARCH §28: the upgrade pipeline. Its modifiers are read through `valueOf` by the two
+  // consumers below and by nothing else; the levels are canonical save state.
+  const upgrades = new UpgradeSystem(UPGRADE_DEFINITIONS);
+
+  /**
+   * The forge's verb, written from the live pipeline: which upgrade is next, how far it has
+   * come, and what it costs — "the next thing", never a menu. A maxed upgrade leaves the list
+   * and the remaining one takes its place; with everything forged the verb says so.
+   */
+  const forgeVerb = (): string => {
+    const options = upgrades.forgeOptions();
+    const next = options[0];
+    if (next === undefined) return 'Forge — all upgrades forged';
+    const cost = next.costs.map((entry) => `${entry.amount} ${entry.kind}`).join(' + ');
+    return `Forge ${next.title} (${next.level}/${next.maxLevel}) — ${cost}`;
+  };
+
+  /**
+   * §28's one indirection point, applied where the reach is consumed: the interaction system
+   * gets the effective value, not the base. State-only, so raising the reach cannot drop the
+   * player's focus or reset a socket's stability timer (see `InteractionSystem.setRange`).
+   */
+  const applyUpgrades = (): void => {
+    interaction.setRange(upgrades.valueOf('interactRange', DEFAULT_INTERACTION_TUNING.range));
+  };
+
   // L1 truth (M4/M5): the level's components, sockets and machines, plus the puzzle
   // that reads them (§25). The graph starts at the level's canonical edge list, so
   // the shipped build opens with both shafts mounted and the mesh socket empty.
@@ -776,6 +816,11 @@ function boot(): void {
   };
   syncBranchAccess();
 
+  // §28: the interaction reach the player actually uses. A restored save reaches the same
+  // call through `saveTargets`' upgrade restore; this pass is the fresh-boot case, where
+  // there is nothing forged and the base value is the answer.
+  applyUpgrades();
+
   // --- M7 canonical owners (ARCH §26/§27/§31) ----------------------------------
   // The ledger, inventory and checkpoint are NEW state owners, not extensions:
   // rewards only ever flow through RewardLedger → RewardSystem → InventorySystem
@@ -790,6 +835,16 @@ function boot(): void {
     checkpoint,
     graph,
     progression,
+    // §28.3 rule 3: forged levels save and restore with everything else.
+    upgrades: {
+      snapshot: () => upgrades.snapshot(),
+      restore: (levels) => {
+        upgrades.restore(levels);
+        // A restored save must reach the same reach the session would have had: the effects
+        // are derived, so the level restore plus this one call is the whole write-back.
+        applyUpgrades();
+      }
+    },
     // ADR-018: the staged log is canonical, so it saves with everything else and
     // restores with everything else — a save taken mid-stage keeps its priming.
     actions: {
@@ -903,6 +958,17 @@ function boot(): void {
   // read in it. Only the edge is announced — a reload is quiet about state it already
   // had (the boot `[clue]` line reports what is already known).
   const announcedPlates = new Set<string>();
+  /**
+   * The hub's targets at this instant: the clue plates the branches have woken, plus the
+   * §28 forge. Its verb is rebuilt from the live pipeline on every install, so the prompt
+   * can never disagree with what a press would actually do. `InteractionSystem` keys the set
+   * by id, so re-installing is how the prompt updates rather than a second code path.
+   */
+  const hubTargets = (): ReadonlyArray<Interactable> => [
+    ...hubInteractables(branchStateOf),
+    forgeInteractable(forgeVerb())
+  ];
+
   const syncCluePlates = (announce: boolean): void => {
     for (const clue of CLUE_DEFINITIONS) {
       const awake = cluePlateActive(branchStateOf, clue.id);
@@ -914,10 +980,7 @@ function boot(): void {
       if (announce) gameLog(`[clue] plate awake: ${clue.id} — ${clue.title} (inspect the Great Regulator)`);
     }
   };
-  interaction.setInteractables([
-    ...SHIPPED_INTERACTABLES,
-    ...hubInteractables(branchStateOf)
-  ]);
+  interaction.setInteractables([...SHIPPED_INTERACTABLES, ...hubTargets()]);
   // --- ADR-018: the staged props (BM-1's priming lines + engage lever) ------------
   // Their `enabled` state is a function of the machine's *derived* state, installed
   // after the load for the same reason the hub plates are: a restored save that ends
@@ -968,13 +1031,57 @@ function boot(): void {
     if (!installed) return;
     interaction.setInteractables([
       ...SHIPPED_INTERACTABLES,
-      ...hubInteractables(branchStateOf),
+      ...hubTargets(),
       ...STAGED_RIGS.filter((rig) => installedRigs.has(rig.machineId)).flatMap((rig) =>
         rig.interactables(true)
       )
     ]);
   };
   syncStagedProps();
+
+  /**
+   * The §28 forge press: one upgrade level, paid from the materials the branches granted.
+   *
+   * The order is the load-bearing part. `purchase` spends only when every kind is covered,
+   * so a refusal must leave the world exactly as it was — no save, no prompt change, and a
+   * toast that names the shortfall rather than a silent no-op. On success the level, the
+   * derived effect, the prompt and the autosave all move together, which is what keeps
+   * "materials are gone" and "the upgrade works" from ever disagreeing.
+   */
+  const forgeOnce = (savedAt: number): void => {
+    const before = upgrades.forgeOptions()[0] ?? null;
+    if (before === null) return;
+    const result = upgrades.purchase(before.id, (costs) => {
+      // Atomic over kinds: check them all, then spend them all (a two-kind cost must never
+      // half-charge). The inventory owns the counts, so the check goes through it too.
+      for (const cost of costs) {
+        if (inventory.materialCount(cost.kind) < cost.amount) return false;
+      }
+      for (const cost of costs) inventory.spendMaterial(cost.kind, cost.amount);
+      return true;
+    });
+    if (result !== 'Ok') {
+      const short = (before.costs ?? [])
+        .filter((cost) => inventory.materialCount(cost.kind) < cost.amount)
+        .map((cost) => `${cost.kind} ×${cost.amount}`);
+      hud.toast(
+        short.length === 0
+          ? `${before.title} cannot be forged (${result}).`
+          : `Needs ${short.join(', ')} for ${before.title}.`,
+        'warn'
+      );
+      return;
+    }
+    const level = upgrades.levelOf(before.id);
+    gameLog(`[upgrade] ${before.id} → level ${level} (${upgrades.forgeOptions().length} still on the bench)`);
+    hud.toast(`${before.title} forged — ${level}/${before.maxLevel}`, 'info');
+    applyUpgrades();
+    // Reinstall so the prompt names the next upgrade (or says the bench is empty). The
+    // interaction set is keyed by id, so this cannot duplicate the target or move it.
+    interaction.setInteractables([...SHIPPED_INTERACTABLES, ...hubTargets()]);
+    const write = save.save('autosave', savedAt, saveWorldView, knownComponentIds);
+    if (!write.ok) console.warn('[save] autosave failed:', write.failure);
+  };
 
   /** Same edge rule as the clue plates: the wake is reported once, then it stays quiet. */
   const reportedStagedWake = new Set<string>();
@@ -1271,6 +1378,15 @@ function boot(): void {
     inventory,
     isPuzzleComplete: (puzzleId) => puzzleSystems.find((system) => system.puzzleId === puzzleId)?.state === 'Complete',
     discoveredClueIds: () => progression.discoveredClueIds,
+    // Only upgrades the player has forged appear: the panel grows with the save, it never
+    // advertises the system before the first forge (and the forge's own verb covers the rest).
+    forgedUpgrades: () =>
+      upgrades.all.flatMap((definition) => {
+        const level = upgrades.levelOf(definition.id);
+        return level > 0
+          ? [{ id: definition.id, title: definition.title, level, maxLevel: definition.maxLevel }]
+          : [];
+      }),
     hasScannerBlueprint: () => inventory.hasBlueprint(SCANNER_BLUEPRINT),
     scannerState: () => scanner.state,
     scannerText: () => scanner.text,
@@ -1292,6 +1408,9 @@ function boot(): void {
   const worldMeshes = (): ReadonlyArray<LabWorldMesh> => [
     ...SHIPPED_WORLD.meshes,
     ...hubMeshes(branchStateOf, progression.hubStageIndex, (clueId) => progression.hasClue(clueId)),
+    // §28: the forge is a fitting on the Regulator, not a separate prop — it draws with the
+    // hub's own geometry so a stage change cannot leave the machine looking forge-less.
+    ...forgeMeshes(),
     ...STAGED_RIGS.flatMap((rig) => rig.meshes((actionId) => actions.has(actionId)))
   ];
   /**
@@ -1368,7 +1487,10 @@ function boot(): void {
     // Weapons (16/10/2026): `undefined` when `?guns=0`, which keeps the pre-pass step
     // result (`weapon: null`) and the pre-pass camera behaviour byte for byte.
     weapons: weapons ?? undefined,
-    weaponMount: resolveWeaponMount
+    weaponMount: resolveWeaponMount,
+    // §28: a carried part moves at the upgraded rate. The pipeline is L1, so the world
+    // asks for the multiplier rather than importing it (see `WorldSystems.carrySpeedScale`).
+    carrySpeedScale: () => upgrades.valueOf('carrySpeedScale', 1)
   });
 
   /**
@@ -1460,6 +1582,13 @@ function boot(): void {
         // Live focus, never the step's focus *edge* (Bug 20): reading the edge made
         // every press dead unless it landed on the exact acquisition step.
         const pressTarget = interaction.focus;
+        // ARCH §28: the forge is the materials' only consumer. Its press is dispatched here,
+        // beside the staged props, for the same reason — it is a `prop` in Exploration, so
+        // nothing else can act on it. The refusal is separate from the price: a shortfall
+        // never charges anything (`UpgradeSystem.purchase` only spends on success).
+        if (pressed && pressTarget?.id === FORGE_INTERACTABLE_ID) {
+          forgeOnce(Date.now());
+        }
         if (pressed && pressTarget?.kind === 'prop' && isStagedAction(pressTarget.id)) {
           if (actions.append(pressTarget.id)) {
             stagedNote(pressTarget.id);
@@ -1958,6 +2087,29 @@ function boot(): void {
         system.unlock();
         system.begin();
         return { state: system.state };
+      },
+      // Dev-only: seed materials so a browser check can drive the §28 forge without
+      // replaying all eleven milestones. It writes through the same InventorySystem API the
+      // reward system uses, so it cannot produce a state the game could not reach — it only
+      // skips the walk. Nothing else in the game can reach this object.
+      grantMaterials: (counts: Readonly<Record<string, number>>) => {
+        for (const [kind, amount] of Object.entries(counts)) {
+          inventory.addMaterial(kind as (typeof MATERIAL_KINDS)[number], amount);
+        }
+        return inventory.materialCounts;
+      },
+      readUpgrades: () => {
+        const options = upgrades.forgeOptions();
+        const next = options[0] ?? null;
+        return {
+          interactionRange: interaction.range,
+          carrySpeedScale: upgrades.valueOf('carrySpeedScale', 1),
+          levels: upgrades.snapshot(),
+          next:
+            next === null
+              ? null
+              : { id: next.id, title: next.title, level: next.level, maxLevel: next.maxLevel }
+        };
       },
       // Read live, not snapshot at boot: the harness proves the player's body is built,
       // drawn and standing on the simulated position.

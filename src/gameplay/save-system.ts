@@ -130,6 +130,17 @@ export interface SaveSystemDeps {
         readonly restore: (levels: Readonly<Record<string, number>>) => void;
       }
     | undefined;
+  /**
+   * The ARCH §28.3 `UpgradeSystem` (§12.2 upgrade-levels row): forged levels are canonical,
+   * captured on every save and restored on every load. Optional — a headless load can
+   * compose without a pipeline, exactly as with the ladder.
+   */
+  readonly upgrades?:
+    | {
+        readonly snapshot: () => Readonly<Record<string, number>>;
+        readonly restore: (levels: Readonly<Record<string, number>>) => void;
+      }
+    | undefined;
 }
 
 
@@ -239,6 +250,7 @@ export class SaveSystem {
       // §29.2 HintState (M10): hint levels are player progress too — a reload must
       // not hand back a ladder the session already climbed or decayed.
       hintLevels: this.deps.hints?.snapshot(),
+      upgradeLevels: this.deps.upgrades?.snapshot(),
       // §12.2: progression's one canonical field. Branch state and the hub stage are
       // not captured — they re-derive from the puzzle states on load.
       storyClues: this.deps.progression.discoveredClueIds
@@ -317,6 +329,9 @@ export class SaveSystem {
     // M10: the ladder is player progress too — New Game returns every puzzle to L0
     // with its counters cleared (§29.2: a separate HintState, reset with the rest).
     this.deps.hints?.restore({});
+    // §28.3: forged upgrades are player progress — a New Game returns every modifier to
+    // its base and the materials are gone with the rest of the inventory.
+    this.deps.upgrades?.restore({});
     // A New Game returns each puzzle to its §25 *start* state — which is `Locked` for
     // a gated branch, not `InProgress`. Resetting every puzzle to `InProgress` would
     // hand the player a locked branch's content.
@@ -371,6 +386,11 @@ function saveTargets(deps: SaveSystemDeps): Parameters<SaveCodec['apply']>[1] {
     // the session's levels with the file's (HintSystem.restore is a replacement).
     ...(deps.hints !== undefined
       ? { hints: { restore: (levels: Readonly<Record<string, number>>) => deps.hints?.restore(levels) } }
+      : {}),
+    // §28.3 rule 3: the pipeline's levels rebuild last, after the ladder; every consumer
+    // that asks `valueOf` later in the same frame sees the restored values.
+    ...(deps.upgrades !== undefined
+      ? { upgrades: { restore: (levels: Readonly<Record<string, number>>) => deps.upgrades?.restore(levels) } }
       : {})
   };
 }

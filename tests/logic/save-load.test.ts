@@ -23,6 +23,8 @@ import {
 } from '../../src/gameplay/save-system.ts';
 import type { SaveSlotId, StorageEntry, StoragePort, StorageQuota, StorageResult } from '../../src/ports/storage-port.ts';
 import { MILESTONE_P1_FIRST_MESH } from '../../src/data/rewards.ts';
+import { UPGRADE_DEFINITIONS, UPGRADE_REACH } from '../../src/data/upgrades.ts';
+import { UpgradeSystem } from '../../src/game-state/upgrade-system.ts';
 import { BRANCH_DEFINITIONS } from '../../src/data/branches.ts';
 import { HUB_STAGE_DEFINITIONS } from '../../src/data/hub-stages.ts';
 import { P1_PUZZLE } from '../../src/data/puzzles/p1.ts';
@@ -704,6 +706,130 @@ describe('save/load — §29.2 HintState persistence (M10)', () => {
     expect(ladder.level('P1')).toBe(1);
     withHints.newGame();
     expect(ladder.level('P1')).toBe(0);
+  });
+});
+
+describe('save/load — §28 upgrade levels (M12)', () => {
+  /** The `upgrades` seam adapter, wired exactly as main.ts adapts the pipeline. */
+  function pipeline() {
+    const system = new UpgradeSystem(UPGRADE_DEFINITIONS);
+    return {
+      system,
+      seam: {
+        snapshot: () => system.snapshot(),
+        restore: (levels: Readonly<Record<string, number>>) => system.restore(levels)
+      }
+    };
+  }
+
+  it('upgrade levels round-trip through the codec (capture → encode → decode → apply)', () => {
+    const codecInstance = codec();
+    const input = captureInput({ upgradeLevels: { [UPGRADE_REACH]: 2 } });
+    const file = codecInstance.capture(input);
+    expect(file.upgrades).toEqual({ levels: { [UPGRADE_REACH]: 2 } });
+
+    const decoded = codecInstance.decode(codecInstance.encode(file));
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(decoded.save.upgrades?.levels).toEqual({ [UPGRADE_REACH]: 2 });
+
+    const { system: restored, seam } = pipeline();
+    codecInstance.apply(decoded.save, {
+      ledger: new RewardLedger(),
+      inventory: new InventorySystem(),
+      checkpoint: new CheckpointSystem(),
+      graph: new MachineGraph(),
+      puzzles: [],
+      upgrades: { restore: seam.restore }
+    });
+    expect(restored.levelOf(UPGRADE_REACH)).toBe(2);
+    // The effective value is derived on demand — nothing else has to be written back.
+    expect(restored.valueOf('interactRange', 3)).toBeCloseTo(4, 6);
+  });
+
+  it('a file from before materials had a consumer restores nothing and stays valid', () => {
+    const codecInstance = codec();
+    const file = codecInstance.capture(captureInput());
+    expect(file.upgrades).toBeUndefined();
+
+    const decoded = codecInstance.decode(codecInstance.encode(file));
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+
+    const { system: restored, seam } = pipeline();
+    restored.purchase(UPGRADE_REACH, () => true);
+    expect(restored.levelOf(UPGRADE_REACH)).toBe(1);
+
+    codecInstance.apply(decoded.save, {
+      ledger: new RewardLedger(),
+      inventory: new InventorySystem(),
+      checkpoint: new CheckpointSystem(),
+      graph: new MachineGraph(),
+      puzzles: [],
+      upgrades: { restore: seam.restore }
+    });
+    expect(restored.levelOf(UPGRADE_REACH)).toBe(0);
+  });
+
+  it('rejects a malformed upgrade block instead of loading it', () => {
+    const codecInstance = codec();
+    const encoded = JSON.stringify({
+      ...codecInstance.capture(captureInput()),
+      upgrades: { levels: { [UPGRADE_REACH]: 0 } }
+    });
+    const decoded = codecInstance.decode(encoded);
+    expect(decoded.ok).toBe(false);
+    if (decoded.ok) return;
+    expect(decoded.reason).toBe('schema');
+  });
+
+  it('SaveSystem captures and restores the levels, and New Game clears them', () => {
+    const storage = new FakeStorage();
+    const game = system(storage);
+    const { system: live, seam } = pipeline();
+    const wired = new SaveSystem(storage, {
+      ledger: game.ledger,
+      inventory: game.inventory,
+      checkpoint: game.checkpoint,
+      graph: game.graph,
+      progression: game.progression,
+      puzzles: [game.target],
+      puzzleDefinitions: [{ id: 'P1', milestoneId: MILESTONE_P1_FIRST_MESH }],
+      knownComponentIds: KNOWN_IDS,
+      restorePoses: () => {},
+      actions: {
+        snapshot: () => game.actions.actions,
+        restore: (ids) => game.actions.restore({ actions: ids })
+      },
+      upgrades: seam
+    });
+
+    expect(live.purchase(UPGRADE_REACH, () => true)).toBe('Ok');
+    const write = wired.save('autosave', 9000, fakeWorld(), KNOWN_IDS);
+    expect(write.ok).toBe(true);
+
+    // A fresh session loads the file: the level comes back with the reach it implies.
+    const { system: loaded, seam: loadSeam } = pipeline();
+    const second = new SaveSystem(storage, {
+      ledger: new RewardLedger(),
+      inventory: new InventorySystem(),
+      checkpoint: new CheckpointSystem(),
+      graph: new MachineGraph(),
+      progression: new ProgressionSystem(BRANCH_DEFINITIONS, HUB_STAGE_DEFINITIONS),
+      puzzles: [game.target],
+      puzzleDefinitions: [{ id: 'P1', milestoneId: MILESTONE_P1_FIRST_MESH }],
+      knownComponentIds: KNOWN_IDS,
+      restorePoses: () => {},
+      actions: { snapshot: () => [], restore: () => {} },
+      upgrades: loadSeam
+    });
+    const load = second.load();
+    expect(load.ok).toBe(true);
+    expect(loaded.levelOf(UPGRADE_REACH)).toBe(1);
+    expect(loaded.valueOf('interactRange', 3)).toBeCloseTo(3.5, 6);
+
+    second.newGame();
+    expect(loaded.levelOf(UPGRADE_REACH)).toBe(0);
   });
 });
 

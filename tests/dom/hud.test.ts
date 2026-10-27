@@ -33,7 +33,8 @@ function makeSnapshot(overrides: Partial<HudSnapshot> = {}): HudSnapshot {
       partsHeld: 2,
       partsRequired: 4,
       materials: [{ kind: 'copper', count: 3 }],
-      blueprints: []
+      blueprints: [],
+      upgrades: []
     },
     log: {
       entries: [
@@ -274,7 +275,8 @@ describe('Hud — pooled resource rows', () => {
             { kind: 'copper', count: 3 },
             { kind: 'steel', count: 1 }
           ],
-          blueprints: []
+          blueprints: [],
+          upgrades: []
         }
       })
     );
@@ -291,7 +293,8 @@ describe('Hud — pooled resource rows', () => {
           partsHeld: 1,
           partsRequired: 1,
           materials: [{ kind: 'copper', count: 9 }],
-          blueprints: []
+          blueprints: [],
+          upgrades: []
         }
       })
     );
@@ -310,7 +313,8 @@ describe('Hud — pooled resource rows', () => {
           partsHeld: 0,
           partsRequired: 0,
           materials: [],
-          blueprints: ['blueprint/scanner']
+          blueprints: ['blueprint/scanner'],
+          upgrades: []
         }
       })
     );

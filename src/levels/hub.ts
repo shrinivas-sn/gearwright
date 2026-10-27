@@ -266,6 +266,55 @@ export function cluePlateActive(
  * `enabled` is the plateau's *activation*, read from branch state: a dormant plate is
  * not focusable at all, which is why a sealed/partial branch shows nothing to read.
  */
+/**
+ * ARCH §28's forge: the Great Regulator's own fitting, between the two low clue plates and
+ * directly beneath the column. It is the hub machine every branch feeds, which is why the
+ * materials come back here instead of into a menu.
+ *
+ * Geometry follows the plates' rule exactly — flush against the plinth's front face (z = 14,
+ * a **static collider**) with the interaction volume stopping just short of the plane, so the
+ * target is never discarded by `InteractionSystem` for overlapping a collider (§18).
+ */
+const FORGE_BOX = { min: [-0.95, 0.45, 13.9] as const, max: [0.95, 0.95, 14.0] as const };
+const FORGE_TOUCH_BOX = {
+  min: [-1.05, 0.3, 13.66] as const,
+  max: [1.05, 1.1, 13.99] as const
+};
+
+/** The forge target's id, named so the composition and the harness agree on one string. */
+export const FORGE_INTERACTABLE_ID = 'forge/regulator';
+
+/**
+ * The forge's interaction target and its render geometry.
+ *
+ * `verb` is written by the composition from the live pipeline (which upgrade is next and
+ * whether it is affordable), so this level file stays pure data — it never reads an
+ * upgrade level, exactly as it never reads a branch state directly.
+ */
+export function forgeInteractable(verb: string): Interactable {
+  return {
+    id: FORGE_INTERACTABLE_ID,
+    kind: 'prop',
+    min: { x: FORGE_TOUCH_BOX.min[0], y: FORGE_TOUCH_BOX.min[1], z: FORGE_TOUCH_BOX.min[2] },
+    max: { x: FORGE_TOUCH_BOX.max[0], y: FORGE_TOUCH_BOX.max[1], z: FORGE_TOUCH_BOX.max[2] },
+    enabled: true,
+    verb,
+    // Exploration only, like the plates: forging mid-carry would be a context leak (§18).
+    contexts: ['Exploration']
+  };
+}
+
+/** The forge installation's own boxes (presentation; nothing here is a collider). */
+export function forgeMeshes(): ReadonlyArray<LabWorldMesh> {
+  return [
+    boxMesh({
+      min: [FORGE_BOX.min[0], FORGE_BOX.min[1], FORGE_BOX.min[2]],
+      max: [FORGE_BOX.max[0], FORGE_BOX.max[1], FORGE_BOX.max[2]],
+      color: 0x6f5a3a
+    })
+  ];
+}
+
 export function hubInteractables(
   branchState: (branchId: string) => BranchState
 ): ReadonlyArray<Interactable> {

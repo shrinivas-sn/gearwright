@@ -726,6 +726,17 @@ body {
   color: var(--gw-complete);
 }
 
+/* Forged upgrades (§28): the level reads as progress, not as a number to parse. */
+.gw-hud-upgrade {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.gw-hud-upgrade-level {
+  color: var(--gw-complete);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Pause overlay (PLAN T1.2): a paused game must never look frozen. */
 .gw-pause {
   position: fixed;

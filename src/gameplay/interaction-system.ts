@@ -137,6 +137,25 @@ export class InteractionSystem {
     return this.currentFocus;
   }
 
+  /**
+   * ARCH §18's `interactRange`, in metres (the §28 upgrade pipeline raises it).
+   *
+   * The setter exists so a modifier does not require rebuilding the system — but it is
+   * deliberately **state-only**: it never re-focuses, never clears a pending candidate
+   * and never resets the stability timer, so raising the reach mid-hold cannot drop the
+   * player's target or make a socket flicker. A value that is not finite and positive is
+   * ignored rather than clamped: a bad modifier is a caller bug, and silently turning a
+   * 4 m reach into 0 would look like the upgrade broke the game.
+   */
+  setRange(metres: number): void {
+    if (!Number.isFinite(metres) || metres <= 0) return;
+    (this.tuning as { range: number }).range = metres;
+  }
+
+  get range(): number {
+    return this.tuning.range;
+  }
+
   /** Replace the interactable set (level load) and mirror the volumes to physics. */
   setInteractables(interactables: ReadonlyArray<Interactable>): void {
     this.byId = new Map(interactables.map((item) => [item.id, item]));

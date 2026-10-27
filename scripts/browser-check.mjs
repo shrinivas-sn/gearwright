@@ -5,7 +5,7 @@
  * composition actually does: boot logs, HUD read-outs, focus acquisition from real
  * vantages, a played BM-1 sequence, console errors, and §36 budget numbers.
  *
- * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|arms|dock|crucible|decoy|bm1|branch|b2audit] [--production]
+ * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|arms|dock|crucible|decoy|forge|bm1|branch|b2audit] [--production]
  */
 
 import { spawn } from 'node:child_process';
@@ -293,6 +293,18 @@ window.__probe = {
     if (dev === undefined || dev === null || typeof dev.puzzleOpen !== 'function') return null;
     return dev.puzzleOpen(puzzleId);
   },
+  /** Dev-only: seed materials so the §28 forge can be driven without eleven milestones. */
+  grantMaterials: (counts) => {
+    const dev = window.__gearwrightDev;
+    if (dev === undefined || dev === null || typeof dev.grantMaterials !== 'function') return null;
+    return dev.grantMaterials(counts);
+  },
+  /** The §28 pipeline's live read: levels, the next offer, and the two derived effects. */
+  upgrades: () => {
+    const dev = window.__gearwrightDev;
+    if (dev === undefined || dev === null || typeof dev.readUpgrades !== 'function') return null;
+    return dev.readUpgrades();
+  },
   hud: () => {
     const text = (selector) => {
       const element = document.querySelector(selector);
@@ -307,6 +319,10 @@ window.__probe = {
       bindingsHidden: document.querySelector('.gw-hud-bindings')?.classList.contains('gw-hud-hidden') ?? null,
       objectiveTitle: text('.gw-hud-objective-title'),
       objectiveState: text('.gw-hud-objective-state'),
+      upgradeRows: Array.from(document.querySelectorAll('.gw-hud-upgrade')).map((row) => ({
+        text: row.textContent,
+        hidden: row.classList.contains('gw-hud-hidden')
+      })),
       objectiveFailure: text('.gw-hud-objective-failure-text'),
       objectiveMeter: text('.gw-hud-objective-meter'),
       objectiveMeterOver:
@@ -2531,6 +2547,166 @@ async function scenarioBm1(cdp) {
 }
 
 /**
+ * THE FORGE, played (27/10/2026).
+ *
+ * ARCH §28's promise is that materials are "only used for upgrades"; before this pass nothing
+ * read them. This check drives the whole loop through the real composition: seed what the
+ * branches would have paid (a dev-only grant, stated as such — it writes through the same
+ * inventory API the reward system uses), walk to the Regulator's fitting, read the prompt it
+ * writes from the live pipeline, press it, and then measure every consequence that matters:
+ *
+ *   - the materials left the inventory, by exactly the authored cost;
+ *   - the level and the *derived* reach both moved (`InteractionSystem.range`);
+ *   - the HUD grew a row for the forged upgrade;
+ *   - the autosave was written, and a reload restores the level and the effect;
+ *   - pressing again with a short purse refuses without charging or changing anything.
+ *
+ * What no check can decide is whether a 4 m reach *feels* right; that is the owner's call and
+ * is why the numbers live in one data file.
+ */
+async function scenarioForge(cdp) {
+  const forgeBox = {
+    min: { x: -1.05, y: 0.3, z: 13.66 },
+    max: { x: 1.05, y: 1.1, z: 13.99 }
+  };
+  const upgrades = () => evaluate(cdp, 'window.__probe.upgrades()');
+  const materials = () =>
+    evaluate(cdp, '(window.__probe.hud()?.materials ?? []).map((row) => row.text)');
+
+  report.data.forge = {};
+
+  // 1. Stand in front of the Regulator and seed the forge's own price (2 scrap + 2 brass
+  //    for the first level), plus nothing else: the refusal below needs a short purse.
+  await evaluate(cdp, 'window.__probe.teleport(0, 0.06, 12.0)');
+  await sleep(600);
+  const granted = await evaluate(cdp, 'window.__probe.grantMaterials({ scrap: 2, brass: 2 })');
+  report.data.forge.granted = granted;
+  const before = await upgrades();
+  report.data.forge.before = before;
+  if (before === null) {
+    report.problems.push('forge: the upgrade pipeline is not composed (no probe read)');
+    return;
+  }
+  if (before.next === null) {
+    report.problems.push('forge: a fresh save offers nothing to forge');
+    return;
+  }
+  // The first offer is the reach upgrade; the run asserts the *pipeline's* numbers, so it
+  // reads the cost from the same table the game used rather than hard-coding it here.
+  const expectedCost = await evaluate(
+    cdp,
+    '(async () => { const mod = await import(\'/src/data/upgrades.ts\'); const d = mod.UPGRADE_DEFINITIONS[0]; return d === undefined ? null : { id: d.id, title: d.title, cost: d.levels[0].cost }; })()'
+  ).catch(() => null);
+  report.data.forge.expected = expectedCost;
+  if (expectedCost === null) {
+    report.problems.push('forge: could not read the published upgrade table (dev sources unavailable?)');
+    return;
+  }
+  if (expectedCost.id !== before.next.id) {
+    report.problems.push(
+      `forge: the bench offers ${before.next.id}, but the table's first upgrade is ${expectedCost.id}`
+    );
+  }
+
+  // 2. Focus the fitting. Its verb is written by the composition from the live pipeline, so
+  //    reading it here proves the prompt agrees with what a press will do.
+  const aimed = await focusTarget(cdp, 'forge/regulator', forgeBox, 3.4);
+  report.data.forge.focus = aimed === null ? 'NOT FOCUSABLE' : aimed.focus;
+  if (aimed === null) {
+    report.problems.push('forge: the Regulator\'s fitting is not focusable from in front of it');
+    return;
+  }
+  if (!/Forge/.test(aimed.focus.verb)) {
+    report.problems.push(`forge: the prompt does not name the forge (verb "${aimed.focus.verb}")`);
+  }
+  for (const cost of expectedCost.cost) {
+    if (!new RegExp(`\\b${cost.amount} ${cost.kind}\\b`).test(aimed.focus.verb)) {
+      report.problems.push(
+        `forge: the prompt does not name its cost ${cost.amount} ${cost.kind} (verb "${aimed.focus.verb}")`
+      );
+    }
+  }
+
+  // 3. Forge it. The material panel is read before and after so the *inventory* is the
+  //    authority on the spend, not the toast.
+  const materialsBefore = await materials();
+  const logsBefore = report.logs.length;
+  await tapKey(cdp, 'KeyE');
+  await sleep(900);
+  drainConsole(cdp);
+  const after = await upgrades();
+  const hud = await evaluate(cdp, 'window.__probe.hud()');
+  const fresh = report.logs.slice(logsBefore).join('\n');
+  report.data.forge.after = {
+    materialsBefore,
+    materialsAfter: await materials(),
+    upgrades: after,
+    upgradeRows: hud.upgradeRows,
+    logged: /\[upgrade\] /.test(fresh),
+    autosaved: /\[save\] autosave written/.test(fresh)
+  };
+  if (after === null || after.levels[expectedCost.id] !== 1) {
+    report.problems.push(
+      `forge: the press did not forge level 1 (levels ${JSON.stringify(after?.levels ?? null)})`
+    );
+  } else if (!(after.interactionRange > before.interactionRange)) {
+    report.problems.push(
+      `forge: the reach did not move with the upgrade (${before.interactionRange} → ${after.interactionRange})`
+    );
+  } else if (!/(^|\s)0(\s|$)/.test((report.data.forge.after.materialsAfter ?? []).join(' '))) {
+    report.problems.push(
+      `forge: the materials were not spent (panel ${JSON.stringify(report.data.forge.after.materialsAfter)})`
+    );
+  } else if (!report.data.forge.after.autosaved) {
+    report.problems.push('forge: forging an upgrade did not autosave');
+  } else if (
+    !(hud.upgradeRows ?? []).some(
+      (row) => row.hidden !== true && /1\/2/.test(row.text ?? '') && row.text.includes(expectedCost.title)
+    )
+  ) {
+    report.problems.push(
+      `forge: the HUD does not show the forged upgrade (rows ${JSON.stringify(hud.upgradeRows ?? [])})`
+    );
+  }
+
+  // 4. Press again with an empty purse: the refusal must charge nothing and change nothing.
+  const refusedBefore = await upgrades();
+  await tapKey(cdp, 'KeyE');
+  await sleep(700);
+  const refusedAfter = await upgrades();
+  report.data.forge.refused = {
+    before: refusedBefore?.levels ?? null,
+    after: refusedAfter?.levels ?? null,
+    materials: await materials()
+  };
+  if (JSON.stringify(refusedBefore?.levels ?? {}) !== JSON.stringify(refusedAfter?.levels ?? {})) {
+    report.problems.push('forge: an unaffordable press still changed the levels');
+  }
+
+  // 5. The reload clause: the level is canonical, so a fresh boot restores it *and* the reach
+  //    it implies — the derived effect is never persisted, it is recomputed.
+  const logsBeforeReload = report.logs.length;
+  await boot(cdp);
+  drainConsole(cdp);
+  const reloadLogs = report.logs.slice(logsBeforeReload).join('\n');
+  const restored = await upgrades();
+  report.data.forge.reload = {
+    loaded: /\\[save\\] loaded autosave/.test(reloadLogs),
+    upgrades: restored,
+    materials: await materials()
+  };
+  if (restored === null || restored.levels[expectedCost.id] !== 1) {
+    report.problems.push(
+      `forge: the forged level did not survive a reload (levels ${JSON.stringify(restored?.levels ?? null)})`
+    );
+  } else if (!(restored.interactionRange > before.interactionRange)) {
+    report.problems.push(
+      `forge: the reach was not re-derived on load (${restored.interactionRange})`
+    );
+  }
+}
+
+/**
  * THE FULL BRANCH, played: P1 → P2 → P3 → BM-1 in one session, then the clue beat and a
  * reload — the branch-completion consequences the `bm1` scenario cannot reach (it plays
  * BM-1 alone), and M9's "persists" clause measured rather than assumed.
@@ -3210,6 +3386,7 @@ async function main() {
   if (SCENARIO === 'dock') await scenarioDock(cdp);
   if (SCENARIO === 'crucible') await scenarioCrucible(cdp);
   if (SCENARIO === 'decoy') await scenarioDecoy(cdp);
+  if (SCENARIO === 'forge') await scenarioForge(cdp);
   if (SCENARIO === 'guns') await scenarioGuns(cdp);
   if (SCENARIO === 'bm1') await scenarioBm1(cdp);
   if (SCENARIO === 'branch') await scenarioBranch(cdp);

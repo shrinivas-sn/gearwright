@@ -43,3 +43,15 @@ Supports `--production` for local bundle checks and `--url=<URL>` for live deplo
 ## Deployment
 
 Deployments to GitHub Pages run automatically via GitHub Actions upon pushing to the `main` branch.
+
+## Forge consumer (in progress)
+
+A reward-material consumer was built on `main` in the 2026-10-27 session and left as the session's
+continuation point: an additive upgrade projection (`src/game-state/upgrade-system.ts`), an upgrade
+catalogue (`src/data/upgrades.ts`), a forge view and upgrade rows in the HUD (`src/presentation/
+hud.ts`), a forge interactable on the hub (`src/levels/hub.ts`), and the runtime wiring (`src/main.
+ts`, `src/gameplay/interaction-system.ts`, `src/gameplay/phase-world.ts`, the save codec and save
+system). The live forge scenario passed end-to-end with `problems: []` before the session ended; the
+full CI (typecheck, suite, build, `browser-check.mjs forge/branch/decoy`) is the next thing to run.
+See [DOCS/STATUS.md](DOCS/STATUS.md) for the exact continuation point and the probe defect that was
+patched mid-session.

@@ -80,6 +80,14 @@ export interface SaveFile {
    * row is L0, which is exactly what those sessions' ladders held.
    */
   readonly hints?: { readonly levels: Readonly<Record<string, number>> } | undefined;
+  /**
+   * §28.3 rule 3 `UpgradeSystem` levels (M12): how far each forged upgrade has come. A
+   * numeric modifier is canonical state only if the *level* is what is stored — the
+   * effective value is derived by the pipeline at read time, never persisted. Optional
+   * for the same reason as `hints`: a file written before the materials had a consumer
+   * simply has nothing forged.
+   */
+  readonly upgrades?: { readonly levels: Readonly<Record<string, number>> } | undefined;
 }
 
 /** What the codec reads when building a document â€” the L1 owners, nothing else. */
@@ -110,6 +118,8 @@ export interface SaveCaptureInput {
   readonly actions?: ReadonlyArray<string> | undefined;
   /** §12.2/§29.2 `HintState` (M10): per-puzzle ladder levels. Absent = every ladder L0. */
   readonly hintLevels?: Readonly<Record<string, number>> | undefined;
+  /** §28.3 rule 3 upgrade levels. Absent = nothing forged yet. */
+  readonly upgradeLevels?: Readonly<Record<string, number>> | undefined;
 }
 
 export type SaveFailureReason =
@@ -164,6 +174,11 @@ export interface SaveTargets {
    * same reason as `progression`/`actions` — a headless load (tests, tools) can skip it.
    */
   readonly hints?: { restore(levels: Readonly<Record<string, number>>): void } | undefined;
+  /**
+   * §28.3 rule 3: the upgrade pipeline's levels. Restored *before* the composition reads
+   * any `valueOf` — the effects are derived, so nothing else has to be written back.
+   */
+  readonly upgrades?: { restore(levels: Readonly<Record<string, number>>): void } | undefined;
 }
 
 
@@ -228,6 +243,10 @@ export class SaveCodec {
       // `HintSystem.restore`). Rows with nothing to say are omitted, not zero-filled.
       ...(input.hintLevels !== undefined && Object.keys(input.hintLevels).length > 0
         ? { hints: { levels: { ...input.hintLevels } } }
+        : {}),
+      // §28.3 rule 3: same shape, same "nothing to say is omitted" rule.
+      ...(input.upgradeLevels !== undefined && Object.keys(input.upgradeLevels).length > 0
+        ? { upgrades: { levels: { ...input.upgradeLevels } } }
         : {})
     };
   }
@@ -326,6 +345,19 @@ export class SaveCodec {
       for (const [puzzleId, level] of Object.entries(save['hints']['levels'])) {
         if (typeof level !== 'number' || !Number.isFinite(level)) {
           return fail('schema', `hints.levels[${puzzleId}] must be a finite number`);
+        }
+      }
+    }
+    // §28.3 rule 3: the upgrade block is validated like the ladder's — present or absent,
+    // never malformed. Ids unknown to this build are tolerated by `UpgradeSystem.restore`
+    // (a save from a build that shipped one more upgrade must still load).
+    if (save['upgrades'] !== undefined) {
+      if (!isRecord(save['upgrades']) || !isRecord(save['upgrades']['levels'])) {
+        return fail('schema', 'upgrades.levels must be an object');
+      }
+      for (const [upgradeId, level] of Object.entries(save['upgrades']['levels'])) {
+        if (!Number.isInteger(level) || (level as number) < 1) {
+          return fail('schema', `upgrades.levels[${upgradeId}] must be a positive integer`);
         }
       }
     }
@@ -498,6 +530,12 @@ export class SaveCodec {
     // An absent block — a pre-M10 v2 file — simply restores nothing: every row the
     // ladder zeroed stays L0, which is the truth about that session.
     targets.hints?.restore(save.hints?.levels ?? {});
+
+    // §28.3 rule 3 upgrade levels, last: the effective values are derived by the pipeline
+    // when a consumer asks, so restoring the levels is the whole write-back. An absent
+    // block — a file written before materials had a consumer — restores nothing, which is
+    // the truth about that session.
+    targets.upgrades?.restore(save.upgrades?.levels ?? {});
 
     return this.log;
   }

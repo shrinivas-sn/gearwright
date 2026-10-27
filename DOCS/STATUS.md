@@ -76,6 +76,58 @@
 - **Still unbuilt: a consumer for the reward materials (§28).** Materials are granted by all three
   branches and consumed by nothing; the upgrade framework exists with an empty table.
 
+## Forge — next session's continuation point (2026-10-27, this pass)
+
+The forge reward-material consumer was built: `src/game-state/upgrade-system.ts` (additive
+projection — `applyTo` returns a new save frame, never mutates the running one; pre-existing
+overrides a zero start), `src/data/upgrades.ts` (tables + a closed `raw/craft`/`blueprint`
+catalogue that the pipeline rejects from the save codec), `src/presentation/hud.ts` (forge view +
+upgrade rows under the existing material/blueprint pool), `src/levels/hub.ts` (forge interactable +
+plate-only target), `src/main.ts` (forge dispatch in the step loop, startup inject-and-close, save
+round-trip), `src/gameplay/interaction-system.ts` (forge-specific track injection), `src/gameplay/
+phase-world.ts` (reach and carry-scale sourced from the upgrade level), `src/game-state/save-codec.
+ts` + `src/gameplay/save-system.ts` (`upgrades` field round-trips through the save with the same
+schema/mirrors pattern as `hints`). Logic suite: `tests/logic/upgrade-system.test.ts` (14 cases,
+post-clamp finding) and `tests/logic/save-load.test.ts` (upgrade round-trip, sanity on non-empty +
+empty frames).
+
+Current status (live scenario run in this session, `.tmp-forge-run2.log`, **before** the session
+ends):
+
+```
+problems: []
+after.conversion: true
+after.bondsNotEmpty: true
+after.materialsAfter: [ 'copper', 'copper', 'copper', 'steel' ]
+after.seedsRestored: 1
+reload.afterEqualBefore: true
+reload.conversionRoundTripped: true
+reload.bondsNotEmpty: true
+reload.cratesWithItems: true
+reload.seedsRestored: 1
+reload.fxQueueEqual: true
+reload.logRestoredQty: 5
+```
+
+What still needs doing when the session resumes:
+
+1. Commit + push this work on `main` (Phase 2), then run the full live CI: typecheck, full unit
+   suite, build, then `browser-check.mjs forge`, `browser-check.mjs branch`, `browser-check.mjs
+   decoy` and fix anything that breaks.
+2. The `materials` probe had a null-chain defect mid-run: `window.__probe.hud().materials` threw
+   when the HUD was not yet rendered. It was patched to `(window.__probe.hud()?.materials ?? [])
+   .map(...)` in `scripts/browser-check.mjs`. If it surfaces again as a real failure in the full
+   run, keep the defensive form and investigate *why* the HUD probe is null at that point
+   (timing of `forgeOpen` / render / probe placement) rather than widening the probe.
+3. Finish the next product decision (what an upgrade *does* in gameplay terms) and land it as the
+   §28 consumer's next increment.
+
+Harvester retention (noticed in this session, confirmed live): BM-1 still feeds the forge's two
+panel loadings (BM-B-1/B-2 decode as binder-bonded panels); BM-2 still feeds the forge's one armed
+forgings (BM-2-A-1 decodes as a forged artifact). M9 reload stays integrally intact: five console
+logs restored, same FX queue, same harvester state, same seed of phases, same branch re-derivation,
+same decoy refusal posture.
+
 ## Verification
 
 - **Typecheck** clean · **Tests** 65 files / **847** (845 at HEAD: +2 for the meter and the

@@ -122,6 +122,17 @@ export interface HudResourceView {
   readonly partsRequired: number;
   readonly materials: ReadonlyArray<{ readonly kind: string; readonly count: number }>;
   readonly blueprints: ReadonlyArray<string>;
+  /**
+   * ARCH §28 forged upgrades (`title` + `level/maxLevel`). Empty until the first forge, so a
+   * fresh save shows no row at all — the panel grows when the player has something to see.
+   * The HUD formats levels and never decides whether an upgrade is affordable.
+   */
+  readonly upgrades: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly level: number;
+    readonly maxLevel: number;
+  }>;
 }
 
 /** Hint affordance + the one MVP scanner blueprint (§29, §27.3). */
@@ -334,6 +345,8 @@ const HUD_MARKUP = `
   <ul class="gw-hud-materials"></ul>
   <span class="gw-hud-resources-label">Blueprints</span>
   <ul class="gw-hud-blueprints"></ul>
+  <span class="gw-hud-resources-label gw-hud-upgrades-label">Upgrades</span>
+  <ul class="gw-hud-upgrades"></ul>
 </div>
 <div class="gw-hud-surface gw-hud-weapon">
   <span class="gw-hud-weapon-name"></span>
@@ -418,6 +431,13 @@ interface ToastEntry {
   remaining: number;
 }
 
+/** Pooled upgrade row (§28), same reuse rule as the material row below. */
+interface UpgradeRow {
+  readonly element: HTMLLIElement;
+  readonly title: HTMLSpanElement;
+  readonly level: HTMLSpanElement;
+}
+
 /** Pooled material row, reused across renders instead of rebuilt (§33.2 rule 5). */
 interface MaterialRow {
   readonly element: HTMLLIElement;
@@ -470,11 +490,15 @@ export class Hud {
   private readonly parts: HTMLElement;
   private readonly materialsList: HTMLUListElement;
   private readonly blueprintsList: HTMLUListElement;
+  private readonly upgradesLabel: HTMLElement;
+  private readonly upgradesList: HTMLUListElement;
   private readonly materialRows: MaterialRow[] = [];
   private readonly blueprintRows: BlueprintRow[] = [];
+  private readonly upgradeRows: UpgradeRow[] = [];
   /** Last reconciled list contents: equal signature ⇒ the DOM is already correct. */
   private materialSignature = '\u0000';
   private blueprintSignature = '\u0000';
+  private upgradeSignature = '\u0000';
 
   // Field log (§12.2 log entries)
   private readonly logSurface: HTMLElement;
@@ -553,6 +577,8 @@ export class Hud {
     this.parts = requireChild(this.host, '.gw-hud-parts');
     this.materialsList = requireChild<HTMLUListElement>(this.host, '.gw-hud-materials');
     this.blueprintsList = requireChild<HTMLUListElement>(this.host, '.gw-hud-blueprints');
+    this.upgradesLabel = requireChild(this.host, '.gw-hud-upgrades-label');
+    this.upgradesList = requireChild<HTMLUListElement>(this.host, '.gw-hud-upgrades');
 
     this.reticle = requireChild(this.host, '.gw-hud-reticle');
     this.weaponSurface = requireChild(this.host, '.gw-hud-weapon');
@@ -731,6 +757,61 @@ export class Hud {
       this.blueprintSignature = blueprintSignature;
       this.syncBlueprints(view.blueprints);
     }
+
+    // Forged upgrades (§28): same pooling and signature gate as the two lists above. The
+    // whole block hides at level zero, so the panel does not advertise a system the player
+    // has not met yet.
+    const upgradeSignature = view.upgrades
+      .map((entry) => `${entry.id}:${entry.level}/${entry.maxLevel}`)
+      .join('|');
+    if (upgradeSignature !== this.upgradeSignature) {
+      this.upgradeSignature = upgradeSignature;
+      this.syncUpgrades(view.upgrades);
+    }
+    setHidden(this.upgradesLabel, view.upgrades.length === 0);
+    setHidden(this.upgradesList, view.upgrades.length === 0);
+  }
+
+  /** Reconciles upgrade rows against their pool, exactly as the material rows do. */
+  private syncUpgrades(
+    upgrades: ReadonlyArray<{
+      readonly id: string;
+      readonly title: string;
+      readonly level: number;
+      readonly maxLevel: number;
+    }>
+  ): void {
+    for (let index = 0; index < upgrades.length; index += 1) {
+      const entry = upgrades[index];
+      if (entry === undefined) continue;
+
+      let row = this.upgradeRows[index];
+      if (row === undefined) {
+        row = this.createUpgradeRow();
+        this.upgradeRows[index] = row;
+        this.upgradesList.appendChild(row.element);
+      }
+      setText(row.title, entry.title);
+      setText(row.level, `${entry.level}/${entry.maxLevel}`);
+      setHidden(row.element, false);
+    }
+
+    for (let index = upgrades.length; index < this.upgradeRows.length; index += 1) {
+      const row = this.upgradeRows[index];
+      if (row !== undefined) setHidden(row.element, true);
+    }
+  }
+
+  private createUpgradeRow(): UpgradeRow {
+    const doc = this.root.ownerDocument;
+    const element = doc.createElement('li');
+    element.className = 'gw-hud-upgrade';
+    const title = doc.createElement('span');
+    title.className = 'gw-hud-upgrade-title';
+    const level = doc.createElement('span');
+    level.className = 'gw-hud-upgrade-level';
+    element.append(title, level);
+    return { element, title, level };
   }
 
   /**

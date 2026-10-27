@@ -80,6 +80,12 @@ export interface WorldSystems {
    * (they share the one machine graph, which is the whole point of §23).
    */
   readonly puzzles?: ReadonlyArray<PuzzleSystem> | undefined;
+  /**
+   * §28 upgrade hook: a multiplier on the carried walk/run scales. Absent = 1 (the shipped
+   * feel). The composition provides it from `UpgradeSystem.valueOf`, so this file never
+   * imports L1 state and a headless world keeps the base scales exactly.
+   */
+  readonly carrySpeedScale?: (() => number) | undefined;
   /** Optional from M6 onward: the deterministic feedback model (§32.1). */
   readonly feedback?: FeedbackModel | undefined;
   /**
@@ -232,9 +238,7 @@ export class PhaseWorld {
       // fact in this file). Holding a part keeps its own slow strafe — heavier at a walk
       // than at a run, so the part's mass reads as weight rather than as a tax.
       speedScale: holding
-        ? actions.run
-          ? CARRY_RUN_SCALE
-          : CARRY_WALK_SCALE
+        ? (actions.run ? CARRY_RUN_SCALE : CARRY_WALK_SCALE) * this.carrySpeedMultiplier()
         : this.weaponMoveScale,
       jump: actions.jump,
       // Stance pass: crouch is locomotion state, so it goes to the player owner with the
@@ -382,6 +386,17 @@ export class PhaseWorld {
     this.cameraAds.fovScale = result.view.adsFovScale;
     this.weaponMoveScale = result.view.moveScale;
     return result;
+  }
+
+  /**
+   * §28 hook read: the composition's carried-speed multiplier, defended here so a bad
+   * provider cannot make the player move backwards or faster than a free run. Clamped to
+   * (0, 1]; anything non-finite falls back to 1, which is the shipped feel.
+   */
+  private carrySpeedMultiplier(): number {
+    const provided = this.systems.carrySpeedScale?.();
+    if (provided === undefined || !Number.isFinite(provided) || provided <= 0) return 1;
+    return Math.min(provided, 1);
   }
 
   /** The parts a bullet may strike: every loose carryable, as the live box it occupies. */
