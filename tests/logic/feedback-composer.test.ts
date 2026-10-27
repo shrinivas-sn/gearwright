@@ -34,6 +34,7 @@ interface FakeWorld {
   readonly spin: SpinDirection | null;
   readonly anchors: Map<string, Vec3>;
   readonly machineAnchors: Map<string, Vec3>;
+  readonly warnings: MachineDerivedState['warnings'];
 }
 
 function makeWorld(
@@ -41,6 +42,7 @@ function makeWorld(
     machineState?: MachineDerivedState['state'];
     spin?: SpinDirection | null;
     attached?: boolean;
+    warnings?: MachineDerivedState['warnings'];
   } = {}
 ): FakeWorld {
   const attached = options.attached ?? true;
@@ -59,7 +61,8 @@ function makeWorld(
     machineState: options.machineState ?? 'running',
     spin: options.spin === undefined ? 'cw' : options.spin,
     anchors: new Map([['P1', { x: -8, y: 1.2, z: 0 }]]),
-    machineAnchors: new Map([['P1-mesh', { x: -8, y: 1.2, z: 0 }]])
+    machineAnchors: new Map([['P1-mesh', { x: -8, y: 1.2, z: 0 }]]),
+    warnings: options.warnings ?? []
   };
 }
 
@@ -75,7 +78,7 @@ function viewOf(world: FakeWorld): FeedbackView {
       state: world.machineState,
       outputs: [{ nodeId: 'component:shaft-b', kind: 'rotation', value: 1, spin: world.spin }],
       nodeStates: [],
-      warnings: []
+      warnings: world.warnings
     }),
     puzzleAnchorOf: (puzzleId) => world.anchors.get(puzzleId) ?? null,
     machineAnchorOf: (machineId) => world.machineAnchors.get(machineId) ?? null
@@ -199,6 +202,37 @@ describe('FeedbackComposer — pulses (§32.3) and machine motion (§32.3 layer 
     frozen.update(0.1, [], viewOf(makeWorld({ machineState: 'idle' })));
     frozen.present();
     expect(stateOf(frozenRender, 'gear-a').spinAngle).toBeCloseTo(0.4, 6);
+  });
+
+  it('marks a machine that is running but over its ceiling, so it cannot read as healthy', () => {
+    // Branch C's teaching: an over-fed machine still `running`, and `overpressure` is the
+    // derived warning that says the run is unsafe. The renderer redlines on this flag, and
+    // the flag must come from the graph — never be inferred on the presentation side.
+    const overRender = new RecordingRenderPort();
+    const over = new FeedbackComposer(overRender, { spinRate: 4 });
+    over.update(
+      0.1,
+      [],
+      viewOf(makeWorld({ machineState: 'running', warnings: ['overpressure'] }))
+    );
+    over.present();
+    expect(stateOf(overRender, 'gear-a').overpressured).toBe(true);
+    // Over-feed does not stop the machine: the motion is real, only the read is wrong.
+    expect(stateOf(overRender, 'gear-a').spinAngle).toBeCloseTo(0.4, 6);
+
+    // A healthy run, and a warning that is not this one, both leave the flag off.
+    const healthyRender = new RecordingRenderPort();
+    const healthy = new FeedbackComposer(healthyRender, { spinRate: 4 });
+    healthy.update(0.1, [], viewOf(makeWorld({ machineState: 'running', warnings: ['no-source'] })));
+    healthy.present();
+    expect(stateOf(healthyRender, 'gear-a').overpressured).toBe(false);
+
+    // A loose part belongs to no machine, so it is never marked.
+    const looseRender = new RecordingRenderPort();
+    const loose = new FeedbackComposer(looseRender, { spinRate: 4 });
+    loose.update(0.1, [], viewOf(makeWorld({ attached: false, warnings: ['overpressure'] })));
+    loose.present();
+    expect(stateOf(looseRender, 'gear-a').overpressured).toBe(false);
   });
 });
 

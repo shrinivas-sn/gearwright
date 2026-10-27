@@ -276,6 +276,12 @@ window.__probe = {
     if (dev === undefined || dev === null || typeof dev.machineState !== 'function') return null;
     return dev.machineState(machineId);
   },
+  /** §25's own read (state + failed requirement ids) — a live refusal, not a graph guess. */
+  puzzle: (puzzleId) => {
+    const dev = window.__gearwrightDev;
+    if (dev === undefined || dev === null || typeof dev.puzzle !== 'function') return null;
+    return dev.puzzle(puzzleId);
+  },
   hud: () => {
     const text = (selector) => {
       const element = document.querySelector(selector);
@@ -291,6 +297,9 @@ window.__probe = {
       objectiveTitle: text('.gw-hud-objective-title'),
       objectiveState: text('.gw-hud-objective-state'),
       objectiveFailure: text('.gw-hud-objective-failure-text'),
+      objectiveMeter: text('.gw-hud-objective-meter'),
+      objectiveMeterOver:
+        document.querySelector('.gw-hud-objective-meter')?.classList.contains('gw-hud-objective-meter--over') ?? null,
       parts: text('.gw-hud-parts'),
       hintLevel: text('.gw-hud-hint-level'),
       scannerLabel: text('.gw-hud-scanner-label'),
@@ -873,6 +882,8 @@ window.__probe = {
       // Branch B ships too, so the full curve's own end state is readable (the branch
       // scenario plays A → B1 → B2 → BM-2 and asserts B completes, not A alone).
       branchB: progression.branchState('branch-b'),
+      // Branch C is the third room's gate; a fresh save must keep it Locked (A and B open it).
+      branchC: progression.branchState('branch-c'),
       hubStage: progression.hubStageIndex,
       clues: [...progression.discoveredClueIds]
     };
@@ -1610,6 +1621,8 @@ async function scenarioCrucible(cdp) {
   const socketA = (level.c1Sockets ?? []).find((entry) => entry.id === 'socket-c1-flow-a');
   const socketB = (level.c1Sockets ?? []).find((entry) => entry.id === 'socket-c1-flow-b');
   const machine = () => evaluate(cdp, "window.__probe.machine('C1-tuyere')");
+  const machineOf = (machineId) =>
+    evaluate(cdp, `window.__probe.machine(${JSON.stringify(machineId)})`);
 
   report.data.crucible = {
     parts: (level.c1Parts ?? []).length,
@@ -1684,8 +1697,227 @@ async function scenarioCrucible(cdp) {
     report.problems.push('crucible: two open feeds did not trip the tuyere ceiling');
   }
 
-  // 4. The gate is honest: a fresh save cannot have C1 in progress, whatever the graph says.
+  // 3b. The ceiling is on the HUD *before* it is hit. The graph's warning is not enough on its
+  //     own — a player learns the limit from the objective surface reading the machine's own
+  //     number against its declared ceiling, then sees the words when it trips. The puzzle is
+  //     `Locked` on a fresh save, so the line only appears while the machine is in view (the
+  //     same derivation the hint key uses). Docking leaves the reticle on the valve, which is
+  //     a machine part; if it somehow does not, aim at the socket the valve now sits in.
+  let hudB = await evaluate(cdp, 'window.__probe.hud()');
+  let meterText = hudB?.objectiveMeter?.text ?? '';
+  let focused = /Tuyere/.test(hudB?.objectiveTitle?.text ?? '');
+  if (!focused) {
+    const aimed = await focusTarget(cdp, valveB.id, boxOf(socketB));
+    focused = aimed !== null;
+    hudB = await evaluate(cdp, 'window.__probe.hud()');
+    meterText = hudB?.objectiveMeter?.text ?? '';
+  }
+  report.data.crucible.hudMeter = {
+    focused,
+    title: hudB?.objectiveTitle ?? null,
+    meter: hudB?.objectiveMeter ?? null,
+    over: hudB?.objectiveMeterOver ?? null
+  };
+  if (!focused) {
+    report.problems.push('crucible: the tuyere could not be brought into view, so the HUD meter was never read');
+  } else if (!/Tuyere/.test(hudB?.objectiveTitle?.text ?? '')) {
+    report.problems.push(
+      `crucible: focusing the tuyere socket named the wrong puzzle (title "${hudB?.objectiveTitle?.text ?? ''}")`
+    );
+  } else if (hudB?.objectiveMeter?.hidden !== false) {
+    report.problems.push('crucible: the focused tuyere shows no pressure meter (hidden on the objective surface)');
+  } else if (!/Pressure 2 \/ 1\.5/.test(meterText)) {
+    report.problems.push(`crucible: the HUD meter does not read the over-fed tuyere (got "${meterText}")`);
+  } else if (hudB?.objectiveMeterOver !== true || !/over ceiling/.test(meterText)) {
+    report.problems.push(`crucible: the over-fed tuyere is not marked over its ceiling (got "${meterText}")`);
+  }
+
+  // 4. C2 "Quench" — the combining beat, live. A plain gear preserves the crank's clockwise
+  //    sense and ONE quench feed is enough; the second feed is the same ceiling C1 just taught.
+  //    The puzzle is gated on a fresh save, so this proves the machine, not the reward.
+  const dockPair = async (label, partId, socketId, parts, sockets) => {
+    const part = (parts ?? []).find((entry) => entry.id === partId);
+    const socket = (sockets ?? []).find((entry) => entry.id === socketId);
+    if (part === undefined || socket === undefined) {
+      report.problems.push(`crucible: ${label} is not composed (missing part or socket)`);
+      return { label, found: false };
+    }
+    let attemptReport = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const grab = await grabPart(cdp, part);
+      const dock = await dockInto(cdp, socket, part);
+      await sleep(900);
+      drainConsole(cdp);
+      attemptReport = {
+        label,
+        found: true,
+        attempt,
+        grab: grab.focus,
+        held: grab.held ?? null,
+        dropped: dock.dropped === true,
+        socket: dock.hud?.socket?.text ?? null
+      };
+      if (dock.dropped !== true) break;
+    }
+    return attemptReport;
+  };
+  const outputOf = (state, kind) => (state?.outputs ?? []).find((output) => output.kind === kind) ?? null;
+
+  // The *idler* deliberately: the branch's direction lesson is that the sense comes from the
+  // part, and C2's correct plain gear is proven by the completion run in `branch`. Here the
+  // wrong part proves the near-miss live — the vessel turns ccw while the machine still runs.
+  const c2Pairs = [
+    await dockPair('C2 idler -> drive', 'idler-c2', 'socket-c2-drive', level.c2Parts, level.c2Sockets),
+    await dockPair('C2 valve 1 -> feed A', 'valve-c2-1', 'socket-c2-feed-a', level.c2Parts, level.c2Sockets)
+  ];
+  await sleep(600);
+  const c2First = await machineOf('C2-quench');
+  report.data.crucible.c2 = {
+    pairs: c2Pairs,
+    first: {
+      state: c2First?.state ?? null,
+      rotation: outputOf(c2First, 'rotation'),
+      pressure: outputOf(c2First, 'pressure'),
+      warnings: c2First?.warnings ?? []
+    }
+  };
+  const c2Rotation = outputOf(c2First, 'rotation');
+  const c2Pressure = outputOf(c2First, 'pressure');
+  if (c2Pairs.some((pair) => pair?.found === false)) {
+    // already reported
+  } else if (
+    (c2First?.state ?? null) !== 'running' ||
+    c2Rotation?.spin !== 'ccw' ||
+    c2Rotation?.value < 1
+  ) {
+    report.problems.push(
+      `crucible: C2 did not turn anticlockwise from the idler (state ${c2First?.state ?? '?'}, rotation ${JSON.stringify(c2Rotation)})`
+    );
+  } else if (c2Pressure?.value < 1) {
+    report.problems.push('crucible: C2 received no quench pressure from one feed');
+  } else if ((c2First?.warnings ?? []).includes('overpressure')) {
+    report.problems.push('crucible: C2 over-pressurised on a single feed');
+  }
+
+  const c2Second = await dockPair('C2 valve 2 -> feed B', 'valve-c2-2', 'socket-c2-feed-b', level.c2Parts, level.c2Sockets);
+  await sleep(600);
+  const c2Over = await machineOf('C2-quench');
+  report.data.crucible.c2.second = {
+    pair: c2Second,
+    state: c2Over?.state ?? null,
+    pressure: outputOf(c2Over, 'pressure'),
+    warnings: c2Over?.warnings ?? []
+  };
+  if (c2Second?.found === false) {
+    // already reported
+  } else if (!(c2Over?.warnings ?? []).includes('overpressure')) {
+    report.problems.push('crucible: C2 did not trip its ceiling on two quench feeds');
+  }
+
+  // 5. C3 "Slag Run" — the open-ended beat's two kinds of answer, live. The cross-run (route C)
+  //    alone feeds both consumers at 2 and stays under the 2.5 ceiling; adding route A stacks
+  //    a run on the shared bridge, reads 3 at the casting floor and trips the ceiling.
+  const c3Pairs = [
+    await dockPair('C3 valve 1 -> cross-run C', 'valve-c3-1', 'socket-c3-route-c', level.c3Parts, level.c3Sockets)
+  ];
+  await sleep(600);
+  const c3Cross = await machineOf('C3-slag');
+  const c3Cast = outputOf(c3Cross, 'pressure');
+  // C3's two consumers are distinct output nodes; the probe's machine state names them.
+  const c3Outputs = c3Cross?.outputs ?? [];
+  report.data.crucible.c3 = {
+    cross: c3Pairs,
+    first: { state: c3Cross?.state ?? null, outputs: c3Outputs, warnings: c3Cross?.warnings ?? [] }
+  };
+  if (c3Pairs.some((pair) => pair?.found === false)) {
+    // already reported
+  } else if ((c3Cross?.state ?? null) !== 'running') {
+    report.problems.push(`crucible: the cross-run alone did not run C3 (state ${c3Cross?.state ?? '?'})`);
+  } else if (c3Outputs.filter((output) => output.value >= 2).length < 2) {
+    report.problems.push(
+      `crucible: the cross-run did not feed both consumers at 2 (got ${JSON.stringify(c3Outputs)})`
+    );
+  } else if ((c3Cross?.warnings ?? []).includes('overpressure')) {
+    report.problems.push('crucible: the cross-run alone tripped C3\'s ceiling');
+  } else if (c3Cast !== null && c3Cast.value !== 2) {
+    // `c3Cast` is the first output, kept for the report only; the pair check above is the rule.
+    report.data.crucible.c3.first.note = `first output ${c3Cast.value}`;
+  }
+
+  const c3Stacked = await dockPair('C3 valve 2 -> route A', 'valve-c3-2', 'socket-c3-route-a', level.c3Parts, level.c3Sockets);
+  await sleep(600);
+  const c3Over = await machineOf('C3-slag');
+  report.data.crucible.c3.second = {
+    pair: c3Stacked,
+    state: c3Over?.state ?? null,
+    outputs: c3Over?.outputs ?? [],
+    warnings: c3Over?.warnings ?? []
+  };
+  if (c3Stacked?.found === false) {
+    // already reported
+  } else if (!(c3Over?.warnings ?? []).includes('overpressure')) {
+    report.problems.push('crucible: stacking route A on the cross-run did not trip C3\'s ceiling');
+  }
+
+  // 6. CM-3 "Great Crucible" — the staged capstone, live. Assembly (gear + pipe) is what
+  //    installs the panel (ADR-018's "assembly before priming", read from the graph), the
+  //    three lines prime in any order, and the pour lever follows them. The puzzle is Locked
+  //    on a fresh save, so this proves the rig and the ordered vocabulary, not the reward.
+  const logsBeforeCm3 = report.logs.length;
+  const cm3Pairs = [
+    await dockPair('CM-3 gear -> drive', 'gear-cm3', 'socket-cm3-drive', level.cm3Parts, level.cm3Sockets),
+    await dockPair('CM-3 valve -> feed', 'valve-cm3', 'socket-cm3-feed', level.cm3Parts, level.cm3Sockets)
+  ];
+  await sleep(900);
+  drainConsole(cdp);
+  const cm3Built = await machineOf('CM-3');
+  const cm3Props = [
+    { id: 'cm3/prime-blast', x: 13.4 },
+    { id: 'cm3/prime-quench', x: 14.6 },
+    { id: 'cm3/prime-slag', x: 15.8 },
+    { id: 'cm3/engage', x: 17.6 }
+  ];
+  const cm3Presses = await pressStagedProps(cdp, cm3Props, 30.4, 30.8);
+  await sleep(900);
+  drainConsole(cdp);
+  const cm3Logs = report.logs.slice(logsBeforeCm3).join('\n');
+  report.data.crucible.cm3 = {
+    pairs: cm3Pairs,
+    built: { state: cm3Built?.state ?? null, outputs: cm3Built?.outputs ?? [], warnings: cm3Built?.warnings ?? [] },
+    rigInstalled: /\[staged\] CM-3 structure complete/.test(cm3Logs),
+    primed: /\[staged\] CM-3 primed — engage to activate/.test(cm3Logs),
+    presses: cm3Presses
+  };
+  if (cm3Pairs.some((pair) => pair?.found === false)) {
+    // already reported
+  } else if ((cm3Built?.outputs ?? []).length !== 2) {
+    report.problems.push(
+      `crucible: CM-3 assembly did not produce both outputs (got ${JSON.stringify(cm3Built?.outputs ?? [])})`
+    );
+  }
+  if (!report.data.crucible.cm3.rigInstalled) {
+    report.problems.push('crucible: CM-3 assembly did not install the staged panel');
+  }
+  if (!report.data.crucible.cm3.primed) {
+    report.problems.push('crucible: CM-3 did not report all three priming lines open');
+  }
+  for (const press of cm3Presses) {
+    if (press.focus === 'NOT FOCUSABLE') {
+      report.problems.push(`crucible: CM-3's ${press.id} was not focusable`);
+    }
+  }
+  if ((cm3Presses.find((press) => press.id === 'cm3/engage')?.focus ?? 'NOT FOCUSABLE') === 'NOT FOCUSABLE') {
+    report.problems.push('crucible: CM-3\'s pour lever was not focusable after priming');
+  }
+
+  // 7. The gate is honest: a fresh save cannot have any of this in progress, whatever the
+  //    graph says.
   report.data.crucible.progress = await evaluate(cdp, 'window.__probe.progress()');
+  if ((report.data.crucible.progress?.branchC ?? null) !== 'Locked') {
+    report.problems.push(
+      `crucible: Branch C is not Locked on a fresh save (got ${report.data.crucible.progress?.branchC ?? 'null'})`
+    );
+  }
   drainConsole(cdp);
 }
 
@@ -2227,6 +2459,97 @@ async function scenarioBranch(cdp) {
     hubStage: /\[hub\] stage 2 \(Regulator Awake\); branch-a=Complete \(open\), branch-b=Complete \(open\)/.test(reloadLogs),
     progress: await evaluate(cdp, 'window.__probe.progress()'),
     hud: await evaluate(cdp, 'window.__probe.hud()')
+  };
+
+  // Branch C's own curve — played here, after the reload, because this is the only state in
+  // which the third branch can complete at all: A and B are Complete, so its puzzles are open
+  // and its rewards can fire. `crucible` proves the machines on a freshly gated save; this
+  // proves completion, the reward burst, `stage/crucible-restored` and the third clue plate.
+  report.data.branchCPairs = [];
+  report.data.branchCPairs.push(
+    await playPair('C1 valve -> flow A', 'C1', 'valve-c1-1', 'socket-c1-flow-a', level.c1Parts, level.c1Sockets)
+  );
+  report.data.branchCPairs.push(
+    await playPair('C2 gear -> drive', null, 'gear-c2', 'socket-c2-drive', level.c2Parts, level.c2Sockets)
+  );
+  report.data.branchCPairs.push(
+    await playPair('C2 valve -> feed A', 'C2', 'valve-c2-1', 'socket-c2-feed-a', level.c2Parts, level.c2Sockets)
+  );
+  report.data.branchCPairs.push(
+    await playPair('C3 valve -> cross-run C', 'C3', 'valve-c3-1', 'socket-c3-route-c', level.c3Parts, level.c3Sockets)
+  );
+  report.data.branchCPairs.push(
+    await playPair('CM-3 gear -> drive', null, 'gear-cm3', 'socket-cm3-drive', level.cm3Parts, level.cm3Sockets)
+  );
+  report.data.branchCPairs.push(
+    await playPair('CM-3 valve -> feed', null, 'valve-cm3', 'socket-cm3-feed', level.cm3Parts, level.cm3Sockets)
+  );
+  await sleep(900);
+  drainConsole(cdp);
+
+  // The ordered stage, refused and then recovered, live. Pull the pour lever *before* the
+  // lines are primed and read the puzzle's own failed requirement, then prime in any order,
+  // then pour again. ADR-018's earliest-match rule is what makes the second pour legitimate,
+  // so this also proves an early lever does not lock the player out.
+  report.data.branchCEarlyPour = await pressStagedProps(cdp, [{ id: 'cm3/engage', x: 17.6 }], 30.4, 30.8);
+  const afterEarlyPour = await evaluate(cdp, "window.__probe.puzzle('CM-3')");
+  report.data.branchCAfterEarlyPour = afterEarlyPour;
+  if (afterEarlyPour === null || !(afterEarlyPour.reasonCodes ?? []).includes('cm3/staged')) {
+    report.problems.push(
+      `branch: CM-3 did not refuse the early pour (got ${JSON.stringify(afterEarlyPour)})`
+    );
+  }
+  report.data.branchCm3Presses = await pressStagedProps(
+    cdp,
+    [
+      { id: 'cm3/prime-blast', x: 13.4 },
+      { id: 'cm3/prime-quench', x: 14.6 },
+      { id: 'cm3/prime-slag', x: 15.8 }
+    ],
+    30.4,
+    30.8
+  );
+  const afterPriming = await evaluate(cdp, "window.__probe.puzzle('CM-3')");
+  report.data.branchCAfterPriming = afterPriming;
+  if (afterPriming === null || (afterPriming.reasonCodes ?? []).includes('cm3/primed')) {
+    report.problems.push(
+      `branch: CM-3 did not accept the three priming lines (got ${JSON.stringify(afterPriming)})`
+    );
+  }
+  report.data.branchCSecondPour = await pressStagedProps(cdp, [{ id: 'cm3/engage', x: 17.6 }], 30.4, 30.8);
+  await sleep(1800);
+  drainConsole(cdp);
+  const cLogs = report.logs.join('\n');
+  report.data.branchCBurst = {
+    c1Reward: /\[reward\] C1:milestone\/c1-tuyere applied/.test(cLogs),
+    c2Reward: /\[reward\] C2:milestone\/c2-quench applied/.test(cLogs),
+    c3Reward: /\[reward\] C3:milestone\/c3-slag-run applied/.test(cLogs),
+    cm3Reward: /\[reward\] CM-3:milestone\/cm3-great-crucible applied/.test(cLogs),
+    branchComplete: /\[progression\] branch branch-c complete \(Great Crucible\)/.test(cLogs),
+    hubStage: /\[progression\] hub stage -> stage\/crucible-restored \(Crucible Restored\)/.test(cLogs),
+    plateAwake: /\[clue\] plate awake: clue\/crucible-plate/.test(cLogs)
+  };
+  if (!report.data.branchCBurst.branchComplete) {
+    report.problems.push('branch: Branch C did not complete after C1 → C2 → C3 → CM-3');
+  }
+  if (!report.data.branchCBurst.hubStage) {
+    report.problems.push('branch: completing Branch C did not reach stage/crucible-restored');
+  }
+  if (!report.data.branchCBurst.cm3Reward) {
+    report.problems.push('branch: CM-3 did not apply its reward');
+  }
+  for (const pair of report.data.branchCPairs) {
+    if (pair.completed !== true) report.problems.push(`branch: ${pair.label} did not complete`);
+  }
+  for (const press of [...report.data.branchCEarlyPour, ...report.data.branchCm3Presses, ...report.data.branchCSecondPour]) {
+    if (press.focus === 'NOT FOCUSABLE') {
+      report.problems.push(`branch: CM-3's ${press.id} was not focusable`);
+    }
+  }
+  report.data.branchCClue = await readPlate('clue/crucible-plate');
+  report.data.branchC = {
+    hud: await evaluate(cdp, 'window.__probe.hud()'),
+    progress: await evaluate(cdp, 'window.__probe.progress()')
   };
 }
 

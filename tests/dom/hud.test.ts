@@ -26,7 +26,8 @@ function makeSnapshot(overrides: Partial<HudSnapshot> = {}): HudSnapshot {
     objective: {
       puzzleTitle: 'P1 — Power the gate',
       state: 'InProgress',
-      failedText: 'The gate has no power source.'
+      failedText: 'The gate has no power source.',
+      meter: null
     },
     resources: {
       partsHeld: 2,
@@ -88,6 +89,10 @@ describe('Hud — §33.1 read-model render', () => {
     expect(root.querySelector('.gw-hud-objective-failure-text')?.textContent).toBe(
       'The gate has no power source.'
     );
+    // No machine behind the default snapshot (meter null): the gauge row is hidden.
+    expect(root.querySelector('.gw-hud-objective-meter')?.classList.contains('gw-hud-hidden')).toBe(
+      true
+    );
 
     expect(root.querySelector('.gw-hud-parts')?.textContent).toBe('Parts 2 / 4');
     expect(root.querySelector('.gw-hud-material')?.textContent).toContain('copper');
@@ -103,12 +108,65 @@ describe('Hud — §33.1 read-model render', () => {
     root.remove();
   });
 
+  it('reads a machine\'s live output against its declared ceiling, before and after it trips', () => {
+    const { root, hud } = mountHud();
+    const meterRow = root.querySelector('.gw-hud-objective-meter');
+
+    // Branch C's entry beat: one open feed is under the ceiling.
+    hud.render(
+      makeSnapshot({
+        objective: {
+          puzzleTitle: 'C1 — Tuyere',
+          state: 'InProgress',
+          failedText: null,
+          meter: { label: 'Pressure', value: 1, ceiling: 1.5, over: false }
+        }
+      })
+    );
+    expect(meterRow?.classList.contains('gw-hud-hidden')).toBe(false);
+    expect(meterRow?.textContent).toBe('Pressure 1 / 1.5');
+    expect(meterRow?.classList.contains('gw-hud-objective-meter--over')).toBe(false);
+
+    // Two feeds read 2 and trip the declared 1.5. The over state is words, not colour.
+    hud.render(
+      makeSnapshot({
+        objective: {
+          puzzleTitle: 'C1 — Tuyere',
+          state: 'InProgress',
+          failedText: 'One feed is enough — two would over-pressurise the tuyere.',
+          meter: { label: 'Pressure', value: 2, ceiling: 1.5, over: true }
+        }
+      })
+    );
+    expect(meterRow?.textContent).toBe('Pressure 2 / 1.5 — over ceiling');
+    expect(meterRow?.classList.contains('gw-hud-objective-meter--over')).toBe(true);
+
+    // A machine that declares no ceiling omits the fraction rather than inventing one.
+    hud.render(
+      makeSnapshot({
+        objective: {
+          puzzleTitle: 'C1 — Tuyere',
+          state: 'InProgress',
+          failedText: null,
+          meter: { label: 'Rotation', value: 1, ceiling: null, over: false }
+        }
+      })
+    );
+    expect(meterRow?.textContent).toBe('Rotation 1');
+    expect(meterRow?.classList.contains('gw-hud-objective-meter--over')).toBe(false);
+
+    hud.render(makeSnapshot());
+    expect(meterRow?.classList.contains('gw-hud-hidden')).toBe(true);
+
+    root.remove();
+  });
+
   it('hides conditional lines when their value is null (never reads as a false negative)', () => {
     const { root, hud } = mountHud();
     hud.render(
       makeSnapshot({
         focus: { targetName: null, verb: null, keyLabel: null, valid: null },
-        objective: { puzzleTitle: null, state: null, failedText: null },
+        objective: { puzzleTitle: null, state: null, failedText: null, meter: null },
         manipulation: {
           heldName: null,
           rotateKey: 'Q',
@@ -533,7 +591,7 @@ describe('Hud — no injected markup (§33.2)', () => {
     hud.render(
       makeSnapshot({
         focus: { targetName: hostile, verb: null, keyLabel: null, valid: null },
-        objective: { puzzleTitle: hostile, state: null, failedText: hostile },
+        objective: { puzzleTitle: hostile, state: null, failedText: hostile, meter: null },
         log: { entries: [{ id: 'clue/x', title: hostile, text: hostile }] }
       })
     );

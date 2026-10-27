@@ -140,6 +140,15 @@ export interface CarryableRenderState {
   /** Part of a machine that is running right now (glow). Absent = false. */
   readonly powered?: boolean | undefined;
   /**
+   * Part of a machine whose derived state declares it **over its own ceiling**
+   * (`overpressure`, §24.1). Absent = false.
+   *
+   * A machine that is over-fed is still `running`, so without this a failed machine drew the
+   * same healthy glow as a working one. Presentation only, derived from state, never written
+   * back: §24 requires the hazard to be readable in the world and not only in the HUD.
+   */
+  readonly overpressured?: boolean | undefined;
+  /**
    * The point on this part's surface nearest the player, when it is held — where the hands
    * close on it. The presenter computes it (§32 layer 4) because it already owns the
    * interpolated pose the hands must match; absent = the centre, which is only right for a

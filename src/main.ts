@@ -65,7 +65,7 @@ import { SOCKET_DEFINITIONS, socketDefinitionOf } from './data/sockets.ts';
 import { HintSystem, MAX_HINT_LEVEL, type HintEngagement } from './game-state/hint-system.ts';
 import { indexRequirements, scannerRevealFor, type ScannerReveal } from './game-state/scanner-reveal.ts';
 import { ScannerOverlay, type ScannerSpec, type ScannerState } from './presentation/scanner-overlay.ts';
-import { Hud, type HudSnapshot, type HudObjectiveView, type HudResourceView, type HudLogView, type HudHintView, type HudCaptureView, type HudScannerState, type HudSocketState, type HudWeaponView } from './presentation/hud.ts';
+import { Hud, type HudSnapshot, type HudObjectiveView, type HudMachineMeter, type HudResourceView, type HudLogView, type HudHintView, type HudCaptureView, type HudScannerState, type HudSocketState, type HudWeaponView } from './presentation/hud.ts';
 import { PauseOverlay, type PauseCause } from './presentation/pause-overlay.ts';
 import { TitleScreen } from './presentation/title-screen.ts';
 import { buildControlsTable, type ControlRow } from './presentation/controls-table.ts';
@@ -186,6 +186,16 @@ function requirementText(puzzleId: string, requirementId: string): string {
     reasonPlainText(requirementId as ValidationReason)
   );
 }
+
+/**
+ * Machine output kinds in the HUD's words. The kinds are data (`component-model.ts`), so the
+ * table is a translation of the authored vocabulary, never a second source of it.
+ */
+const OUTPUT_KIND_LABEL: Readonly<Record<string, string>> = {
+  pressure: 'Pressure',
+  rotation: 'Rotation',
+  torque: 'Torque'
+};
 
 /**
  * §27.3 then §29.3: without the blueprint the HUD's scanner is locked; with it, the
@@ -431,6 +441,32 @@ function buildHudRenderer(deps: {
       focus === null ? null : puzzleOfComponent(focus.id) ?? puzzleOfMachineFromFocus(focus.id);
     const inProgressPuzzle = puzzleSystems.find((system) => system.state === 'InProgress') ?? null;
     const activePuzzle = focusedPuzzle ?? inProgressPuzzle;
+
+    // The machine's live meter: its highest derived output against the ceiling its own data
+    // declares. Branch C teaches that a feed can be *too much*, and until now the ceiling was
+    // only discoverable by failing — the graph's number is the lesson, so show it.
+    const meter: HudMachineMeter | null = (() => {
+      if (activePuzzle === null || activePuzzle.state === 'Complete') return null;
+      const activation = activationOf.get(activePuzzle.puzzleId);
+      if (activation?.kind !== 'machineRunning') return null;
+      const machine = MACHINE_DEFINITIONS.find((definition) => definition.id === activation.machineId);
+      if (machine === undefined) return null;
+      const derived = graph.machineState(activation.machineId);
+      // Outputs only exist once something is powered; before then the gauge reads 0 against
+      // the ceiling, which is the truth and still teaches where the limit sits.
+      let top: { readonly kind: string; readonly value: number } | null = null;
+      for (const output of derived?.outputs ?? []) {
+        if (top === null || output.value > top.value) top = { kind: output.kind, value: output.value };
+      }
+      const kind = top?.kind ?? machine.outputs[0]?.kind;
+      if (kind === undefined) return null;
+      return {
+        label: OUTPUT_KIND_LABEL[kind] ?? kind,
+        value: top?.value ?? 0,
+        ceiling: machine.maxOutput ?? null,
+        over: (derived?.warnings ?? []).includes('overpressure')
+      };
+    })();
     const objective: HudObjectiveView = {
       puzzleTitle: activePuzzle === null ? null : activePuzzle.title,
       state: activePuzzle === null ? null : activePuzzle.state,
@@ -439,7 +475,8 @@ function buildHudRenderer(deps: {
           ? null
           : (activePuzzle.reasonCodes[0] === undefined
               ? null
-              : requirementText(activePuzzle.puzzleId, activePuzzle.reasonCodes[0]))
+              : requirementText(activePuzzle.puzzleId, activePuzzle.reasonCodes[0])),
+      meter
     };
 
     // --- resources (§33.1 row 4, §27.3) ---
@@ -1901,6 +1938,15 @@ function boot(): void {
       // state*, which exists independently of a puzzle's §25 gating — so a check can prove a
       // machine's ceiling before the branch has been unlocked. Dev-only, like everything here.
       machineState: (machineId: string) => graph.machineState(machineId),
+      // The §25 state machine's own read (failed requirement ids + state), so a browser check
+      // can prove a *refusal* on an open puzzle — the graph says what the machine does, this
+      // says what the game told the player about it. Dev-only, like everything here.
+      puzzle: (puzzleId: string) => {
+        const system = puzzleSystems.find((entry) => entry.puzzleId === puzzleId);
+        return system === undefined
+          ? null
+          : { state: system.state, reasonCodes: [...system.reasonCodes] };
+      },
       // Read live, not snapshot at boot: the harness proves the player's body is built,
       // drawn and standing on the simulated position.
       character: () => renderPort.characterFacts?.() ?? null,

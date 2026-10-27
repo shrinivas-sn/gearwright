@@ -86,6 +86,21 @@ export interface HudManipulationView {
   readonly socketState: HudSocketState;
 }
 
+/**
+ * The machine's live output against its declared ceiling (Branch C's teaching: a feed can be
+ * too much). The numbers are the graph's own derived values, not a HUD calculation.
+ */
+export interface HudMachineMeter {
+  /** The carrier in the machine's vocabulary ('Pressure', 'Rotation', 'Torque'). */
+  readonly label: string;
+  /** The machine's highest derived output right now (0 before anything is connected). */
+  readonly value: number;
+  /** The machine's declared ceiling, or null when it declares none. */
+  readonly ceiling: number | null;
+  /** True when the machine's derived state reports `overpressure`. */
+  readonly over: boolean;
+}
+
 /** Objective line: which puzzle, where it stands, and the outstanding requirement. */
 export interface HudObjectiveView {
   readonly puzzleTitle: string | null;
@@ -93,6 +108,12 @@ export interface HudObjectiveView {
   readonly state: string | null;
   /** Plain language, authored per requirement id in the puzzle data (never re-worded here). */
   readonly failedText: string | null;
+  /**
+   * The active machine's live meter, or null when no machine stands behind the puzzle. A
+   * ceiling the player can read before failing is what makes an over-feed a lesson rather
+   * than a surprise; the words never substitute for the failure line, they sit beside it.
+   */
+  readonly meter: HudMachineMeter | null;
 }
 
 /** Resource panel (§27.3: compact, no grid inventory in the MVP). */
@@ -300,6 +321,7 @@ const HUD_MARKUP = `
       <span class="gw-hud-objective-failure-tag" aria-hidden="true">⚠</span>
       <span class="gw-hud-objective-failure-text"></span>
     </span>
+    <span class="gw-hud-objective-meter"></span>
   </div>
   <div class="gw-hud-surface gw-hud-log">
     <span class="gw-hud-log-heading"></span>
@@ -356,6 +378,12 @@ const HUD_MARKUP = `
  * lands near 210 px — the crosshair is genuinely open, never a decorative wobble.
  */
 const RETICLE_PIXELS_PER_RADIAN = 1750;
+
+/** A derived magnitude as words: 1, 1.5, 2.5 — never `1.0000000000000002`. */
+function formatMeterValue(value: number): string {
+  const finite = Number.isFinite(value) ? value : 0;
+  return String(Math.round(finite * 100) / 100);
+}
 
 /**
  * Change-only text write (§33.2 rule 5). `textContent` is *not* a layout-flushing
@@ -436,6 +464,7 @@ export class Hud {
   private readonly objectiveState: HTMLElement;
   private readonly objectiveFailureRow: HTMLElement;
   private readonly objectiveFailure: HTMLElement;
+  private readonly objectiveMeter: HTMLElement;
 
   // Resources
   private readonly parts: HTMLElement;
@@ -519,6 +548,7 @@ export class Hud {
     this.objectiveState = requireChild(this.host, '.gw-hud-objective-state');
     this.objectiveFailureRow = requireChild(this.host, '.gw-hud-objective-failure');
     this.objectiveFailure = requireChild(this.host, '.gw-hud-objective-failure-text');
+    this.objectiveMeter = requireChild(this.host, '.gw-hud-objective-meter');
 
     this.parts = requireChild(this.host, '.gw-hud-parts');
     this.materialsList = requireChild<HTMLUListElement>(this.host, '.gw-hud-materials');
@@ -570,6 +600,7 @@ export class Hud {
     // never read as "no requirement outstanding".
     setHidden(this.focusLine, true);
     setHidden(this.objectiveFailureRow, true);
+    setHidden(this.objectiveMeter, true);
     // Nothing has been discovered yet, so the log starts hidden: an empty log would
     // claim the world holds nothing, which is not the same as "you have found nothing"
     // — and only the second is true at boot.
@@ -668,6 +699,20 @@ export class Hud {
     // from the validator's reason, authored in the puzzle data — never re-worded here.
     setHidden(this.objectiveFailureRow, view.failedText === null);
     setText(this.objectiveFailure, view.failedText ?? '');
+
+    // The ceiling, before it is hit: the highest output the machine derives, against the
+    // ceiling its own data declares. `over` is the graph's warning, so the words and the
+    // redline always agree with the validator — the HUD computes no threshold of its own.
+    const meter = view.meter;
+    setHidden(this.objectiveMeter, meter === null);
+    setClass(this.objectiveMeter, 'gw-hud-objective-meter--over', meter?.over === true);
+    if (meter === null) {
+      setText(this.objectiveMeter, '');
+      return;
+    }
+    const value = formatMeterValue(meter.value);
+    const reading = meter.ceiling === null ? `${meter.label} ${value}` : `${meter.label} ${value} / ${formatMeterValue(meter.ceiling)}`;
+    setText(this.objectiveMeter, meter.over && meter.ceiling !== null ? `${reading} — over ceiling` : reading);
   }
 
   private renderResources(view: HudResourceView): void {

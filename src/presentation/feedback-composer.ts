@@ -118,6 +118,8 @@ interface MutableCarryableState {
   attached: boolean;
   visual: 'box' | 'gear' | 'pipe';
   powered: boolean;
+  /** The machine's derived state is over its declared ceiling (redline, §24.1). */
+  overpressured: boolean;
   /** The point on this part's surface nearest the player (its grip); the centre when not held. */
   grip: { x: number; y: number; z: number };
   prevX: number;
@@ -249,6 +251,7 @@ export class FeedbackComposer {
       out.attached = state.attached;
       out.visual = state.visual;
       out.powered = state.powered;
+      out.overpressured = state.overpressured;
       // The hands grip the part's near face, not its centre: aiming a hand at the middle of a
       // part asks the arm to reach *through* it, so the carry read as holding a ghost 0.9 m out.
       if (state.held && this.hasPlayer) {
@@ -443,6 +446,10 @@ export class FeedbackComposer {
       state.attached = attachedPose !== null;
       state.visual = view.visualOf?.(snapshot.id) ?? 'box';
       state.powered = machine !== null && machine.state === 'running';
+      // A running machine can still be an unsafe one: C1/C2/C3 teach that a feed can be too
+      // much, and `overpressure` is the derived warning that says so. It is drawn, not
+      // remembered here — the flag only carries the derived state to the renderer.
+      state.overpressured = machine !== null && machine.warnings.includes('overpressure');
       this.states.push(state);
     }
   }
@@ -462,6 +469,7 @@ export class FeedbackComposer {
       attached: false,
       visual: 'box',
       powered: false,
+      overpressured: false,
       grip: { x: 0, y: 0, z: 0 },
       prevX: 0,
       prevY: 0,
@@ -489,6 +497,7 @@ export class FeedbackComposer {
       attached: false,
       visual: 'box',
       powered: false,
+      overpressured: false,
       grip: { x: 0, y: 0, z: 0 },
       prevX: 0,
       prevY: 0,

@@ -265,6 +265,22 @@ body {
   color: var(--gw-hazardous);
 }
 
+/* The machine gauge: live output against the ceiling its data declares. Tabular
+   numbers so a moving value does not jitter the line; the over state adds words in the
+   renderer ("— over ceiling") as well as the hazard colour, so it never rides on colour. */
+.gw-hud-objective-meter {
+  margin-top: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--gw-muted);
+}
+
+.gw-hud-objective-meter--over {
+  color: var(--gw-hazardous);
+  font-weight: 600;
+}
+
 /* --- field log (§12.2: discovered clues, consumer "Story UI, HUD") ---------- */
 
 .gw-hud-log-heading {

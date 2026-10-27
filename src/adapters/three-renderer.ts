@@ -641,18 +641,34 @@ export class ThreeRenderer implements RenderPort {
       const spin = Number.isFinite(state.spinAngle) ? state.spinAngle : 0;
       visual.mesh.rotation.y = yaw + spin;
       // State is readable without colour alone (ARCH §18 feedback): held objects
-      // glow warm, a refused step flashes the hazard tint.
+      // glow warm, a refused step flashes the hazard tint, and a machine over its declared
+      // ceiling redlines (§24.1 `overpressure`). A machine that is over-fed is still
+      // `running`, so without that last case it would draw the healthy green of one that
+      // works — the state is visible in the world, not only in the HUD (§24 rule 6).
+      const overpressured = state.overpressured === true && state.attached;
       const color = state.blocked
         ? 0xd2604f
         : state.held
           ? 0xe8b23a
-          : state.attached
-            ? 0x6be86b
-            : 0x5fb8a6;
+          : overpressured
+            ? 0xe0503c
+            : state.attached
+              ? 0x6be86b
+              : 0x5fb8a6;
       visual.material.color.setHex(color);
       const powered = state.powered === true && state.attached;
-      visual.material.emissive.setHex(state.held ? 0x6b4d12 : powered ? 0x2f7a2f : state.attached ? 0x1c4a1c : 0x1f3f39);
-      visual.material.emissiveIntensity = state.held ? 0.85 : powered ? 0.9 : 0.3;
+      visual.material.emissive.setHex(
+        state.held
+          ? 0x6b4d12
+          : overpressured
+            ? 0x8a1e12
+            : powered
+              ? 0x2f7a2f
+              : state.attached
+                ? 0x1c4a1c
+                : 0x1f3f39
+      );
+      visual.material.emissiveIntensity = state.held ? 0.85 : overpressured ? 1 : powered ? 0.9 : 0.3;
       visual.mesh.visible = true;
       // The player's hands grip whatever this call says is held — on its near face, not at its
       // centre, so the arms close on the part instead of reaching through it.
