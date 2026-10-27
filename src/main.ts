@@ -1947,6 +1947,18 @@ function boot(): void {
           ? null
           : { state: system.state, reasonCodes: [...system.reasonCodes] };
       },
+      // §25 gating is honest: on a fresh save every branch puzzle is `Locked` and publishes no
+      // reasons, so a browser check could prove a machine's refusal but never the *reason* the
+      // player reads. This walks the SM through `unlock()`/`begin()` — the same two calls
+      // `syncBranchAccess` makes when a branch opens — which is the only way a scenario can
+      // put a puzzle in the state a player reaches after A + B. Dev-only, like everything here.
+      puzzleOpen: (puzzleId: string) => {
+        const system = puzzleSystems.find((entry) => entry.puzzleId === puzzleId);
+        if (system === undefined) return null;
+        system.unlock();
+        system.begin();
+        return { state: system.state };
+      },
       // Read live, not snapshot at boot: the harness proves the player's body is built,
       // drawn and standing on the simulated position.
       character: () => renderPort.characterFacts?.() ?? null,

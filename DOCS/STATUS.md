@@ -114,12 +114,17 @@
 3. **The reward-material consumer (§28)** — the one thing every branch pays into and nothing reads.
    This needs a decision first (what an upgrade *does*), so it is the next product question, not
    the next commit.
-4. **The decoy build, live.** As of 24/10 Branch C completes in `branch`, its machines are proven
-   gated (`crucible`), and three refusals are live: C2's **idler** (`ccw`), the two-feed/stacked
-   **ceilings** (C1, C2, C3), and CM-3's **early pour** with its recovery. Still logic-suite-only:
-   the **shut-off valve** jam (C1/C3/CM-3), the **blanking plate** on a drive (C2/CM-3), and the
-   idler on C2's *open* puzzle (its reason code, not just its spin). Those want a wrong-build
-   pass on a save where the branch is open.
+4. **The decoy build, live — mostly landed 27/10.** A new `decoy` scenario walks each puzzle
+   through the SM's own `unlock()`/`begin()` (a dev-only `puzzleOpen`, the two calls
+   `syncBranchAccess` makes when a branch opens) so the refusal is a *reason the player reads*,
+   not just a machine state: a **shut-off valve** in C1's blast port jams the machine, empties
+   its outputs and names `c1/blast-line` + `c1/pressure-up` + `c1/no-jam` (and deliberately not
+   the ceiling); the **blanking plate** on C2's drive leaves rotation empty and names
+   `c2/drive-coupled`; the **idler** on the same mount turns the vessel `ccw` and names exactly
+   `c2/drive-sense`. The same run exercises the **detach path live** for the first time
+   (`Remove` → the plate leaves the mount and the machine falls back to `powered`), which is how
+   the idler gets its socket. Still logic-suite-only: C3's jam (that run seats a good valve) and
+   CM-3's jam — the same requirement shape the C1 proof covers.
 
 **Limits:** the harness's route planner takes every door as open, so it is a *room* tool, never a
 gate check — gating is proven by the boot log and the access-gate suite. `crucible` stands the

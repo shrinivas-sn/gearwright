@@ -5,7 +5,7 @@
  * composition actually does: boot logs, HUD read-outs, focus acquisition from real
  * vantages, a played BM-1 sequence, console errors, and §36 budget numbers.
  *
- * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|arms|dock|crucible|bm1|branch|b2audit] [--production]
+ * Usage: node scripts/browser-check.mjs [boot|title|focus|hold|press|arms|dock|crucible|decoy|bm1|branch|b2audit] [--production]
  */
 
 import { spawn } from 'node:child_process';
@@ -281,6 +281,17 @@ window.__probe = {
     const dev = window.__gearwrightDev;
     if (dev === undefined || dev === null || typeof dev.puzzle !== 'function') return null;
     return dev.puzzle(puzzleId);
+  },
+  /**
+   * Walk a puzzle through the SM's own unlock()/begin() calls (dev-only). A fresh save keeps
+   * every branch puzzle Locked, and a gated puzzle publishes no reasons — so this is how a
+   * browser check can read the refusal line a player reaches after the branch has opened.
+   * It changes no rule: it is the same pair syncBranchAccess calls.
+   */
+  puzzleOpen: (puzzleId) => {
+    const dev = window.__gearwrightDev;
+    if (dev === undefined || dev === null || typeof dev.puzzleOpen !== 'function') return null;
+    return dev.puzzleOpen(puzzleId);
   },
   hud: () => {
     const text = (selector) => {
@@ -1642,19 +1653,7 @@ async function scenarioCrucible(cdp) {
   // or mis-positioned the capsule would fall (y below the floor) or be resolved out of a
   // collider. Route planning is deliberately not used here — it takes doors as open, so it
   // could not tell a room check from a gate check.
-  await evaluate(cdp, 'window.__probe.teleport(12.2, 0.06, 24.4)');
-  await sleep(900);
-  const landed = await evaluate(cdp, 'window.__probe.state()');
-  report.data.crucible.entered = {
-    pos: landed.pos,
-    grounded: landed.grounded,
-    inRoom: landed.pos.x > 9 && landed.pos.z > 21 && landed.pos.y > -0.2
-  };
-  if (!report.data.crucible.entered.inRoom || landed.grounded !== true) {
-    report.problems.push(
-      `crucible: the new room does not hold the player up at (12.2, 24.4) — ${JSON.stringify(landed.pos)}, grounded=${landed.grounded}`
-    );
-  }
+  report.data.crucible.entered = await enterCrucibleRoom(cdp);
 
   // 2. One open valve: the tuyere lights and the machine is not over-fed.
   const grabA = await grabPart(cdp, valveA);
@@ -1916,6 +1915,278 @@ async function scenarioCrucible(cdp) {
   if ((report.data.crucible.progress?.branchC ?? null) !== 'Locked') {
     report.problems.push(
       `crucible: Branch C is not Locked on a fresh save (got ${report.data.crucible.progress?.branchC ?? 'null'})`
+    );
+  }
+  drainConsole(cdp);
+}
+
+/**
+ * Enter the Crucible room and let the game's own physics answer whether the floor is there.
+ *
+ * Shared by `crucible` and `decoy`: both stand the player on the new floor, and neither uses
+ * route planning for the entry (it takes every door as open, so it cannot tell a room check
+ * from a gate check). Returns the record the scenarios report, and pushes a problem directly
+ * when the room does not hold the player up.
+ */
+async function enterCrucibleRoom(cdp) {
+  await evaluate(cdp, 'window.__probe.teleport(12.2, 0.06, 24.4)');
+  await sleep(900);
+  const landed = await evaluate(cdp, 'window.__probe.state()');
+  const entered = {
+    pos: landed.pos,
+    grounded: landed.grounded,
+    inRoom: landed.pos.x > 9 && landed.pos.z > 21 && landed.pos.y > -0.2
+  };
+  if (!entered.inRoom || landed.grounded !== true) {
+    report.problems.push(
+      `crucible: the new room does not hold the player up at (12.2, 24.4) — ${JSON.stringify(landed.pos)}, grounded=${landed.grounded}`
+    );
+  }
+  return entered;
+}
+
+/**
+ * THE WRONG BUILDS, played (27/10/2026).
+ *
+ * `STATUS.md` item 4's gap: the shut-off valve's jam (C1), the blanking plate (C2) and the
+ * idler's *reason* (C2) were asserted in the logic suite and nowhere in the browser. The
+ * harness proved position and state; it never proved that seat the wrong part and the machine
+ * refuses — and that the objective surface tells the player why.
+ *
+ * Each case is played on the same fresh board, one machine at a time: the parts are
+ * per-machine instances (`shutoff-c1`, `plate-c2`, `idler-c2`), so a refusal costs one dock and
+ * leaves the other machines untouched.
+ *
+ * §25 gating is honest and a fresh save has every branch puzzle `Locked`, which publishes *no*
+ * reasons — so the scenario first walks each puzzle through the SM's own `unlock()`/`begin()`
+ * (the dev-only `puzzleOpen`, the same two calls `syncBranchAccess` makes when a branch opens).
+ * That is what makes the refusal a *reason the player reads* rather than a machine state: an
+ * open puzzle publishes its failed requirements on the objective surface.
+ *
+ * The progress assertions at the end still hold the gate to account: opening a puzzle for the
+ * harness is not opening the branch.
+ */
+async function scenarioDecoy(cdp) {
+  const level = await evaluate(cdp, 'window.__probe.level()');
+  const machineOf = (machineId) =>
+    evaluate(cdp, `window.__probe.machine(${JSON.stringify(machineId)})`);
+  const puzzleOf = (puzzleId) =>
+    evaluate(cdp, `window.__probe.puzzle(${JSON.stringify(puzzleId)})`);
+  const openPuzzle = (puzzleId) =>
+    evaluate(cdp, `window.__probe.puzzleOpen(${JSON.stringify(puzzleId)})`);
+  const socketOf = (sockets, id) => (sockets ?? []).find((entry) => entry.id === id) ?? null;
+  const partOf = (parts, id) => (parts ?? []).find((entry) => entry.id === id) ?? null;
+
+  report.data.decoy = {};
+  report.data.decoy.entered = await enterCrucibleRoom(cdp);
+
+  /** Seat one wrong part and read both authorities: the graph and the puzzle SM. */
+  const refuse = async (label, partId, socketId, machineId, puzzleId, parts, sockets) => {
+    const part = partOf(parts, partId);
+    const socket = socketOf(sockets, socketId);
+    if (part === null || socket === null) {
+      report.problems.push(`decoy: ${label} is not composed (missing part or socket)`);
+      return { label, found: false };
+    }
+    const opened = await openPuzzle(puzzleId);
+    const grab = await grabPart(cdp, part);
+    const dock = await dockInto(cdp, socket, part);
+    await sleep(900);
+    drainConsole(cdp);
+    const state = await machineOf(machineId);
+    const puzzle = await puzzleOf(puzzleId);
+    return {
+      label,
+      found: true,
+      opened,
+      grab: grab.focus,
+      held: grab.held ?? null,
+      dropped: dock.dropped === true,
+      socket: dock.hud?.socket?.text ?? null,
+      machine: { state: state?.state ?? null, outputs: state?.outputs ?? [], warnings: state?.warnings ?? [] },
+      puzzle,
+      box: (await evaluate(cdp, `window.__probe.partBox(${JSON.stringify(partId)})`).catch(() => null)) ?? boxOf(part)
+    };
+  };
+
+  /** Focus a part and read the objective line the player is looking at. */
+  const readObjective = async (targetId, box) => {
+    const aimed = await focusTarget(cdp, targetId, box);
+    const hud = await evaluate(cdp, 'window.__probe.hud()');
+    return {
+      focused: aimed !== null,
+      title: hud?.objectiveTitle?.text ?? null,
+      state: hud?.objectiveState?.text ?? null,
+      failure: hud?.objectiveFailure?.text ?? null
+    };
+  };
+
+  // 1. C1: a shut-off valve fits the blast port, conducts nothing and jams the machine.
+  //    Three things are asserted: the machine reports `jammed`, no output exists, and the
+  //    open puzzle names the two failures. Then the line the player reads. The two reasons are
+  //    the same pair the logic suite pins — `c1/blast-line` and `c1/no-jam` — and the branch's
+  //    ceiling requirement must *not* be among them: a jam is not an overpressure.
+  const shutoff = await refuse(
+    'C1 shut-off valve -> blast port',
+    'shutoff-c1',
+    'socket-c1-flow-a',
+    'C1-tuyere',
+    'C1',
+    level.c1Parts,
+    level.c1Sockets
+  );
+  report.data.decoy.shutoff = shutoff;
+  if (shutoff.found === false) {
+    // already reported
+  } else if (shutoff.dropped === true) {
+    report.problems.push('decoy: the shut-off valve was soft-detached mid-carry');
+  } else if (shutoff.machine.state !== 'jammed') {
+    report.problems.push(
+      `decoy: a shut-off valve in the blast port did not jam C1 (state ${shutoff.machine.state ?? 'null'})`
+    );
+  } else if ((shutoff.machine.outputs ?? []).length !== 0) {
+    report.problems.push(
+      `decoy: the jammed tuyere still reports output (${JSON.stringify(shutoff.machine.outputs ?? [])})`
+    );
+  } else if (!(shutoff.puzzle?.reasonCodes ?? []).includes('c1/no-jam')) {
+    report.problems.push(
+      `decoy: C1 does not name the jam (reasons ${JSON.stringify(shutoff.puzzle?.reasonCodes ?? null)})`
+    );
+  } else if (!(shutoff.puzzle?.reasonCodes ?? []).includes('c1/blast-line')) {
+    report.problems.push(
+      `decoy: C1 does not name the broken blast line (reasons ${JSON.stringify(shutoff.puzzle?.reasonCodes ?? null)})`
+    );
+  } else if ((shutoff.puzzle?.reasonCodes ?? []).includes('c1/no-overpressure')) {
+    report.problems.push('decoy: C1 blames the ceiling for a jammed run');
+  }
+  if (shutoff.found !== false && shutoff.dropped !== true) {
+    // The objective surface shows the *first* failed requirement in the authored order, which
+    // for a dead blast line is "Run pipework from the furnace to the tuyere" — the jam reason is
+    // second. Both are on the SM (asserted above); what this measures is that the pane names
+    // *some* outstanding requirement while the player stands at the dead machine, rather than
+    // the empty line a gated puzzle shows.
+    const line = await readObjective('shutoff-c1', shutoff.box);
+    report.data.decoy.shutoffObjective = line;
+    if (!line.focused) {
+      report.problems.push('decoy: the seated shut-off valve could not be brought into view');
+    } else if (!/Tuyere/.test(line.title ?? '')) {
+      report.problems.push(`decoy: the dead tuyere named the wrong puzzle (got "${line.title ?? ''}")`);
+    } else if ((line.failure ?? '').trim() === '') {
+      report.problems.push('decoy: the objective surface names no requirement for the jammed run');
+    }
+  }
+
+  // 2. C2: the blanking plate fits the drive mount and bridges nothing. The open puzzle must
+  //    name the unbridged drive and *not* the sense: nothing turns, so there is no wrong
+  //    direction to blame.
+  const plate = await refuse(
+    'C2 blanking plate -> drive mount',
+    'plate-c2',
+    'socket-c2-drive',
+    'C2-quench',
+    'C2',
+    level.c2Parts,
+    level.c2Sockets
+  );
+  report.data.decoy.plate = plate;
+  if (plate.found === false) {
+    // already reported
+  } else if (plate.dropped === true) {
+    report.problems.push('decoy: the blanking plate was soft-detached mid-carry');
+  } else if ((plate.machine.outputs ?? []).find((output) => output.kind === 'rotation') !== undefined) {
+    report.problems.push('decoy: a blanking plate on the drive still turned the vessel');
+  } else if (!(plate.puzzle?.reasonCodes ?? []).includes('c2/drive-coupled')) {
+    report.problems.push(
+      `decoy: C2 does not name the unbridged drive (reasons ${JSON.stringify(plate.puzzle?.reasonCodes ?? null)})`
+    );
+  }
+  // `c2/drive-sense` also fails here, and correctly: nothing turns, so the requirement that the
+  // vessel turn clockwise is unmet. The plate's *identity* is the `drive-coupled` reason, which
+  // is what separates it from the idler case below (the idler bridges and turns the wrong way).
+
+  // 3. The plate comes out again through the game's own detach rule (ARCH §19 `DetachPrompt`:
+  //    a first `primary` while an attached part is focused, then the detach). This is the first
+  //    live exercise of that path, so each step is recorded — a refusal (EC-MAN-01, no free
+  //    pose) is a finding, not a scenario bug, and must be visible in the report either way.
+  let detached = null;
+  if (plate.found !== false && plate.dropped !== true) {
+    // Re-aim at where the plate now *is*: the dock left the reticle on the socket marker, and
+    // the SM's detach state is only reachable from a focus on the attached component itself.
+    const live = await evaluate(cdp, "window.__probe.partBox('plate-c2')").catch(() => null);
+    const aimed = await focusTarget(cdp, 'plate-c2', live ?? plate.box);
+    if (aimed === null) {
+      detached = { focused: false };
+    } else {
+      const verb = aimed.focus.verb;
+      const hudBefore = await evaluate(cdp, 'window.__probe.hud()');
+      await tapKey(cdp, 'KeyE');
+      await sleep(500);
+      const hudPrompt = await evaluate(cdp, 'window.__probe.hud()');
+      await tapKey(cdp, 'KeyE');
+      await sleep(900);
+      const state = await machineOf('C2-quench');
+      const hud = await evaluate(cdp, 'window.__probe.hud()');
+      detached = {
+        focused: true,
+        verb,
+        socketBefore: hudBefore?.socket?.text ?? null,
+        promptSocket: hudPrompt?.socket?.text ?? null,
+        machine: state?.state ?? null,
+        held: hud?.held?.text ?? null
+      };
+    }
+    report.data.decoy.detached = detached;
+    if (detached.focused !== true) {
+      report.problems.push('decoy: the seated plate could not be focused for its detach');
+    } else if (detached.machine === 'jammed') {
+      // A refused detach leaves the part mounted (EC-MAN-01), which is honest but means the
+      // idler case below cannot use this socket.
+      report.data.decoy.detachNote = 'detach refused or incomplete — see the recorded state';
+    }
+  }
+
+  // 4. C2 again: the idler fits the same mount, the machine still runs — and turns the wrong
+  //    way. That is the difference between "no drive" and "the wrong drive", and the open
+  //    puzzle must name the second. If the plate could not be detached, the idler goes to the
+  //    free quench feed instead and the sense case is reported as the finding it is.
+  const idlerSocket =
+    (detached?.held ?? '').includes('plate-c2') || detached === null || detached.machine === 'jammed'
+      ? 'socket-c2-feed-b'
+      : 'socket-c2-drive';
+  report.data.decoy.idlerSocket = idlerSocket;
+  const idler = await refuse(
+    `C2 idler gear -> ${idlerSocket === 'socket-c2-drive' ? 'drive mount' : 'free feed'}`,
+    'idler-c2',
+    idlerSocket,
+    'C2-quench',
+    'C2',
+    level.c2Parts,
+    level.c2Sockets
+  );
+  report.data.decoy.idler = idler;
+  if (idler.found === false) {
+    // already reported
+  } else if (idler.dropped === true) {
+    report.problems.push('decoy: the idler was soft-detached mid-carry');
+  } else if (idlerSocket === 'socket-c2-drive') {
+    const spin = (idler.machine.outputs ?? []).find((output) => output.kind === 'rotation')?.spin ?? null;
+    if (spin !== 'ccw') {
+      report.problems.push(`decoy: the idler did not turn the vessel anticlockwise (spin ${spin ?? 'null'})`);
+    } else if (!(idler.puzzle?.reasonCodes ?? []).includes('c2/drive-sense')) {
+      report.problems.push(
+        `decoy: C2 does not name the wrong sense (reasons ${JSON.stringify(idler.puzzle?.reasonCodes ?? null)})`
+      );
+    }
+  } else if (idler.held !== 'idler-c2') {
+    report.problems.push(`decoy: the idler could not be seated in the free feed (held ${idler.held ?? 'null'})`);
+  }
+
+  // 5. The gate stays honest, exactly as in `crucible`: opening a puzzle for the harness, or
+  //    building a machine, never opens the branch on a fresh save.
+  report.data.decoy.progress = await evaluate(cdp, 'window.__probe.progress()');
+  if ((report.data.decoy.progress?.branchC ?? null) !== 'Locked') {
+    report.problems.push(
+      `decoy: Branch C is not Locked on a fresh save (got ${report.data.decoy.progress?.branchC ?? 'null'})`
     );
   }
   drainConsole(cdp);
@@ -2938,6 +3209,7 @@ async function main() {
   }
   if (SCENARIO === 'dock') await scenarioDock(cdp);
   if (SCENARIO === 'crucible') await scenarioCrucible(cdp);
+  if (SCENARIO === 'decoy') await scenarioDecoy(cdp);
   if (SCENARIO === 'guns') await scenarioGuns(cdp);
   if (SCENARIO === 'bm1') await scenarioBm1(cdp);
   if (SCENARIO === 'branch') await scenarioBranch(cdp);
